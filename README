@@ -1,0 +1,132 @@
+=head1 NAME
+
+Nama - Ecasound-based recorder, mixer and mastering system
+
+=head1 About 
+
+This distribution provides B<Nama> an Ecasound-based recorder/mixer
+with many DAW-like functions.
+
+Nama has both graphic and command-line and graphic interfaces.
+
+The graphic interface uses the Tk widget set, with buttons
+and sliders. However it lacks a graphic display 
+of audio waveforms. 
+
+The command-line interface executes internal commands,
+Ecasound commands, perl code, and shell commands. It
+includes history, help, and autocompletion.
+
+'Nama' is Japanese for 'live', describing live performances,
+raw fish and draft beer.
+
+=head1 INSTALLATION
+
+To install this module type the following:
+
+   perl Makefile.PL
+   make
+   make test
+   make install
+
+=head1 DEPENDENCIES
+
+=head2 Perl Modules
+
+Most Perl dependencies are pulled in automatically
+when installing via CPAN. The following will
+install dependencies without prompting.
+
+    PERL_MM_USE_DEFAULT=1 cpan Audio::Ecasound::Multitrack 
+
+=head2 Libraries
+
+The Ecasound audio processing libraries must be
+installed. Ecasound may be obtained from
+http://ecasound.seul.org/ecasound/ or as precompiled binary
+packages for your Un*x distribution.
+
+The LADSPA SDK is required to autosense LADSPA plugins and
+scaling hints.  It is available at:
+
+http://www.ladspa.org/ladspa_sdk/download.html  
+
+In particular the utility program 'analyseplugin' must be
+installed in a directory in your execution PATH.  
+
+'file', a BSD utility program that detects file formats must
+be installed for Nama to correctly identify stereo files.
+
+Nama's mastering mode uses a number of LADSPA plugins.
+These specified in the configuration file .namarc. 
+
+=head1 BUILD INSTRUCTIONS
+
+You may decide to clone the Nama's github repository and
+from source rather than installing from CPAN.  It is much
+easier to browse or hack on Nama this way. Functionality is
+separated into a number of files, and you will see
+C<$::package_var> instead of
+C<$Audio::Ecasound::Multitrack::package_var>.
+
+You can get also updates more quickly and can share patches
+with other developers.
+
+=head2 Procedure
+
+For typical build and test:
+
+	cpan Text::Template
+	git-clone git://github.com/bolangi/nama.git
+	cd nama/src
+	./build
+    ./ui
+
+To install the module, do as usual:
+
+    cd ..
+	perl Makefile.PL
+    make && make test && make install
+    
+=head2 Description 
+
+The F<build> script creates the perl modules for the
+distribution under the F<nama/lib> directory using F<*.p>,
+F<*.pl>, F<*.t> and other files in the F<nama/src> directory.
+
+F<build> looks into the F<*.p> files for lines that look
+like:
+
+    [% somefile.pl %]
+
+This notation is analogous to the C-preprocessor #include
+directive: F<somefile.pl> gets included in the source
+at that point. Some of these include lines are more complicated:
+
+    [% qx(./strip_comments ./grammar_body) %]
+
+Here the preprocessor runs the script F<strip_comments> on
+F<grammar_body>, removing text that would choke the parser
+generator.
+
+F<Build> provides a few parameters to the preprocessing
+script F<preproc>, which uses the Text::Template to perform
+most of the required substitutions.
+
+To see the names of the files and scripts used to build the
+modules type:
+
+	ls *.p        
+	grep '\[%' *  # shows all include directives
+
+=head1 LICENSE
+
+This software is licensed for use under the terms of the GNU
+Public License version 2. The text of this license is
+provided in the file COPYING that is included in this
+distribution.
+
+This software is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
