@@ -1,8 +1,7 @@
-
 # ---------- Track -----------
-use feature ":5.10";
-use strict;
 package Audio::Nama::Track;
+use Modern::Perl;
+no warnings qw(uninitialized redefine);
 our $VERSION = 1.0;
 our ($debug);
 local $debug = 0;
@@ -10,9 +9,6 @@ local $debug = 0;
 #our @EXPORT_OK = qw(track);
 use Audio::Nama::Assign qw(join_path);
 use Audio::Nama::Wav;
-#use Memoize;
-#memoize ('get_length'); # subroutine, not object method
-#memoize('rec_status');
 use Carp;
 use IO::All;
 use vars qw($n %by_name @by_index %track_names %by_index @all);
@@ -84,7 +80,8 @@ sub new {
 	
 	my $class = shift;
 	my %vals = @_;
-	croak "undeclared field: @_" if grep{ ! $_is_field{$_} } keys %vals;
+	my @undeclared = grep{ ! $_is_field{$_} } keys %vals;
+    croak "undeclared field: @undeclared" if @undeclared;
 	if (my $track = $by_name{$vals{name}}){
 		#if ($track->hide) { $track->set(hide => 0); } 
 		#print("track name already in use: $vals{name}\n"); 
@@ -221,12 +218,15 @@ sub monitor_version {
 sub rec_status {
 #	$Audio::Nama::debug2 and print "&rec_status\n";
 	my $track = shift;
+	my $bug = shift;
+	local $debug;
+	$debug //= $bug;
 	
 	#my $source_id = $track->source_id;
 	my $monitor_version = $track->monitor_version;
 
 	my $group = $Audio::Nama::Group::by_name{$track->group};
-	#say join " ", "group:",$group->name, $group->rw;
+	$debug and say join " ", "group:",$group->name, $group->rw;
 	$debug and print "track: ", $track->name, ", source: ",
 		$track->source_id, ", monitor version: $monitor_version\n";
 
@@ -250,7 +250,7 @@ sub rec_status {
 					:  return maybe_monitor($monitor_version)
 			}
 			when('soundcard'){ return 'REC' }
-			when('loop'){ return 'REC' }
+			when('track'){ return 'REC' }
 
 			default { croak $track->name. ": missing source type" }
 			# fall back to MON
@@ -368,6 +368,28 @@ sub remove {
 	@all = grep{ $_->n != $n} @all;
 }
 
+# for graph-style routing
+
+sub input_path { # signal path, not file path
+
+	my $track = shift;
+
+	# create edge representing live sound source input
+	
+	if($track->rec_status eq 'REC'){
+
+		if ($track->source_type =~ /soundcard|jack_client/){
+			( $track->source_type . '_in' , $track->name)
+		} 
+
+	} elsif($track->rec_status eq 'MON' and $Audio::Nama::preview ne 'doodle'){
+
+	# create edge representing WAV file input
+
+		('wav_in', $track->name) 
+
+	}
+}
 
 # The following two subroutines are not object methods.
 
@@ -451,7 +473,7 @@ sub source_input {
 		when ( 'soundcard'  ){ return $track->soundcard_input }
 		when ( 'jack_client'){
 			if ( $Audio::Nama::jack_running ){ return ['jack_client', $track->source_id] }
-			else { 	carp($track->name. ": cannot set source ".$track->source_id
+			else { 	say($track->name. ": cannot set source ".$track->source_id
 				.". JACK not running."); return [undef, undef] }
 		}
 		when ( 'loop'){ return ['loop',$track->source_id ] } 
@@ -474,7 +496,7 @@ sub send_output {
 			else { carp $track->name . 
 					q(: auxilary send to JACK client specified,) .
 					q( but jackd is not running.  Skipping.);
-					return [qw(undef, undef)];
+					return [qw(undef  undef)];
 			}
 		}
 		when ('loop') { return [ 'loop', $track->send_id ] }
@@ -797,6 +819,8 @@ sub get_length {
 # subclass
 
 package Audio::Nama::SimpleTrack; # used for Master track
+use Modern::Perl;
+no warnings qw(uninitialized redefine);
 our @ISA = 'Audio::Nama::Track';
 use Audio::Nama::Object qw(
 
@@ -853,6 +877,8 @@ sub ch_r {
 }
 
 package Audio::Nama::MasteringTrack; # used for mastering chains 
+use Modern::Perl;
+no warnings qw(uninitialized redefine);
 our @ISA = 'Audio::Nama::SimpleTrack';
 use Audio::Nama::Object qw( 
 
@@ -902,6 +928,8 @@ sub group_last {0}
 sub version {0}
 
 package Audio::Nama::SlaveTrack; # for instrument monitor bus
+use Modern::Perl;
+no warnings qw(uninitialized redefine);
 our @ISA = 'Audio::Nama::Track';
 use Audio::Nama::Object qw( 
 
@@ -1020,6 +1048,8 @@ use Audio::Nama::Object qw(
 # ---------- Group -----------
 
 package Audio::Nama::Group;
+use Modern::Perl;
+no warnings qw(uninitialized redefine);
 our $VERSION = 1.0;
 #use Exporter qw(import);
 #our @EXPORT_OK =qw(group);
@@ -1105,6 +1135,8 @@ sub all { @by_index[1..scalar @by_index - 1] }
 # ---------- Op -----------
 
 package Audio::Nama::Op;
+use Modern::Perl;
+no warnings qw(uninitialized redefine);
 our $VERSION = 0.5;
 our @ISA;
 use Audio::Nama::Object qw(	op_id 

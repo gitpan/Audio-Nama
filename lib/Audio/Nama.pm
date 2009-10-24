@@ -4,26 +4,26 @@
 # These are overridden in the Audio::Nama::Text class with no-op stubs.
 # 
 # So all the routines in Graphical_methods.pl can consider
-# themselves to be in the base class, with access to all
-# variables and subs that are imported.
+# themselves to be in the base class.
 
 package Audio::Nama;
-use 5.10.0;
-use feature ":5.10";
-use strict;
-use warnings;
+require 5.10.0;
+use vars qw($VERSION);
+$VERSION = '0.9983';
+use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
 use autodie qw(:default);
 use Carp;
 use Cwd;
 use Data::YAML;
-use Event;
+use Event qw(loop unloop unloop_all);
 use File::Find::Rule;
+use File::Spec::Link;
 use File::Path;
 use File::Spec;
 use File::Temp;
-use Getopt::Std;
+use Getopt::Long;
 use IO::All;
 use IO::Socket; 
 use Module::Load::Conditional qw(can_load); 
@@ -34,39 +34,15 @@ use Graph;
 
 # use Timer::HiRes; # automatically detected
 
-use File::Spec::Link;
-
 # use Tk;           # loaded conditionally
 
-use vars qw($VERSION);
-BEGIN{ 
-
-$VERSION = '0.9982';
-
-print <<BANNER;
-
-     /////////////////////////////////////////////////////////////////////
-    //                                        / /   /     ///           /
-   // Nama multitrack recorder v. $VERSION                                /
-  /                                    Audio processing by Ecasound 
- /       (c) 2008 Joel Roth                      ////               //
-/////////////////////////////////////////////////////////////////////
-
-
-BANNER
-
-
-}
-
-# use Tk    # loaded conditionally in GUI mode
 
 #use Tk::FontDialog;
 
 
-$| = 1;     # flush STDOUT buffer on every write
-
 ## Definitions ##
 
+$| = 1;     # flush STDOUT buffer on every write
 
 # 'our' declaration: all packages in the file will see the following
 # variables. 
@@ -84,6 +60,7 @@ our (
 	# it didn't work out to be as helpful as i'd like
 	# because the grammar requires package path anyway
 
+	$banner,
 	$help_screen, 		# 
 	@help_topic,    # array of help categories
 	%help_topic,    # help text indexed by topic
@@ -565,6 +542,20 @@ $yr = Data::YAML::Reader->new;
 $debug2 = 0; # subroutine names
 $debug = 0; # debug statements
 
+$banner =
+
+<<BANNER;
+      ////////////////////////////////////////////////////////////////////
+     /                                                                  /
+    /    Nama multitrack recorder v. $VERSION (c)2008-2009 Joel Roth     /
+   /                                                                  /
+  /    Audio processing by Ecasound, courtesy of Kai Vehmanen        /
+ /                                                                  /
+////////////////////////////////////////////////////////////////////
+
+BANNER
+
+
 # other initializations
 $unit = 1;
 $effects_cache_file = '.effects_cache';
@@ -644,10 +635,11 @@ sub select_sleep {
 }
 
 sub nama { 
+	process_options();
 	prepare(); 
 	command_process($execute_on_project_load);
 	$ui->install_handlers();
-	reconfigure_engine();
+	reconfigure_engine() x 5;
 	$ui->loop;
 }
 sub status_vars {
@@ -746,35 +738,85 @@ print "Exiting.\n";
 exit;	
 }
 }
+
+
+
+sub process_options {
+
+	my %options = qw(
+
+        save-alsa  		a
+		project-root=s  d
+		create-project  c
+		config=s		f
+		gui			  	g
+		text			t
+		no-state		m
+		net-eci			n
+		libecasoundc	l
+		help			h
+		regenerate-effects-cache	r
+		no-static-effects-data		s
+		no-static-effects-cache		e
+		no-reconfigure-engine		R
+		debugging-output			D
+);
+
+	map{$opts{$_} = ''} values %options;
+
+	# long options
+
+	Getopt::Long::Configure ("bundling");	
+	my $getopts = 'GetOptions( ';
+	map{ $getopts .= qq("$options{$_}|$_" => \\\$opts{$options{$_}}, \n)} keys %options;
+	$getopts .= ' )' ;
+
+	#say $getopts;
+
+	my $result = eval $getopts;
 	
+	# short options
+
+	# push @ARGV, qw( -e  );
+	#push @ARGV, qw(-d /media/sessions test-abc  );
+	#getopts('amcegstrnd:f:DR', \%opts); 
+	#print join $/, (%opts);
+	
+	if ($opts{h}){
+	say <<HELP;
+
+USAGE: nama [options] [project_name]
+
+--gui, -g                        Start Nama in GUI mode
+--text, -t                       Start Nama in text mode
+--config, -f                     Specify configuration file (default: ~/.namarc)
+--project-root, -d               Specify project root directory
+--create-project, -c             Create project if it doesn't exist
+--net-eci, -n                    Use Ecasound's Net-ECI interface
+--libecasoundc, -l               Use Ecasound's libecasoundc interface
+--save-alsa, -a                  Save/restore alsa state with project data
+--help, -h                       This help display
+
+Debugging options:
+
+--no-static-effects-data, -s     Don't load effects data
+--no-state, -m                   Don't load project state
+--no-static-effects-cache, -e    Bypass effects data cache
+--regenerate-effects-cache, -r   Regenerate the effects data cache
+--no-reconfigure-engine, -R      Don't automatically configure engine
+                                 (manually use 'generate' and 'connect' commands)
+--debugging-output, -D           Emit debugging information
+
+HELP
+
+	exit;
+	} else { say $banner; }
+
+}
 	
 sub prepare {
 	
-
 	$debug2 and print "&prepare\n";
-	
-
-
-	### Option Processing ###
-	# push @ARGV, qw( -e  );
-	#push @ARGV, qw(-d /media/sessions test-abc  );
-	getopts('amcegstrnd:f:DR', \%opts); 
-	#print join $/, (%opts);
-	# a: save and reload ALSA state using alsactl
-	# d: set project root dir
-	# c: create project
-	# f: specify configuration file
-	# g: gui mode (default)
-	# t: text mode 
-	# m: don't load state info on initial startup
-	# r: regenerate effects data cache
-	# e: don't load static effects data (for debugging)
-	# s: don't load static effects data cache (for debugging)
-	# R: skip reconfigure engine
-	# D: output debugging info
-	
-	# UI object for interface polymorphism
-	
 
 	if ($opts{D}){
 		$debug = 1;
@@ -836,7 +878,10 @@ sub prepare {
 	
 	init_buses();	
 	
-	initialize_rules(); # needed for transport_gui
+	initialize_rules(); 					# bus/rule routing
+	$debug and say join " ", %Audio::Nama::Rule::by_name;
+	#die "here";
+	initialize_routing_dispatch_table();	# graph-based routing
 
 	$ui->init_gui;
 	$ui->transport_gui;
@@ -871,8 +916,9 @@ sub launch_ecasound_server {
 	sleep 1;
 }
 
-my $debug;
-my $sock; 
+
+my $sock;
+
 sub init_ecasound_socket {
 	my $port = shift // $default_port;
 	say "Creating socket on port $port.";
@@ -882,6 +928,12 @@ sub init_ecasound_socket {
 		Proto => 'tcp', 
 	); 
 	die "Could not create socket: $!\n" unless $sock; 
+}
+
+sub ecasound_pid {
+	my ($ps) = grep{ /ecasound/ and /server/ } qx(ps ax);
+	my ($pid) = split " ", $ps; 
+	$pid if $sock; # conditional on using socket i.e. Net-ECI
 }
 
 sub eval_iam { } # stub
@@ -1118,10 +1170,9 @@ sub init_buses {
 	);
 
 }
-	
-sub initialize_rules {
 
-	# dispatch table for the graph-style routing system 
+sub initialize_routing_dispatch_table {
+
 	%dispatch = (
 		wav_in => sub {
 			my $name = shift;
@@ -1234,6 +1285,10 @@ sub initialize_rules {
 	
 	#@dispatch{qw(soundcard_in soundcard_out)} 
 	#	= @dispatch{qw(jack_client_in jack_client_out)};
+	
+}
+sub initialize_rules {
+
 
 	# bus/rules-style routing 
 
@@ -1332,7 +1387,7 @@ $aux_send = Audio::Nama::Rule->new(
 		input_type		=>  'device',
 		input_object	=>  'null',
 		output_type		=>  'loop',
-		output_object	=>  'Master_in',
+		output_object	=>  'loop,Master_in',
 		post_input		=>	sub{ my $track = shift; $track->mono_to_stereo},
 		condition 		=> 1,
 		status			=>  1,
@@ -1352,8 +1407,9 @@ $aux_send = Audio::Nama::Rule->new(
 		status			=>  1,
 	);
 
- 	$rec_setup = Audio::Nama::Rule->new(
 
+ 	$rec_setup = Audio::Nama::Rule->new(	 	# used by UserBus 
+		
 		name			=>	'rec_setup', 
 		chain_id		=>  sub{ $_[0]->n },   
 		target			=>	'REC',
@@ -1380,37 +1436,6 @@ $aux_send = Audio::Nama::Rule->new(
 		
 	);
 
-	# rules for instrument monitor buses using cooked signals 
-	
-=comment	
-	$send_bus_cooked_input = Audio::Nama::Rule->new(
-		
-		name			=>  'send_bus_cooked_input', 
-		target			=>  'all',
-		chain_id		=>  sub{ $_[0]->n },   
-		input_type		=>  'loop',
-		input_object	=> sub{ my $track = shift; 
-								my $source_track = $tn{$track->target};
-								'loop,'.$source_track->n},
-		condition 		=>  1,
-		status			=>  1,
-	);
-
-
-	$sub_bus_mix_setup = Audio::Nama::Rule->new(
-
-		name			=>  'sub_bus_mix_setup',
-		chain_id		=>  sub { my $track = shift; "J". $track->n },
-		target			=>  'all',
-		input_type		=>  'loop',
-		input_object	=>  sub { my $track = shift; "loop," .  $track->n },
-		output_type		=>  'loop',
-		output_object	=>  sub{ my $track = shift; "loop,".  $track->group },
-		condition 		=>  1,
-		status			=>  1,
-		
-	);
-=cut
 
 }
 
@@ -1720,21 +1745,13 @@ sub really_recording {
 	keys %{$outputs{file}}; 
 }
 
-my $i;
+
 sub generate_setup { 
 
 	# Create data structures representing chain setup.
 	# This step precedes write_chains(), i.e. writing Setup.ecs.
 
 	$debug2 and print "&generate_setup\n";
-
-
-
-$i = 410;
-sub get_chain_id { "J".++$i }
-
-	
-
 
 	%inputs = %outputs 
 			= %post_input 
@@ -1748,22 +1765,88 @@ sub get_chain_id { "J".++$i }
 
 	$g = Graph->new();
 
-	map{ my $t = $tn{$_};
-		if($t->rec_status ne 'OFF'){
-			$g->add_edge( $t->source_type . '_in' , $t->name) 
-				if $t->rec_status eq 'REC';
-			if ($t->rec_status eq 'REC' and !  $t->rec_defeat){
-				# add soundcard -> wav_out link
-				# currently accomplished using rec_file
-				#$g->add_edge($t->name, 'wav_out');
-			}
+	map{ 
 
-			$g->add_edge('wav_in', $t->name) if $t->rec_status eq 'MON'
-				and $preview ne 'doodle';
-			$g->add_edge($t->name, 'Master');
+		# the mix track of user buses will belong to Main group
+
+		# set $track->rec_defeat to skip rec_file
+		# set $track->source_type = 'dummy' to skip rec setup above
+
+		# the input will come via a loop device
+		# by connecting the sub bus track outputs to the mix track
+
+		my @path = $_->input_path;
+		#say "Main bus track input path: @path";
+		$g->add_path(@path) if @path;
+
+		# create default mixer connection
+		
+		$g->add_edge($_->name, 'Master'); #  if $g->predecessors($_->name)
+		# we will remove input-less tracks later
+;
+
+	} 	grep{ $_->rec_status ne 'OFF' } 
+		map{$tn{$_}} 	# convert to Track objects
+		$main->tracks;  # list of Track names
+
+
+		# process optional send and sub buses
+
+	map{
+
+		# raw send buses use only fixed-rule routing
+		# we process them in generate io_lists
+
+		if( $_->bus_type eq 'cooked'){  # post-fader send bus
+
+			$debug and say 'process post-fader bus';
+
+			# The signal path is:
+			#
+			# [target track] -> [slave track] -> [slave track send output]
+			
+			map{   
+				$g->add_path( $_->target, $_->name, $_->send_type.'_out');
+
+				# it would be possible here to use the override function
+				# set the track vertex send_type and send_id using bus values
+				# dest_type, dest_id, allowing update to match
+				# bus parameters.
+				
+			} 	grep{ $_->rec_status ne 'OFF' } 
+				map{$tn{$_}} $Audio::Nama::Group::by_name{$_->name}->tracks;
 		}
-	 } $main->tracks; 
+		elsif( $_->bus_type eq 'sub'){   # sub bus
+			$debug and say 'process sub bus';
+			my $bus = $_;
+			my $output = $bus->destination_type eq 'track' 
+				? $bus->destination_id
+				: $bus->destination_type . '_out';
 
+			$debug and say "bus output: $output";
+
+			# The signal path is:
+			#
+			# [track input] -> [track] -> [bus destination]
+			
+			map{ 	my @path = ($_->input_path, $output);
+					say "path: @path";
+					$g->add_path(@path); 
+
+			} map{$tn{$_}} $Audio::Nama::Group::by_name{$_->name}->tracks;
+		}
+	} Audio::Nama::UserBus::all() if Audio::Nama::UserBus::all();
+
+	# remove_inputless_tracks
+	
+	# we need to do this so that the mix track of a sub bus with no inputs
+	# is removed
+	
+	while(my @i = Audio::Nama::Graph::inputless_tracks($g)){
+		map{ 	$g->delete_edges(map{@$_} $g->edges_from($_));
+				$g->delete_vertex($_);
+		} @i;
+	}
 
 	if ($mastering_mode){
 		$g->add_path(qw[Master Eq Low Boost soundcard_out]);
@@ -1856,21 +1939,18 @@ my $temp_tracks = Audio::Nama::Graph::expand_graph($g);
 		# process system buses
 
 		$debug and print "applying main_bus (user tracks)\n";
-		$main_bus->apply;
-		$debug and print "applying null_bus (user tracks)\n";
-		$null_bus->apply;
+		$main_bus->apply; # rec file only
 
-		# process user defined buses
+		$debug and print "applying null_bus\n";
+		$null_bus->apply; # TODO
 
+		$debug and print "generating IO for raw_input send buses\n";
+		# others are handled graphically
 		
 		map { $_->apply() } Audio::Nama::UserBus::all();
 
-		#eliminate_loops2() unless $mastering_mode;
-		#	or useful_Master_effects();
-
-
-		#print "minus loops\n \%inputs\n================\n", yaml_out(\%inputs);
-		#print "\%outputs\n================\n", yaml_out(\%outputs);
+		$debug and print "\%inputs\n================\n", yaml_out(\%inputs),
+			"\%outputs\n================\n", yaml_out(\%outputs);
 
 		write_chains();
 		$ecasound_globals_ecs = $ecasound_globals;
@@ -2158,8 +2238,11 @@ WARN
 		$debug and print "record output file: $full_path\n";
 		my $chain_ids = join ",",@{ $outputs{file}->{$full_path} };
 		
+
+		# in this case  we can be sure that $chain_ids is just one id
 		push @output_chains, join ( " ",
 			 "-a:".$chain_ids,
+			 (grep{/-f:/} split ' ', $pre_output{$chain_ids}), 
 			 "-o:".$full_path,
 		 );
 			 
@@ -3845,6 +3928,11 @@ sub restore_state {
 		map{ $_->{name} = 'Main'} grep{ $_->{name} eq 'Tracker' } @groups_data;
 		
 		for (@tracks_data){
+			delete $_->{delay};
+			delete $_->{length};
+			delete $_->{start_position};
+			$_->{group} =~ s/Tracker/Main/;
+
 			if( $_->{source_select} eq 'soundcard'){
 				$_->{source_type} = 'soundcard' ;
 				$_->{source_id} = $_->{ch_r}
@@ -4580,16 +4668,20 @@ sub add_sub_bus {
 	}
 	Audio::Nama::UserBus->new( 
 		name => $name, 
+		bus_type => 'sub',
 		groups => [$name],
-		rules => [qw(rec_setup mon_setup sub_bus_mix_setup)],
-		destination_type => $type // 'loop',
+		rules => [qw(rec_file)],
+		destination_type => $type // 'track',
 		destination_id	 => $id // $name,
 		)
 	or carp("can't create bus!\n"), return;
 	Audio::Nama::Group->new( name => $name, rw => 'REC');
 	# create mix track
 	
-	Audio::Nama::add_track($name, source_type => 'loop', source_id => "loop,$name");
+	Audio::Nama::add_track($name, 	source_type => 'track', 
+						source_id 	=> $name,
+						rec_defeat 	=> 1,
+						);
 	
 	
 }
@@ -4609,9 +4701,10 @@ sub add_send_bus {
 	} else {
 	Audio::Nama::UserBus->new( 
 		name => $name, 
+		bus_type => $bus_type,
 		groups => [$name],
 		rules => ($bus_type eq 'cooked' 
-			?  [qw(send_bus_cooked_input send_bus_out )]
+			?  [qw(send_bus_out )]
 			:  [qw(rec_setup mon_setup send_bus_out)],
 		destination_type => $dest_type,
 		destination_id	 => $dest_id,
@@ -6152,7 +6245,14 @@ sub show_effects {
 		 	} (0..scalar @pnames - 1);
 			#push @lines, join("; ", @params) . "\n";
  
- 	 } @{ $this_track->ops };
+ 	} @{ $this_track->ops };
+
+	my $i = $this_track->inserts;
+
+	# display if there is actually something there
+
+	if ($i = $i->[0]){ push @lines, yaml_out($i) }
+		
 	join "", @lines;
  	
 }
@@ -7113,7 +7213,7 @@ loop_enable:
   short: loop
   what: loop playback between two points
   parameters: <start> <end> (start, end: mark names, mark indices, decimal seconds)
-  example: loop_enable 1.5 10.0 (loop between 1.5 and 10.0 seconds) \nloop_enable 1 5 (loop between mark indices 1 and 5) \nloop_enable start end (loop between mark ids 'start' and 'end')
+  example: loop_enable 1.5 10.0 (loop between 1.5 and 10.0 seconds) !nloop_enable 1 5 (loop between mark indices 1 and 5) !nloop_enable start end (loop between mark ids 'start' and 'end')
 loop_disable:
   type: setup 
   short: noloop nl
@@ -7129,7 +7229,7 @@ add_effect:
   what: add effect to current track (placed before volume control)
   short: fxa afx
   parameters: <s_effect_code> [ <f_param1> <f_param2>... ]
-  example: add_effect amp 6 (LADSPA Simple amp 6dB gain)\nadd_effect var_dali (preset var_dali) Note: no el: or pn: prefix is required
+  example: add_effect amp 6 (LADSPA Simple amp 6dB gain)!nadd_effect var_dali (preset var_dali) Note: no el: or pn: prefix is required
 append_effect:
   type: effect
   what: add effect to the end of current track (mainly legacy use)
@@ -7144,7 +7244,7 @@ modify_effect:
   what: modify an effect parameter
   parameters: <s_effect_id> <i_parameter> [ + | - | * | / ] <f_value>
   short: fxm mfx
-  example: modify_effect V 1 1000 (set effect_id V, parameter 1 to 1000)\nmodify_effect V 1 - 10 (reduce effect_id V, parameter 1 by 10)\nset multiple effects/parameters: mfx V 1,2,3 + 0.5 mfx V,AC,AD 1,2 3.14
+  example: modify_effect V 1 1000 (set effect_id V, parameter 1 to 1000)!nmodify_effect V 1 - 10 (reduce effect_id V, parameter 1 by 10)!nset multiple effects/parameters: mfx V 1,2,3 + 0.5 mfx V,AC,AD 1,2 3.14
 remove_effect:
   type: effect
   what: remove effects from selected track
@@ -7268,9 +7368,9 @@ add_send_bus_raw:
 add_sub_bus:
   type: bus
   short: asub
-  what: add a bus with arbitrary tracks and destination
-  parameters: <s_name> [destination]
-  example: asub Strings_bus\nasub Strings_bus streamer_app
+  what: add a sub bus (default destination: to mixer via eponymous track)
+  parameters: <s_name> [destination: s_track_name|s_jack_client|n_soundcard channel]
+  example: asub Strings_bus !nasub Strings_bus some_jack_client
 update_send_bus:
   type: bus
   short: usb
@@ -7949,7 +8049,9 @@ automix: _automix { Audio::Nama::automix(); 1 }
 autofix_tracks: _autofix_tracks { Audio::Nama::command_process("for mon; fixdc; normalize"); 1 }
 master_on: _master_on end { Audio::Nama::master_on(); 1 }
 master_off: _master_off end { Audio::Nama::master_off(); 1 }
-exit: _exit end { Audio::Nama::save_state($Audio::Nama::state_store_file); CORE::exit(); 1}
+exit: _exit end { 	Audio::Nama::save_state($Audio::Nama::state_store_file); 
+					kill 15, Audio::Nama::ecasound_pid();  	
+					CORE::exit(); 1}
 source: _source name { print "source with argument$/"; $Audio::Nama::this_track->set_source( $item{name} ); 1 }
 source: _source end { 
 	my $source = $Audio::Nama::this_track->source;
@@ -9023,8 +9125,6 @@ __END__
 
 =head1 NAME
 
-B<Audio::Nama> - Perl extensions for multitrack audio processing
-
 B<Nama> - Lightweight recorder, mixer and mastering system
 
 =head1 SYNOPSIS
@@ -9034,9 +9134,10 @@ B<nama> [I<options>] [I<project_name>]
 =head1 DESCRIPTION
 
 B<Nama> is a lightweight recorder/mixer application using
-Ecasound in the back end to provide effects processing,
-cut-and-paste, mastering, and other functions typically
-found in digital audio workstations.
+Ecasound in the back end to provide multitrack recording,
+effects processing, and mastering. Nama provides aux sends,
+inserts, buses and other functions more typical of digital
+audio workstations.
 
 By default, Nama starts up a GUI interface with a command
 line interface running in the terminal window. The B<-t>
@@ -9046,47 +9147,73 @@ option provides a text-only interface for console users.
 
 =over 12
 
-=item B<-d> F<project_root>
+=item B<--gui, -g>
 
-Use F<project_root> as Nama's top-level directory.
+Start Nama in GUI mode
 
-=item B<-D> 
+=item B<--text, -t>
 
-Output debugging information
+Start Nama in text mode
 
-=item B<-f> F<config_file>
+=item B<--config, -f> F<config_file>
 
-Use F<config_file> instead of default F<.namarc>
+Use F<config_file> instead of the default configuration file F<~/.namarc>
 
-=item B<-g>
+=item B<--project-root, -d> F<project_root>
 
-GUI mode (default)
+use F<project_root> as Nama's top-level directory
 
-=item B<-t>
+=item B<--create-project, -c>
 
-Text-only mode
+Create project if it doesn't exist
 
-=item B<-c>
+=item B<--net-eci, -n>
 
-Create the specified project if necessary
+Use Ecasound's Net-ECI interface
 
-=item B<-a>
+=item B<--libecasoundc, -l>
 
-Save and reload ALSA mixer state using alsactl
-
-=item B<-m>
-
-Don't load saved state
-
-=item B<-n>
-
-Communicate with engine via NetECI. Start Ecasound in
-server mode if necessary.
-
-=item B<-l>
-
-Communicate with engine via libecasoundc (default, if
+Use Ecasound's libecasoundc interface (default, if
 Audio::Ecasound is installed)
+
+=item B<--save-alsa, -a>
+
+Save/restore alsa state with project data
+
+=item B<--help, -h>
+
+This help display
+
+=back
+
+=head2 Debugging options:
+
+=over 12
+
+=item B<--no-static-effects-data, -s>
+
+Don't load effects data
+
+=item B<--no-state, -m>
+
+Don't load project state
+
+=item B<--no-static-effects-cache, -e>
+
+Bypass effects data cache
+
+=item B<--regenerate-effects-cache, -r>
+
+Regenerate the effects data cache
+
+=item B<--no-reconfigure-engine, -R>
+
+Don't automatically configure engine (manually use 'generate' and 'connect' commands)
+
+=item B<--debugging-output, -D>
+
+Emit debugging information
+
 
 =back
 
@@ -9095,7 +9222,7 @@ Audio::Ecasound is installed)
 Ecasound is configured through use of I<chain setups>.
 Nama generates appropriate chain setups for 
 recording, playback, mixing, mastering
-and bus routing.
+inserts and bus routing.
 
 Commands for audio processing with Nama/Ecasound fall into
 two categories: I<static commands> that influence the chain
@@ -9127,9 +9254,8 @@ however this action may be accompanied by an audible click.
 
 General configuration of sound devices and program options
 is performed by editing the file F<.namarc>. Nama
-automatically generates this well-commented file on the
-program's first run, usually placing it in the user's home
-directory.
+automatically generates this file on the program's first
+run, usually placing it in the user's home directory.
 
 =head1 DIAGNOSTICS
 
@@ -9145,22 +9271,27 @@ C<save> command.
 
 =head1 Tk GRAPHICAL UI 
 
-Invoked by default, the Tk interface provides all
-functionality on two panels, one for general control, the
-second for effects. 
+Invoked by default if Tk is installed, this interface
+provides a large subset of Nama's functionality on two
+panels, one for general control, the second for effects. 
 
-Nama detects and uses plugin hints for 
-parameter range and use of logarithmic scaling.
-Text-entry widgets are used to enter values 
-for plugins without hinted ranges.
+The general panel has buttons for project create, load
+and save, for adding tracks and effects, and for setting
+the vol, pan and record status of each track.
 
 The GUI project name bar and time display change color to indicate
 whether the upcoming operation will include live recording
 (red), mixdown only (yellow) or playback only (green).  Live
 recording and mixdown can take place simultaneously.
 
+The effects window provides sliders for each effect
+parameters. Parameter range, defaults, and log/linear
+scaling hints are automatically detects. Text-entry widgets
+are used to enter parameters values for plugins without
+hinted ranges.
+
 The text command prompt appears in the terminal window
-during GUI operation, and text commands may be issued at any
+during GUI operation. Text commands may be issued at any
 time.
 
 =head1 TEXT UI
@@ -9201,7 +9332,7 @@ abstractions. Chief among these are tracks.
 Each track has a descriptive name (i.e. vocal) and an
 integer track-number assigned when the track is created.
 The following paragraphs describes track fields and
-settings.
+their settings.
 
 =head2 VERSION NUMBER
 
@@ -9211,10 +9342,10 @@ recording run, i.e. F<sax_1.wav>, F<sax_2.wav>, etc.  All
 files recorded at the same time have the same version
 numbers. 
 
-Version numbers for playback can be selected at the group
-or track level. By setting the group version number to 5,
-you can play back the fifth take of a song, or perhaps the
-fifth song of a live recording session. 
+The version numbers of files for playback can be selected at
+the group or track level. By setting the group version
+number to 5, you can play back the fifth take of a song, or
+perhaps the fifth song of a live recording session. 
 
 The track version setting, if present, overrides 
 the group setting. Setting the track version to zero
@@ -9243,7 +9374,7 @@ track set to REC with no live input will default to MON
 status.
 
 I<OFF> status means that no audio is available for the track
-from any source.  A track with no recorded WAV files 
+from any source. A track with no recorded WAV files 
 will show OFF status, even if set to MON.
 
 An OFF setting for a track or group always results in OFF
@@ -9268,33 +9399,49 @@ of multiple regions or versions of a single track.
 
 C<link_track> can clone tracks from other projects.  Thus
 you could create the sections of a song in separate
-projects, then assemble them using C<link_track> to pull the
-Mixdown tracks into a single project.
+projects, pull them into one project using C<link_track> 
+commands, and sequence them using C<shift> commands.
 
-=head2 GROUPS
+=head2 EFFECTS
+
+Each track gets volume and pan effects by default.  New
+effects added using C<add_effect> are applied after pan and
+before volume.  You can position effects anywhere you choose
+using C<insert_effect> and C<append_effect>.
+
+=head3 SENDS AND INSERTS
+
+The C<send> command can routes a track's post-fader output
+to a soundcard channel or JACK client in addition to the
+normal mixer input. Nama currently allows one aux send per
+track.
+
+The C<add_insert_cooked> command configures a post-fader
+send-and-return to soundcard channels or JACK clients.
+Wet and dry signal paths are provided, with a default
+setting of 100% wet.
+
+=head1 GROUPS
 
 Track groups are used internally.  The Main group
 corresponds to a mixer. It has its own REC/MON/OFF setting
 that influences the rec-status of individual tracks. 
 
-When the group is set to OFF, all tracks are OFF. When the
-group is set to MON, track REC settings are forced to MON.
-When the group is set to REC, tracks can be any of REC, MON
-or OFF.  and a default version setting for the entire group.
-The
+Setting a group to OFF forces all of the group's tracks to
+OFF. When the group is set to MON, track REC settings are
+forced to MON.  When the group is set to REC, track status
+can be REC, MON or OFF. 
 
-The group MON mode triggers automatically after a recording
-run.
+The group MON mode triggers automatically after a successful
+recording run.
 
 The B<mixplay> command sets the Mixdown track to MON and the
 Main group to OFF.
 
-The Master bus has only MON/OFF status. 
-
 =head2 BUNCHES
 
 A bunch is just a list of track names. Bunch names are used
-with C<for> to apply one or more commands to to several
+with the keyword C<for> to apply one or more commands to to several
 tracks at once. A group name can also be treated as a bunch
 name.
 
@@ -9307,15 +9454,14 @@ B<Send buses> can be used as instrument monitors,
 or to send pre- or post-fader signals from multiple
 user tracks to an external program such as jconv.
 
-B<Sub buses> enable multiple tracks to be routed through a
-single track for vol/pan/effects processing before reaching
-the mixer.
+B<Sub buses> (currently broken) enable multiple tracks to be
+routed through a single track for vol/pan/effects processing
+before reaching the mixer.
 
 	add_sub_bus Strings
 	add_tracks violin cello bass
 	for violin cello bass; set bus Strings
 	Strings vol - 10  # adjust bus output volume
-
 
 =head1 ROUTING
 
@@ -9325,13 +9471,9 @@ number is used.
 
 =head2 Loop devices
 
-Nama uses Ecasound loop devices to be able to deliver each
-of these signals classes to multiple "customers", i.e.  to
-other chains using that signal as input.
-
-An optimizing pass eliminates loop devices that have 
-only one signal outputs. The following diagrams show
-the unoptimized routing.
+Nama uses Ecasound loop devices to join two tracks, 
+or to allow one track to have multiple inputs or
+outputs. 
 
 =head2 Flow diagrams
 
@@ -9342,23 +9484,24 @@ We will divide the signal flow into track and mixer
 sections.  Parentheses indicate chain identifiers or the
 corresponding track name.
 
-The stereo outputs of each user track terminate at loop,mix.
+The stereo outputs of each user track terminate at 
+Master_in, a loop device at the mixer input.
 
 =head3 Track, REC status
 
-    Sound device   --+---(3)----> loop,3 ---(J3)----> loop,mix
+    Sound device   --+---(3)----> Master_in
       /JACK client   |
                      +---(R3)---> sax_1.wav
 
-REC status indicates that the source of the signal
-is the soundcard or JACK client. The input signal will be 
-written directly to a file except in the special preview and doodle 
+REC status indicates that the source of the signal is the
+soundcard or JACK client. The input signal will be written
+directly to a file except in the special preview and doodle
 modes.
 
 
 =head3 Track, MON status
 
-    sax_1.wav ------(3)----> loop,3 ----(J3)----> loop,mix
+    sax_1.wav ------(3)----> Master_in
 
 =head3 Mixer, with mixdown enabled
 
@@ -9367,28 +9510,23 @@ delivered to an output device through the Master chain,
 which can host effects. Usually the Master track
 provides final control before audio output or mixdown.
 
-    loop,mix --(1/Master)--> loop,output -> Sound device
+    Master_in --(1/Master)--> Master_out -> Sound device
                                  |
                                  +----->(2/Mixdown)--> Mixdown_1.wav
 
-During mastering, the mastering network is inserted between
-the Master track and the output node C<loop,output>.
-
-    loop,mix --(1/Master)-> loop,mastering-[NETWORK]->loop,output -> Sound device
-                                                         |
-                                                         +->(2/Mixdown)--> Mixdown_1.wa
-
+During mastering, the mastering network is inserted
+between the Master track, and the audio/mixdown output. 
 
 =head3 Mastering Mode
 
 In mastering mode (invoked by C<master_on> and released
 C<master_off>) the following network is used:
 
-                                      +---(Low)---+ 
-                                      |           |
-    lp,mastering -(Eq)-> lp,crossover +---(Mid)---+ lp,boost --(Boost)--> lp,output
-                                      |           |
-                                      +---(High)--+ 
+                          +-(Low)-+ 
+                          |       |
+    Eq-in -(Eq)-> Eq_out -+-(Mid)-+- Boost_in -(Boost)-> soundcard/mixdown
+                          |       |
+                          +-(High)+ 
 
 The B<Eq> track hosts an equalizer.
 
@@ -9495,7 +9633,9 @@ C<getpos>
 
 C<setpos> <f_position_seconds>
 
-C<setpos 65 >(set play position to 65 seconds from start)
+C<setpos 65 (set play position to 65 seconds from start)>
+
+
 
 =back
 
@@ -9641,6 +9781,8 @@ C<add_track> <s_name> [ <s_key1> <s_val1> <s_key2> <s_val2>... ]
 
 C<add_track clarinet group woodwinds>
 
+
+
 =back
 
 =head4 B<add_tracks> (add new) - Create one or more new tracks
@@ -9651,6 +9793,8 @@ C<add_tracks> <s_name1> [ <s_name2>... ]
 
 C<add_track sax violin tuba>
 
+
+
 =back
 
 =head4 B<link_track> (link) - Create a read-only track that uses .WAV files from another track.
@@ -9660,6 +9804,8 @@ C<add_track sax violin tuba>
 C<link_track> <s_name> <s_target> [ <s_project> ]
 
 C<link_track intro Mixdown song_intro creates a track 'intro' using all .WAV versions from the Mixdown track of 'song_intro' project>
+
+
 
 =back
 
@@ -9763,6 +9909,8 @@ C<set_version> <i_version_number>
 
 C<sax; version 5; sh>
 
+
+
 =back
 
 =head4 B<destroy_current_wav> - Unlink current track's selected WAV version (use with care!)
@@ -9787,7 +9935,9 @@ C<list_versions>
 
 C<vol> [ [ + | - | * | / ] <f_value> ]
 
-C<vol * 1.5 >(multiply current volume setting by 1.5)
+C<vol * 1.5 (multiply current volume setting by 1.5)>
+
+
 
 =back
 
@@ -9926,6 +10076,8 @@ C<unshift_track>
 C<modifiers> [ Audio file sequencing parameters ]
 
 C<modifiers select 5 15.2>
+
+
 
 =back
 
@@ -10125,11 +10277,13 @@ C<show_chain_setup>
 
 C<loop_enable> <start> <end> (start, end: mark names, mark indices, decimal seconds)
 
-C<loop_enable 1.5 10.0 >(loop between 1.5 and 10.0 seconds) 
+C<loop_enable 1.5 10.0 (loop between 1.5 and 10.0 seconds) >
 
-C<loop_enable 1 5 >(loop between mark indices 1 and 5) 
+C<loop_enable 1 5 (loop between mark indices 1 and 5) >
 
-C<loop_enable start end >(loop between mark ids 'start' and 'end')
+C<loop_enable start end (loop between mark ids 'start' and 'end')>
+
+
 
 =back
 
@@ -10157,9 +10311,11 @@ C<add_ctrl> <s_parent_id> <s_effect_code> [ <f_param1> <f_param2>...]
 
 C<add_effect> <s_effect_code> [ <f_param1> <f_param2>... ]
 
-C<add_effect amp 6 >(LADSPA Simple amp 6dB gain)
+C<add_effect amp 6 (LADSPA Simple amp 6dB gain)>
 
-C<add_effect var_dali >(preset var_dali) Note: no el: or pn: prefix is required
+C<add_effect var_dali (preset var_dali) Note: no el: or pn: prefix is required>
+
+
 
 =back
 
@@ -10185,11 +10341,13 @@ C<insert_effect> <s_insert_point_id> <s_effect_code> [ <f_param1> <f_param2>... 
 
 C<modify_effect> <s_effect_id> <i_parameter> [ + | - | * | / ] <f_value>
 
-C<modify_effect V 1 1000 >(set effect_id V, parameter 1 to 1000)
+C<modify_effect V 1 1000 (set effect_id V, parameter 1 to 1000)>
 
-C<modify_effect V 1 - 10 >(reduce effect_id V, parameter 1 by 10)
+C<modify_effect V 1 - 10 (reduce effect_id V, parameter 1 by 10)>
 
 C<set multiple effects/parameters: mfx V 1,2,3 + 0.5 mfx V,AC,AD 1,2 3.14>
+
+
 
 =back
 
@@ -10265,7 +10423,9 @@ C<list_marks>
 
 C<to_mark> <s_mark_id> | <i_mark_index>
 
-C<to_mark start >(go to mark named 'start')
+C<to_mark start (go to mark named 'start')>
+
+
 
 =back
 
@@ -10283,7 +10443,9 @@ C<mark> [ <s_mark_id> ]
 
 C<remove_mark> [ <s_mark_id> | <i_mark_index> ]
 
-C<remove_mark start >(remove mark named 'start')
+C<remove_mark start (remove mark named 'start')>
+
+
 
 =back
 
@@ -10310,6 +10472,8 @@ C<previous_mark>
 C<name_mark> <s_mark_id>
 
 C<name_mark start>
+
+
 
 =back
 
@@ -10383,6 +10547,8 @@ C<add_send_bus_cooked> <s_name> <destination>
 
 C<asbc jconv>
 
+
+
 =back
 
 =head4 B<add_send_bus_raw> (asbr) - Add a send bus that copies all user tracks' raw signals
@@ -10393,17 +10559,21 @@ C<add_send_bus_raw> <s_name> <destination>
 
 C<asbr The_new_bus jconv>
 
+
+
 =back
 
-=head4 B<add_sub_bus> (asub) - Add a bus with arbitrary tracks and destination
+=head4 B<add_sub_bus> (asub) - Add a sub bus (default destination: to mixer via eponymous track)
 
 =over 8
 
-C<add_sub_bus> <s_name> [destination]
+C<add_sub_bus> <s_name> [destination: s_track_name|s_jack_client|n_soundcard channel]
 
-C<asub Strings_bus
+C<asub Strings_bus >
 
-C<asub Strings_bus streamer_app>
+C<asub Strings_bus some_jack_client>
+
+
 
 =back
 
@@ -10414,6 +10584,8 @@ C<asub Strings_bus streamer_app>
 C<update_send_bus> <s_name>
 
 C<usb Some_bus>
+
+
 
 =back
 
@@ -10441,9 +10613,9 @@ C<remove_bus> <s_bus_name>
 
 =head1 BUGS AND LIMITATIONS
 
-No waveform or signal level displays are provided.
-No latency compensation is provided across the various
-signal paths, although this function is under development.
+No waveform or signal level displays are provided.  No
+latency compensation is provided across the various signal
+paths at present, although this feature is planned.
 
 =head1 SECURITY CONCERNS
 
@@ -10451,31 +10623,34 @@ If you are using Nama with the NetECI interface (i.e. if
 Audio::Ecasound is I<not> installed) you should firewall TCP port 2868 
 if you computer is exposed to the Internet. 
 
-=head1 EXPORT
-
-None by default.
-
 =head1 AVAILABILITY
 
-CPAN, for the distribution.
+CPAN, for the distribution. The following
+command will pull in Nama and all its dependencies:
 
-C<cpan Audio::Nama>
+PERL_MM_USE_DEFAULT=1 cpan Audio::Nama
 
 You will need to install Tk to use the GUI.
 
 C<cpan Tk>
 
+You may want to install Audio::Ecasound
+if you prefer not to have Ecasound running
+in server mode.
+
+C<cpan Audio::Ecasound>
+
 You can pull the source code as follows: 
 
 C<git clone git://github.com/bolangi/nama.git>
 
-Build instructions are contained in the F<README> file.
+Consult the F<BUILD> file for build instructions.
 
 =head1 PATCHES
 
-The main module, Nama.pm is a concatenation of
-several source files.  Patches should be made against the
-source files.
+The main module, Nama.pm, its sister modules are
+concatenations of several source files. Patches 
+against the source files are preferred.
 
 =head1 AUTHOR
 

@@ -4,14 +4,16 @@
 package Audio::Nama::Bus;
 our $VERSION = 1.0;
 use strict;
-our ($debug);
-$debug = 0;
+our ($debug); # entire file
+
+use vars qw(%by_name);
 use Carp;
 our @ISA;
 use Audio::Nama::Object qw(	name
-						groups
-						tracks 
-						rules
+					groups
+					tracks 
+					rules
+					bus_type
 						
 						);
 
@@ -19,18 +21,22 @@ sub new {
 	my $class = shift;
 	my %vals = @_;
 	croak "undeclared field: @_" if grep{ ! $_is_field{$_} } keys %vals;
-	return bless { 
+	if (! $vals{name} or $by_name{$vals{name}}){
+		carp($vals{name},": missing or duplicate bus name. Skipping.\n");
+		return;
+	}
+	my $bus = bless { 
 		tracks => [], 
 		groups => [], 
 		rules  => [],
 		@_ }, $class; 
+	$by_name{$bus->name} = $bus;
 }
 
 
 		
 sub apply {
 	
-	#local $debug = 1;
 	#print join " ", map{ ref $_ } values %Audio::Nama::Rule::by_name; exit;
 	my $bus = shift;
 	$debug and print q(applying rules for bus "), $bus->name, qq("\n);
@@ -61,6 +67,10 @@ sub apply {
 		map{ my $rule_name = $_;
 			$debug and print "apply rule name: $rule_name\n"; 
 			my $rule = $Audio::Nama::Rule::by_name{$_};
+			$debug and print "rule $rule"; 
+			my $condition_met = deref_code($rule->condition, $track);
+
+		if ($condition_met){
 			#print "rule is type: ", ref $rule, $/;
 			$debug and print "condition: ", $rule->condition, $/;
 
@@ -68,7 +78,6 @@ sub apply {
 			my $key2 = deref_code($rule->input_object, $track) ;
 			my $chain_id = deref_code($rule->chain_id, $track) ;
 			my $rec_status = $track->rec_status;
-			my $condition_met = deref_code($rule->condition, $track);
 
 			$debug and print "chain_id: $chain_id, rec_status: $rec_status, condition: $condition_met,  input key1: $key1, key2: $key2\n";
 			if ( 
@@ -100,6 +109,7 @@ sub apply {
 		$Audio::Nama::post_input{$chain_id} .= $post_input if defined $post_input;
 		$Audio::Nama::pre_output{$chain_id} .= $pre_output if defined $pre_output;
 			}
+		}
 
 		} @{ $bus->rules } ;
 	} @tracks; 
@@ -111,7 +121,7 @@ sub deref_code {
 	my $type = ref $value || "scalar";
 	my $tracktype = ref $track;
 	#print "found type: $type, value: $value\n";
-	#print "found type: $type, tracktype: $tracktype, value: $value\n";
+	#print "found field type: $type, track: ",$track->name, $/;
 	if ( $type  =~ /CODE/){
 		 $debug and print "code found\n";
 		$value = &$value($track);
@@ -205,11 +215,12 @@ our @ISA = 'Audio::Nama::Bus';
 use vars qw(@buses %by_name);
 
 use Audio::Nama::Object qw(	name
-						groups
-						tracks 
-						rules
-						destination_type
-						destination_id
+					groups
+					tracks 
+					rules
+					destination_type
+					destination_id
+					bus_type
 
 
 						);

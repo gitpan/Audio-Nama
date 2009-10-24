@@ -199,11 +199,11 @@ sub insert_far_side_loop {
 		# insert anon track if successor is non-track
 		else {  
 
-			my $n = $Audio::Nama::tn{$b}->n . $j++;
+			my $nam = $Audio::Nama::tn{$b}->n . $j++;
 			my $anon = Audio::Nama::SlaveTrack->new( 
 				target => $b,
-				n => $n,
-				name => $n);
+				name => $nam,
+				rw => 'REC');
 			push @$tracks_ref, $anon;
 
 			$g->add_path($_, $anon->name, $loop);
@@ -230,4 +230,10 @@ sub is_a_loop{
 		return $root;
 	} 
 }
+
+sub inputless_tracks {
+	my $g = shift;
+	(grep{ is_a_track($_) and $g->is_source_vertex($_) } $g->vertices)
+}	
+		
 1;
