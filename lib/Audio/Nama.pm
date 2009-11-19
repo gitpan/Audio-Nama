@@ -6,18 +6,24 @@
 # So all the routines in Graphical_methods.pl can consider
 # themselves to be in the base class.
 
+# How is $ui->init_gui interpreted? If $ui is class Audio::Nama::Text
+# Nama finds a no-op init_gui stub in package Audio::Nama::Text.
+#
+# If $ui is class Audio::Nama::Graphical, 
+# Nama looks for init_gui() in package Audio::Nama::Graphical,
+# finds nothing, so goes to look in the root namespace ::
+# of which Audio::Nama::Text and Audio::Nama::Graphical are both descendants.
+
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = '0.9984';
+$VERSION = 0.9986;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
 use autodie qw(:default);
 use Carp;
 use Cwd;
-use Data::YAML;
-use Event qw(loop unloop unloop_all);
 use File::Find::Rule;
 use File::Spec::Link;
 use File::Path;
@@ -31,21 +37,19 @@ use Parse::RecDescent;
 use Storable; 
 use Term::ReadLine;
 use Graph;
-
 # use Timer::HiRes; # automatically detected
-
 # use Tk;           # loaded conditionally
-
-
-#use Tk::FontDialog;
-
+# use Event;		# loaded conditionally
+# use AnyEvent;		# loaded after Tk or Event
+# use Tk::FontDialog; # hmmm might be nice to use
+use Text::Format;
 
 ## Definitions ##
 
 $| = 1;     # flush STDOUT buffer on every write
 
-# 'our' declaration: all packages in the file will see the following
-# variables. 
+# 'our' declaration: code in all packages in Nama.pm can address
+# the following variables without package name prefix
 
 our (
 
@@ -74,17 +78,12 @@ our (
 					  	# as one big config file
 	@effects_static_vars,	# the list of which variables to store and retrieve
 	@effects_dynamic_vars,		# same for all chain operators
-	@global_vars,    # contained in config file
 	@config_vars,    # contained in config file
 	@status_vars,    # we will dump them for diagnostic use
 	%abbreviations, # for replacements in config files
 
-	$globals,		# yaml assignments for @global_vars
-					# for appending to config file
-	
-	$ecasound_globals_ecs, # set to one of the following
-	$ecasound_globals,     # .namarc field
-	$ecasound_globals_for_mixdown,  # .namarc field
+	$ecasound_globals_realtime,     # .namarc field
+	$ecasound_globals_default,  # .namarc field
 	$ecasound_tcp_port,  # for Ecasound NetECI interface
 	$saved_version, # copy of $VERSION saved with settings in State.yml
 
@@ -136,6 +135,7 @@ our (
 
 					 #this_wav_dir = 
 	$state_store_file,	# filename for storing @persistent_vars
+	$effect_chain_file, # for storing effect chains
 	$chain_setup_file, # Ecasound uses this 
 
 	$tk_input_channels,# this many radiobuttons appear
@@ -163,6 +163,7 @@ our (
 	$cop_id, 		# chain operator id, that how we create, 
 					# store, find them, adjust them, and destroy them,
 					# per track or per project?
+	$magical_cop_id, # cut through five levels of subroutines
 	%cops,			 # chain operators stored here
 	%copp,			# their parameters for effect update
 	%copp_exp,      # for log-scaled sliders
@@ -268,6 +269,7 @@ our (
 	$off,      # background color
 	$palette_file, # where to save selections
 
+
 	### A separate box for entering IAM (and other) commands
 	$iam_label,
 	$iam_text,
@@ -350,7 +352,7 @@ our (
 	%tn, # track by name  (alias %Audio::Nama::Track::by_name)
 
 	@tracks_data, # staging for saving
-	@sub_bus_data,   # 
+	@bus_data,   # 
 	@groups_data, # 
 	@marks_data, # 
 
@@ -361,14 +363,12 @@ our (
 
 	# rules
 	
-	$mix_down_ev,
 	$mon_setup,
 	$rec_file,
 	$rec_setup,
 	$aux_send,
 	$null_setup,
 
-	$send_bus_cooked_input,
 	$send_bus_out,
 	
 	# mastering mode status
@@ -382,7 +382,6 @@ our (
 					# for 'repeat' events, so converted to
 					# 'after' events
 	%event_id,    # events will store themselves with a key
-	$set_event,   # the Tk dummy widget used to set events
 	@loop_endpoints, # they define the loop
 	$loop_enable, # whether we automatically loop
 
@@ -420,26 +419,21 @@ our (
 	$disable_auto_reconfigure, # for debugging
 
 	$g, 			# Graph var, for chain setup
+	%cooked_record_pending, # an intermediate mixdown for tracks
+	$press_space_to_start_transport, #  in text mode
+	%effect_chain, # named effect sequences
+	$sock, 			# socket for Net-ECI mode
+	%versions,		# store active versions for use after engine run
 );
  
 
-# @global_vars is unused
-@global_vars = qw(
-						$effects_cache_file
-						$ladspa_sample_rate
-						$state_store_file
-						$chain_setup_file
-						$tk_input_channels
-						$use_monitor_version_for_mixdown 
-						$unit								);
-						
 # variables found in namarc
 #
 @config_vars = qw(
 						%abbreviations
 						%devices
-						$ecasound_globals
-						$ecasound_globals_for_mixdown
+						$ecasound_globals_realtime
+						$ecasound_globals_default
 						$ecasound_tcp_port
 						$mix_to_disk_format
 						$raw_to_disk_format
@@ -448,6 +442,7 @@ our (
 						$capture_device	
 						$project_root 	
 						$use_group_numbering
+						$press_space_to_start_transport
 						$execute_on_project_load
 						$initial_user_mode
 						$mastering_effects
@@ -476,7 +471,7 @@ our (
 						%old_vol		
 						$this_op
 						@tracks_data
-						@sub_bus_data
+						@bus_data
 						@groups_data
 						@marks_data
 						$loop_enable
@@ -505,46 +500,19 @@ our (
 						%ladspa_help
 						@effects_help
 						);
-					
 
 
-# following is unused 
-@effects_dynamic_vars = qw(
-
-						%state_c_ops
-						%cops    
-						$cop_id     
-						%copp   
-						@marks 	
-						$unit				);
-
-
-
-# unused, but referred to
-@status_vars = qw(
-
-						%state_c
-						%state_t
-						%copp
-						%cops
-						%post_input
-						%pre_output   
-						%inputs
-						%outputs      );
-
-
-
-# instances needed for yaml_out and yaml_in
-
-$yw = Data::YAML::Writer->new; 
-$yr = Data::YAML::Reader->new;
+$text_wrap = new Text::Format {
+	columns 		=> 75,
+	firstIndent 	=> 0,
+	bodyIndent		=> 0,
+	tabstop			=> 4,
+};
 
 $debug2 = 0; # subroutine names
 $debug = 0; # debug statements
 
-$banner =
-
-<<BANNER;
+$banner = <<BANNER;
       ////////////////////////////////////////////////////////////////////
      /                                                                  /
     /    Nama multitrack recorder v. $VERSION (c)2008-2009 Joel Roth     /
@@ -561,6 +529,7 @@ $unit = 1;
 $effects_cache_file = '.effects_cache';
 $palette_file = 'palette.yml';
 $state_store_file = 'State.yml';
+$effect_chain_file = 'effect_chains.yml';
 $chain_setup_file = 'Setup.ecs'; # For loading by Ecasound
 $tk_input_channels = 10;
 $use_monitor_version_for_mixdown = 1; # not implemented yet
@@ -571,16 +540,13 @@ $use_pager = 1;
 $use_placeholders = 1;
 $save_id = "State";
 $fade_time = 0.3;
-#$SIG{INT} = sub{ mute{$tn{Master}} if engine_running(); die "\nAborting.\n" };
 $old_snapshot = {};
 $main_out = 1; # enable main output
 
 jack_update(); # to be polled by Event
-$memoize = 0;
+$memoize = 1;
 
 @mastering_track_names = qw(Eq Low Mid High Boost);
-
-$term = new Term::ReadLine("Ecasound/Nama");
 
 ## Load my modules
 
@@ -616,11 +582,97 @@ sub hello {"superclass hello"}
 
 sub new { my $class = shift; return bless {@_}, $class }
 
-if ( can_load(modules => {'Time::HiRes'=> undef} ) ) 
-	 { *sleeper = *finesleep;
-		$hires++; }
-else { *sleeper = *select_sleep }
+sub nama { 
+	process_options();
+	prepare(); 
+	command_process($execute_on_project_load);
+	reconfigure_engine();
+	$ui->loop;
+}
+sub prepare {
 	
+	$debug2 and print "&prepare\n";
+	choose_sleep_routine();
+
+	$project_name = shift @ARGV;
+	$debug and print "project name: $project_name\n";
+
+	$debug and print ("\%opts\n======\n", yaml_out(\%opts)); ; 
+
+
+	read_config(global_config());  # from .namarc if we have one
+
+	if ( can_load( modules => { 'Audio::Ecasound' => undef } )
+			and ! $opts{n} ){ 
+		say "\nUsing Ecasound via Audio::Ecasound (libecasoundc).";
+		{ no warnings qw(redefine);
+		*eval_iam = \&eval_iam_libecasoundc; }
+		$e = Audio::Ecasound->new();
+	} else { 
+
+		no warnings qw(redefine);
+		launch_ecasound_server($ecasound_tcp_port);
+		init_ecasound_socket($ecasound_tcp_port); 
+		*eval_iam = \&eval_iam_neteci;
+	}
+	
+
+	$debug and print "reading config file\n";
+	if ($opts{d}){
+		print "found command line project_root flag\n";
+		$project_root = $opts{d};
+	}
+
+	# capture the sample frequency from .namarc
+	($ladspa_sample_rate) = $devices{jack}{signal_format} =~ /(\d+)(,i)?$/;
+
+	first_run();
+
+	prepare_static_effects_data() unless $opts{e};
+
+	get_ecasound_iam_keywords();
+	load_keywords(); # for autocompletion
+
+	chdir $project_root # for filename autocompletion
+		or warn "$project_root: chdir failed: $!\n";
+
+	
+	
+	initialize_rules(); 					# bus/rule routing
+	$debug and say join " ", %Audio::Nama::Rule::by_name;
+	#die "here";
+	initialize_routing_dispatch_table();	# graph-based routing
+
+	$ui->init_gui;
+	$ui->transport_gui;
+	$ui->time_gui;
+	poll_jack();
+	initialize_terminal();
+
+	if (! $project_name ){
+		$project_name = "untitled";
+		$opts{c}++; 
+	}
+	print "\nproject_name: $project_name\n";
+	
+	if ($project_name){
+		load_project( name => $project_name, create => $opts{c}) ;
+	}
+	1;	
+}
+sub issue_first_prompt {
+	$term->stuff_char(10); # necessary to respond to Ctrl-C at first prompt 
+	&{$attribs->{'callback_read_char'}}();
+	print prompt();
+	$attribs->{already_prompted} = 0;
+}
+
+sub choose_sleep_routine {
+	if ( can_load(modules => {'Time::HiRes'=> undef} ) ) 
+		 { *sleeper = *finesleep;
+			$hires++; }
+	else { *sleeper = *select_sleep }
+}
 sub finesleep {
 	my $sec = shift;
 	Time::HiRes::usleep($sec * 1e6);
@@ -628,118 +680,131 @@ sub finesleep {
 sub select_sleep {
    my $seconds = shift;
    select( undef, undef, undef, $seconds );
-# 	my $sec = shift;
-# 	$sec = int($sec   + 0.5);
-# 	$sec or $sec++;
-# 	sleep $sec
-}
-
-sub nama { 
-	process_options();
-	prepare(); 
-	command_process($execute_on_project_load);
-	$ui->install_handlers();
-	reconfigure_engine() x 5;
-	$ui->loop;
-}
-sub status_vars {
-	serialize( class => 'Audio::Nama', vars => \@status_vars);
-}
-sub config_vars {
-	serialize( class => 'Audio::Nama', vars => \@config_vars);
-}
-
-sub discard_object {
-	shift @_ if (ref $_[0]) =~ /Nama/;
-	@_;
 }
 
 
+sub initialize_terminal {
+	$term = new Term::ReadLine("Ecasound/Nama");
+	$attribs = $term->Attribs;
+	$attribs->{attempted_completion_function} = \&complete;
+	$attribs->{already_prompted} = 1;
+	vet_keystrokes();
+	revise_prompt();
+	# handle Control-C from terminal
 
+	$SIG{INT} = \&cleanup_exit;
+	#$event_id{sigint} = AE::signal('INT', \&cleanup_exit);
+
+}
+sub revise_prompt {
+    $term->callback_handler_install(prompt(), \&process_line);
+}
+sub prompt {
+	"nama". ($this_track ? " [".$this_track->name."]" : '') . " ('h' for help)> "
+}
+sub vet_keystrokes {
+	$event_id{stdin} = AE::io(*STDIN, 0, sub {
+		&{$attribs->{'callback_read_char'}}();
+		if (  $press_space_to_start_transport and
+				$attribs->{line_buffer} eq " " ){
+
+			toggle_transport();	
+			$attribs->{line_buffer} = q();
+			$attribs->{point} 		= 0;
+			$attribs->{end}   		= 0;
+			$term->stuff_char(10);
+			&{$attribs->{'callback_read_char'}}();
+		}
+	});
+}
+	
+sub toggle_transport {
+	if (engine_running()){ stop_transport() } 
+	else { start_transport() }
+}
+	
 sub first_run {
-return if $opts{f};
-my $config = config_file();
-$config = "$ENV{HOME}/$config" unless -e $config;
-$debug and print "config: $config\n";
-if ( ! -e $config and ! -l $config  ) {
+	return if $opts{f};
+	my $config = config_file();
+	$config = "$ENV{HOME}/$config" unless -e $config;
+	$debug and print "config: $config\n";
+	if ( ! -e $config and ! -l $config  ) {
 
-# check for missing components
+	# check for missing components
 
-my $missing;
-my @a = `which analyseplugin`;
-@a or print ( <<WARN
+	my $missing;
+	my @a = `which analyseplugin`;
+	@a or print ( <<WARN
 LADSPA helper program 'analyseplugin' not found
 in $ENV{PATH}, your shell's list of executable 
 directories. You will probably have more fun with the LADSPA
 libraries and executables installed. http://ladspa.org
 WARN
-) and  sleeper (0.6) and $missing++;
-my @b = `which ecasound`;
-@b or print ( <<WARN
+	) and  sleeper (0.6) and $missing++;
+	my @b = `which ecasound`;
+	@b or print ( <<WARN
 Ecasound executable program 'ecasound' not found
 in $ENV{PATH}, your shell's list of executable 
 directories. This suite depends on the Ecasound
 libraries and executables for all audio processing! 
 WARN
-) and sleeper (0.6) and $missing++;
+	) and sleeper (0.6) and $missing++;
 
-my @c = `which file`;
-@c or print ( <<WARN
+	my @c = `which file`;
+	@c or print ( <<WARN
 BSD utility program 'file' not found
 in $ENV{PATH}, your shell's list of executable 
 directories. This program is currently required
 to be able to play back mixes in stereo.
 WARN
-) and sleeper (0.6);
-if ( $missing ) {
-print "You lack $missing main parts of this suite.  
+	) and sleeper (0.6);
+	if ( $missing ) {
+	print "You lack $missing main parts of this suite.  
 Do you want to continue? [N] ";
-$missing and 
-my $reply = <STDIN>;
-chomp $reply;
-print ("Goodbye.\n"), exit unless $reply =~ /y/i;
-}
+	$missing and 
+	my $reply = <STDIN>;
+	chomp $reply;
+	print ("Goodbye.\n"), exit unless $reply =~ /y/i;
+	}
 print <<HELLO;
 
 Aloha. Welcome to Nama and Ecasound.
 
 HELLO
-sleeper (0.6);
-print "Configuration file $config not found.
+	sleeper (0.6);
+	print "Configuration file $config not found.
 
 May I create it for you? [yes] ";
-my $make_namarc = <STDIN>;
-sleep 1;
-print <<PROJECT_ROOT;
+	my $make_namarc = <STDIN>;
+	sleep 1;
+	print <<PROJECT_ROOT;
 
 Nama places all sound and control files under the
 project root directory, by default $ENV{HOME}/nama.
 
 PROJECT_ROOT
-print "Would you like to create $ENV{HOME}/nama? [yes] ";
-my $reply = <STDIN>;
-chomp $reply;
-if ($reply !~ /n/i){
-	$default =~ s/^project_root.*$/project_root: $ENV{HOME}\/nama/m;
-	mkpath( join_path($ENV{HOME}, qw(nama untitled .wav)) );
-} else {
-	print <<OTHER;
+	print "Would you like to create $ENV{HOME}/nama? [yes] ";
+	my $reply = <STDIN>;
+	chomp $reply;
+	if ($reply !~ /n/i){
+		$default =~ s/^project_root.*$/project_root: $ENV{HOME}\/nama/m;
+		mkpath( join_path($ENV{HOME}, qw(nama untitled .wav)) );
+	} else {
+		print <<OTHER;
 Please make sure to set the project_root directory in
 .namarc, or on the command line using the -d option.
 
 OTHER
+	}
+	if ($make_namarc !~ /n/i){
+		$default > io( $config );
+	}
+	sleep 1;
+	print "\n.... Done!\n\nPlease edit $config and restart Nama.\n\n";
+	print "Exiting.\n"; 
+	exit;	
+	}
 }
-if ($make_namarc !~ /n/i){
-$default > io( $config );
-}
-sleep 1;
-print "\n.... Done!\n\nPlease edit $config and restart Nama.\n\n";
-print "Exiting.\n"; 
-exit;	
-}
-}
-
-
 
 sub process_options {
 
@@ -773,17 +838,10 @@ sub process_options {
 
 	#say $getopts;
 
-	my $result = eval $getopts;
-	
-	# short options
-
-	# push @ARGV, qw( -e  );
-	#push @ARGV, qw(-d /media/sessions test-abc  );
-	#getopts('amcegstrnd:f:DR', \%opts); 
-	#print join $/, (%opts);
+	eval $getopts or die "Stopped.\n";
 	
 	if ($opts{h}){
-	say <<HELP;
+	say <<HELP; exit; }
 
 USAGE: nama [options] [project_name]
 
@@ -809,97 +867,24 @@ Debugging options:
 
 HELP
 
-	exit;
-	} else { say $banner; }
 
-}
-	
-sub prepare {
-	
-	$debug2 and print "&prepare\n";
+	say $banner;
 
 	if ($opts{D}){
 		$debug = 1;
 		$debug2 = 1;
 	}
-	if ( $opts{t} ){ 
-		# text mode (Event.pm event loop)
-		$ui = Audio::Nama::Text->new;
+	if ( ! $opts{t} and can_load( modules => { Tk => undef } ) ){ 
+		$ui = Audio::Nama::Graphical->new;
 	} else {
-		# default to graphic mode  (Tk event loop)
-		if ( can_load( modules => { 'Tk' => undef } ) ){ 
-			$ui = Audio::Nama::Graphical->new;
-		} else { 
-			print "Module Tk not found. Using Text mode.\n"; 
-			$ui = Audio::Nama::Text->new;
-		}
+		$ui = Audio::Nama::Text->new;
+		can_load( modules =>{ Event => undef});
+		import Event qw(loop unloop unloop_all);
 	}
+	can_load( modules => {AnyEvent => undef});
 
-	$project_name = shift @ARGV;
-	$debug and print "project name: $project_name\n";
-
-	$debug and print ("\%opts\n======\n", yaml_out(\%opts)); ; 
-
-
-	read_config(global_config());  # from .namarc if we have one
-
-	if ( can_load( modules => { 'Audio::Ecasound' => undef } )
-			and ! $opts{n} ){ 
-		say "Using Ecasound via Audio::Ecasound (libecasoundc).";
-		{ no warnings qw(redefine);
-		*eval_iam = \&eval_iam_libecasoundc; }
-		$e = Audio::Ecasound->new();
-	} else { 
-		launch_ecasound_server($ecasound_tcp_port);
-		init_ecasound_socket($ecasound_tcp_port); 
-		*eval_iam = \&eval_iam_neteci;
-	}
-	
-
-	$debug and print "reading config file\n";
-	if ($opts{d}){
-		print "found command line project_root flag\n";
-		$project_root = $opts{d};
-	}
-
-	# capture the sample frequency from .namarc
-	($ladspa_sample_rate) = $devices{jack}{signal_format} =~ /(\d+)(,i)?$/;
-
-	first_run();
-
-	prepare_static_effects_data() unless $opts{e};
-
-	get_ecasound_iam_keywords();
-	load_keywords(); # for autocompletion
-
-	chdir $project_root # for filename autocompletion
-		or warn "$project_root: chdir failed: $!\n";
-
-	
-	init_buses();	
-	
-	initialize_rules(); 					# bus/rule routing
-	$debug and say join " ", %Audio::Nama::Rule::by_name;
-	#die "here";
-	initialize_routing_dispatch_table();	# graph-based routing
-
-	$ui->init_gui;
-	$ui->transport_gui;
-	$ui->time_gui;
-	$ui->poll_jack();
-
-	if (! $project_name ){
-		$project_name = "untitled";
-		$opts{c}++; 
-	}
-	print "\nproject_name: $project_name\n";
-	
-
-	if ($project_name){
-		load_project( name => $project_name, create => $opts{c}) ;
-	}
-	1;	
 }
+	
 {
 my $default_port = 2868; # Ecasound's default
 sub launch_ecasound_server {
@@ -916,8 +901,6 @@ sub launch_ecasound_server {
 	sleep 1;
 }
 
-
-my $sock;
 
 sub init_ecasound_socket {
 	my $port = shift // $default_port;
@@ -960,7 +943,7 @@ length: $length
 type: $type
 reply: $reply";
 
-	$return_value == 256 or die "illegal return value" ;
+	$return_value == 256 or die "illegal return value, stopped" ;
 	$reply =~ s/\s+$//; 
 
 	given($type){
@@ -972,7 +955,6 @@ reply: $reply";
 }
 
 sub eval_iam_libecasoundc{
-	#local $debug = 1;
 	#$debug2 and print "&eval_iam\n";
 	my $command = shift;
 	$debug and print "iam command: $command\n";
@@ -983,6 +965,7 @@ sub eval_iam_libecasoundc{
 	# not needed ecasound prints error on STDOUT
 	$e->errmsg('');
 	"@result";
+	#$errmsg ? undef : "@result";
 }
 sub colonize { # convert seconds to hours:minutes:seconds 
 	my $sec = shift;
@@ -1030,29 +1013,13 @@ sub read_config {
 	$debug2 and print "&read_config\n";
 	
 	my $config = shift;
-	#print "config: $config";;
 	my $yml = length $config > 100 ? $config : $default;
-	#print "yml1: $yml";
 	strip_all( $yml );
-	#print "yml2: $yml";
-	if ($yml !~ /^---/){
-		$yml =~ s/^\n+//s;
-		$yml =~ s/\n+$//s;
-		$yml = join "\n", "---", $yml, "...";
-	}
-#	print "yml3: $yml";
-	eval ('$yr->read($yml)') or croak( "Can't read YAML code: $@");
-	%cfg = %{  $yr->read($yml)  };
-	#print yaml_out( $cfg{abbreviations}); exit;
+	%cfg = %{  yaml_in($yml) };
 	*subst = \%{ $cfg{abbreviations} }; # alias
-#	*devices = \%{ $cfg{devices} }; # alias
-#	assigned by assign_var below
-	#print yaml_out( \%subst ); exit;
 	walk_tree(\%cfg);
 	walk_tree(\%cfg); # second pass completes substitutions
-	#print yaml_out \%cfg; 
-	assign_var( \%cfg, @config_vars);  ## XXX
-	#print "config file: $yml";
+	assign_var( \%cfg, @config_vars);
 	$project_root = $opts{d} if $opts{d};
 
 }
@@ -1105,6 +1072,7 @@ Loading project "untitled".
 	#chdir project_dir();
 	# read_config( global_config() ); 
 	initialize_rules();
+	init_buses();	
 	initialize_project_data();
 
 	remove_small_wavs(); 
@@ -1122,6 +1090,7 @@ Loading project "untitled".
 		 Audio::Nama::Track->new( 
 			group => 'Mixdown', 
 			name => 'Mixdown', 
+			width => 2,
 			rw => 'MON'); 
 	}
 
@@ -1150,6 +1119,7 @@ sub rememoize {
 }
 
 sub init_buses {
+	Audio::Nama::Bus->initialize();
 	$main_bus  = Audio::Nama::Bus->new(
 		name => 'Main_Bus',
 		groups => [qw(Main)],
@@ -1195,7 +1165,7 @@ sub initialize_routing_dispatch_table {
 				type 		=> 'file',
 				id	 		=> $t->full_path,
 				chain		=> $t->n,
-				pre_output	=> signal_format($raw_to_disk_format, $t->ch_count),
+				pre_output	=> '-f:'.signal_format($raw_to_disk_format, $t->width),
 			});
 		},
 		loop_source => sub {
@@ -1221,7 +1191,18 @@ sub initialize_routing_dispatch_table {
 			add_entry_h($h);
 		},
 		null_in			=> sub {},
-		null_out		=> sub {},
+		null_out		=> sub {
+			my $name = shift;
+			my $t = $tn{$name};
+			my ($type, $id) = qw(device null);
+			add_entry_h({
+				dir  	=> 'outputs',
+				name	=> $name,
+				type 	=> $type,
+				id		=> $id,
+				chain	=> $t->n,
+			});
+		},
 		jack_client_in 	=> sub {
 			my $name = shift;
 			my $t = $tn{$name};
@@ -1248,37 +1229,37 @@ sub initialize_routing_dispatch_table {
 				pre_output => $t->pre_send,
 			});
 		},
-	soundcard_in	=> sub { 
-		my $name = shift;
-		my $t = $tn{$name};
-		my ($type, $id) = @{$t->soundcard_input};
-		add_entry_h({
-			dir  	=> 'inputs',
-			name	=> $name,
-			type 	=> $type,
-			id		=> $id,
-			chain	=> $t->n,
-			post_input => $t->rec_route .  $t->mono_to_stereo, 
+		soundcard_in	=> sub { 
+			my $name = shift;
+			my $t = $tn{$name};
+			my ($type, $id) = @{$t->soundcard_input};
+			add_entry_h({
+				dir  	=> 'inputs',
+				name	=> $name,
+				type 	=> $type,
+				id		=> $id,
+				chain	=> $t->n,
+				post_input => $t->rec_route .  $t->mono_to_stereo, 
+				});
+			},
+		soundcard_out	=> sub { 
+			my $name = shift;
+			my $t = $tn{$name};
+			my ($type, $id) = @{soundcard_output()};
+			add_entry_h({
+				dir  	=> 'outputs',
+				name	=> $name,
+				type 	=> $type,
+				id		=> $id,
+				chain	=> $t->n,
+				pre_output => $t->pre_send,
 			});
 		},
-	soundcard_out	=> sub { 
-		my $name = shift;
-		my $t = $tn{$name};
-		my ($type, $id) = @{soundcard_output()};
-		add_entry_h({
-			dir  	=> 'outputs',
-			name	=> $name,
-			type 	=> $t->soundcard_output()->[0],
-			id		=> $t->soundcard_output()->[1],
-			chain	=> $t->n,
-			pre_output => $t->pre_send,
-		});
-	},
 	);
 
 # 	we might use the same routines for jack_client_in/out
 # 	for soundcard_in/out, except the latter would require
-# 	settings for send_type, send_id, ch_count in Master/Mixdown
+# 	settings for send_type, send_id, width in Master/Mixdown
 # 	or any other track that is graphically directed
 #	to the sound device
 
@@ -1314,25 +1295,6 @@ sub initialize_rules {
 		%rule_names = (); 
 	package Audio::Nama;
 
-# the following rule is used by automix to normalize
-# the track levels.
-
-	$mix_down_ev = Audio::Nama::Rule->new(
-
-		name			=> 'mix_ev', 
-		chain_id		=> 1, # Master
-		target			=> 'all', 
-		
-		input_type 		=> 'loop',
-		input_object	=> 'Master_in',
-
-		output_type		=> 'device',
-		output_object   => 'null',
-
-		status			=> 0,
-	);
-
-
 	# records unprocessed live input to file
 		
 	$rec_file = Audio::Nama::Rule->new(
@@ -1346,7 +1308,7 @@ sub initialize_rules {
 		output_object   => sub { my $track = shift; $track->full_path },
 		post_input			=>	sub{ my $track = shift; $track->rec_route },
 		pre_output	=> sub { my $track = shift; 
-						'-f:'.signal_format($raw_to_disk_format, $track->ch_count);
+						'-f:'.signal_format($raw_to_disk_format, $track->width);
 						},
 		condition		=> sub {my $track = shift; ! $track->rec_defeat },
 		status		=>  1,
@@ -1408,7 +1370,7 @@ $aux_send = Audio::Nama::Rule->new(
 	);
 
 
- 	$rec_setup = Audio::Nama::Rule->new(	 	# used by UserBus 
+ 	$rec_setup = Audio::Nama::Rule->new(	 	# used by user buses 
 		
 		name			=>	'rec_setup', 
 		chain_id		=>  sub{ $_[0]->n },   
@@ -1477,7 +1439,6 @@ sub initialize_project_data {
 
 	%track_widget = ();
 	%effects_widget = ();
-	
 
 	# time related
 	
@@ -1500,24 +1461,23 @@ sub initialize_project_data {
 	$old_snapshot = {};
 	$preview = $initial_user_mode;
 	$mastering_mode = 0;
+	$saved_version = 0; 
 	
 	%bunch = ();	
 	
-	Audio::Nama::Group::initialize();
-	Audio::Nama::Track::initialize();
-
+	Audio::Nama::Group->initialize();
 	create_groups();
+	Audio::Nama::Track->initialize();
 
-	#print yaml_out( \%Audio::Nama::Track::track_names );
+	%inputs = %outputs = ();
 
-
-    # create master and mixdown
 }
 sub create_groups {
 
 	Audio::Nama::Group->new(name => 'Master');
 	Audio::Nama::Group->new(name => 'Mixdown', rw => 'REC');
 	Audio::Nama::Group->new(name => 'Insert');
+	Audio::Nama::Group->new(name => 'Cooked');
 	$main = Audio::Nama::Group->new(name => 'Main', rw => 'REC');
 	$null    = Audio::Nama::Group->new(name => 'null');
 }
@@ -1542,31 +1502,9 @@ sub add_track_alias_project {
 	}
 }
 
-# create read-only track pointing at WAV files of specified
-# name in current project
-
-sub add_track_alias {
-	my ($name, $track) = @_;
-	my $target; 
-	if 		( $tn{$track} ){ $target = $track }
-	elsif	( $ti{$track} ){ $target = $ti{$track}->name }
-	add_track(  $name, target => $target );
-}
-sub add_slave_track {
-	my %h = @_;
-	say (qq[Group "$h{group}" does not exist, skipping.]), return
-		 unless $Audio::Nama::Group::by_name{$h{group}};
-	say (qq[Target track "$h{target}" does not exist, skipping.]), return
-		 unless $tn{$h{target}};
-		Audio::Nama::SlaveTrack->new(	
-			name => "$h{group}_$h{target}",
-			target => $h{target},
-			rw => 'MON',
-			source_type => undef,
-			source_id => undef,
-			send_type => $Audio::Nama::UserBus::by_name{$h{group}}->destination_type,
-			send_id   => $Audio::Nama::UserBus::by_name{$h{group}}->destination_id,
-			)
+sub discard_object {
+	shift @_ if (ref $_[0]) =~ /Nama/;
+	@_;
 }
 
 # usual track
@@ -1603,10 +1541,33 @@ sub add_track {
 	$debug and print "Added new track!\n", $track->dump;
 }
 
-sub dig_ruins { 
-	
+# create read-only track pointing at WAV files of specified
+# name in current project
 
-	# only if there are no tracks , 
+sub add_track_alias {
+	my ($name, $track) = @_;
+	my $target; 
+	if 		( $tn{$track} ){ $target = $track }
+	elsif	( $ti{$track} ){ $target = $ti{$track}->name }
+	add_track(  $name, target => $target );
+}
+sub add_slave_track {
+	my %h = @_;
+	say (qq[Group "$h{group}" does not exist, skipping.]), return
+		 unless $Audio::Nama::Group::by_name{$h{group}};
+	say (qq[Target track "$h{target}" does not exist, skipping.]), return
+		 unless $tn{$h{target}};
+		Audio::Nama::SlaveTrack->new(	
+			name => "$h{group}_$h{target}",
+			target => $h{target},
+			rw => 'MON',
+			source_type => undef,
+			source_id => undef,
+			send_type => $Audio::Nama::Bus::by_name{$h{group}}->destination_type,
+			send_id   => $Audio::Nama::Bus::by_name{$h{group}}->destination_id,
+			)
+}
+sub dig_ruins { # only if there are no tracks 
 	
 	$debug2 and print "&dig_ruins";
 	return if Audio::Nama::Track::user();
@@ -1724,7 +1685,7 @@ sub user_rec_tracks {
 	map{ $_->n } @user_rec_tracks;
 }
 
-# return list of indices of user tracks with REC status
+# return list of indices of user tracks with MON status
 
 sub user_mon_tracks {
 	my @user_tracks = Audio::Nama::Track::all();
@@ -1733,92 +1694,130 @@ sub user_mon_tracks {
 	my @user_mon_tracks = grep { $_->rec_status eq 'MON' } @user_tracks;
 	return unless @user_mon_tracks;
 	map{ $_->n } @user_mon_tracks;
-
 }
-
-# return $output{file} entries
-# - embedded format strings are included
-# - mixdown track is included
-
-sub really_recording {  
-
-	keys %{$outputs{file}}; 
-}
-
+# return $output{file} entries, including Mixdown 
+sub really_recording {  keys %{$outputs{file}}; }
 
 sub generate_setup { 
-
-	# Create data structures representing chain setup.
-	# This step precedes write_chains(), i.e. writing Setup.ecs.
-
 	$debug2 and print "&generate_setup\n";
 
-	%inputs = %outputs 
-			= %post_input 
-			= %pre_output 
-			= @input_chains 
-			= @output_chains 
-			= ();
+	my $automix = shift; # route Master to null_out
+
+	# save current track
+	my $old_this_track = $this_track;
+
+	initialize_chain_setup_vars();
+	connect_Main_tracks_to_Master();
+	add_paths_for_send_buses();
+	add_paths_for_sub_buses();
+	add_paths_from_Master(); # do they affect automix?
+
+	# re-route Master to null for automix
+	if( $automix){
+		$g->delete_edges(map{@$_} $g->edges_from('Master')); # no, they don't
+		$g->add_edge(qw[Master null_out]);
+	}
+	add_paths_for_mixdown_handling();
+	prune_graph();
 	
-	# we don't want to go further unless there are signals
-	# to process
+	$debug and say "The graph is:\n$g";
 
+	my $temp_tracks = Audio::Nama::Graph::expand_graph($g); # array ref
+
+	$debug and say "The expanded graph is:\n$g";
+
+	# insert handling
+	Audio::Nama::Graph::add_inserts($g);
+
+	$debug and say "The expanded graph with inserts is\n$g";
+
+	# create IO lists %inputs and %outputs
+
+	process_routing_graph();
+	# now we have processed graph, we can remove temp tracks
+
+	$debug and say "temp tracks to remove";
+	map{ $debug and say $_->name; $_->remove } @$temp_tracks;
+
+	$this_track = $old_this_track;
+
+	process_static_bus_rules();
+
+	maybe_write_chains();
+}
+sub initialize_chain_setup_vars {
+
+	  %inputs 
+		= %outputs 
+		= %post_input 
+		= %pre_output 
+		= @input_chains 
+		= @output_chains 
+		= ();
+
+	# initialize graph
+	
 	$g = Graph->new();
-
+}
+sub connect_Main_tracks_to_Master {
 	map{ 
 
-		# the mix track of user buses will belong to Main group
-
-		# set $track->rec_defeat to skip rec_file
-		# set $track->source_type = 'dummy' to skip rec setup above
-
-		# the input will come via a loop device
-		# by connecting the sub bus track outputs to the mix track
-
+		# connect signal sources to tracks
+		
 		my @path = $_->input_path;
 		#say "Main bus track input path: @path";
 		$g->add_path(@path) if @path;
 
-		# create default mixer connection
+		# connect tracks to Master
 		
-		$g->add_edge($_->name, 'Master'); #  if $g->predecessors($_->name)
-		# we will remove input-less tracks later
-;
+		$g->add_edge($_->name, 'Master'); #  if $g->predecessors($_->name);
 
 	} 	grep{ $_->rec_status ne 'OFF' } 
 		map{$tn{$_}} 	# convert to Track objects
 		$main->tracks;  # list of Track names
 
+}
 
-		# process optional send and sub buses
+sub add_paths_for_send_buses {
 
+	my @user_buses = grep{ $_->name  !~ /Null_Bus|Main_Bus/ } values %Audio::Nama::Bus::by_name;
 	map{
 
-		# raw send buses use only fixed-rule routing
-		# we process them in generate io_lists
+		my $bus = $_;
+		# we get tracks from a group of the same name as $bus->name
+		my @tracks = grep{ $_->rec_status ne 'OFF' } 
+					 map{$tn{$_}} $Audio::Nama::Group::by_name{$bus->name}->tracks;
 
-		if( $_->bus_type eq 'cooked'){  # post-fader send bus
+		# raw send buses use only fixed-rule routing
+		# we process them later
+
+		if( $bus->bus_type eq 'cooked'){  # post-fader send bus
 
 			$debug and say 'process post-fader bus';
 
 			# The signal path is:
-			#
-			# [target track] -> [slave track] -> [slave track send output]
+			# [target track] -> [slave track] -> [slave track send_output]
 			
-			map{   
-				$g->add_path( $_->target, $_->name, $_->send_type.'_out');
-
-				# it would be possible here to use the override function
-				# set the track vertex send_type and send_id using bus values
-				# dest_type, dest_id, allowing update to match
-				# bus parameters.
-				
-			} 	grep{ $_->rec_status ne 'OFF' } 
-				map{$tn{$_}} $Audio::Nama::Group::by_name{$_->name}->tracks;
+			map{   $g->add_path( $_->target, $_->name, $_->send_type.'_out');
+			} @tracks; 
 		}
-		elsif( $_->bus_type eq 'sub'){   # sub bus
+	} @user_buses;
+}
+sub add_paths_for_sub_buses {
+
+	my @user_buses = grep{ $_->name  !~ /Null_Bus|Main_Bus/ } values %Audio::Nama::Bus::by_name;
+	map{
+
+		my $bus = $_;
+		# we get tracks from a group of the same name as $bus->name
+		my @tracks = grep{ $_->rec_status ne 'OFF' } 
+					 map{$tn{$_}} $Audio::Nama::Group::by_name{$bus->name}->tracks;
+
+		# raw send buses use only fixed-rule routing
+		# we process them later
+
+		if( $_->bus_type eq 'sub'){   # sub bus
 			$debug and say 'process sub bus';
-			my $bus = $_;
 			my $output = $bus->destination_type eq 'track' 
 				? $bus->destination_id
 				: $bus->destination_type . '_out';
@@ -1826,45 +1825,40 @@ sub generate_setup {
 			$debug and say "bus output: $output";
 
 			# The signal path is:
-			#
 			# [track input] -> [track] -> [bus destination]
 			
 			map{ 	my @path = ($_->input_path, $output);
 					say "path: @path";
 					$g->add_path(@path); 
 
-			} map{$tn{$_}} $Audio::Nama::Group::by_name{$_->name}->tracks;
+			} @tracks;
 		}
-	} Audio::Nama::UserBus::all() if Audio::Nama::UserBus::all();
-
-	# remove_inputless_tracks
-	
-	# we need to do this so that the mix track of a sub bus with no inputs
-	# is removed
-	
-	while(my @i = Audio::Nama::Graph::inputless_tracks($g)){
-		map{ 	$g->delete_edges(map{@$_} $g->edges_from($_));
-				$g->delete_vertex($_);
-		} @i;
-	}
+	} @user_buses;
+}
+sub add_paths_from_Master {
 
 	if ($mastering_mode){
-		$g->add_path(qw[Master Eq Low Boost soundcard_out]);
+		$g->add_path(qw[Master Eq Low Boost]);
 		$g->add_path(qw[Eq Mid Boost]);
 		$g->add_path(qw[Eq High Boost]);
+		$g->add_path(qw[Boost soundcard_out]) if $main_out;
 
-	} else { $g->add_edge('Master','soundcard_out') }
+	} else { $g->add_edge('Master','soundcard_out') if $main_out }
+
+}
+sub add_paths_for_mixdown_handling {
 
 	if ($tn{Mixdown}->rec_status eq 'REC'){
-		$ecasound_globals_ecs = $ecasound_globals_for_mixdown if 
-			$ecasound_globals_for_mixdown; 
-			my @p = (($mastering_mode ? 'Boost' : 'Master'), ,'Mixdown', 'wav_out');
-			$g->add_path(@p);
-			$g->set_vertex_attributes('Mixdown', {
-				  pre_output	=> "-f:$mix_to_disk_format",
-				  chain			=> "Mixdown" }); 
+		my @p = (($mastering_mode ? 'Boost' : 'Master'), ,'Mixdown', 'wav_out');
+		$g->add_path(@p);
+		$g->set_vertex_attributes('Mixdown', {
+		  pre_output	=> 
+			"-f:".signal_format($mix_to_disk_format,$tn{Mixdown}->width),
+		  chain			=> "Mixdown" }); 
 		# no effects will be applied because effects are on chain 2
 												 
+	# Mixdown handling - playback
+	
 	} elsif ($tn{Mixdown}->rec_status eq 'MON'){
 			my @e = qw(wav_in Mixdown soundcard_out);
 			$g->add_path(@e);
@@ -1872,27 +1866,19 @@ sub generate_setup {
  				  chain			=> "Mixdown" }); 
 		# no effects will be applied because effects are on chain 2
 	}
-												 
-	$debug and say "The graph is $g";
-
-my $track_n = $Audio::Nama::Track::n; # restore before exit sub
-my $temp_tracks = Audio::Nama::Graph::expand_graph($g);
- # will need to remove insert-tracks from this list TODO
-
-	$debug and say "The expanded graph is $g";
-
-	Audio::Nama::Graph::add_inserts($g);
-
-	$debug and say "The expanded graph with inserts is $g";
-
-# now to create input and output lists %inputs and %outputs
-
-# we deal with edges:
-# 
-# reserved - track: input 	
-# loop - track    : input		
-# track - loop    : output
-# track - reserved: output
+}
+sub prune_graph {
+	# prune graph: remove tracks lacking inputs or outputs
+	Audio::Nama::Graph::remove_inputless_tracks($g);
+	Audio::Nama::Graph::remove_outputless_tracks($g); 
+}
+sub process_routing_graph {
+	# the graphic part: we process edges:
+	# 
+	# reserved to track: input 	
+	# loop to track    : input		
+	# track to loop    : output
+	# track to reserved: output
 
 	map { my ($a,$b) = @$_;
 		  $debug and say "edge $a-$b";
@@ -1918,49 +1904,16 @@ my $temp_tracks = Audio::Nama::Graph::expand_graph($g);
 		else { croak qq(fell through dispatch tree); }
 	} $g->edges;
  
-	my @tracks = Audio::Nama::Track::all();
-
-	shift @tracks; # drop Master
-	shift @tracks; # drop Mixdown
-
-	my $have_source = join " ", map{$_->name} 
-								grep{ $_ -> rec_status ne 'OFF'} 
-								@tracks;
-
-	#print "have source: $have_source\n";
-
-	# reset Track class
-	$debug and say "temp tracks to remove";
-	$debug and map{ say $_->name; $_->remove } @$temp_tracks;
-	$Audio::Nama::Track::n = $track_n;	
-
-	if ($have_source) {
-
-		# process system buses
-
-		$debug and print "applying main_bus (user tracks)\n";
-		$main_bus->apply; # rec file only
-
-		$debug and print "applying null_bus\n";
-		$null_bus->apply; # TODO
-
-		$debug and print "generating IO for raw_input send buses\n";
-		# others are handled graphically
-		
-		map { $_->apply() } Audio::Nama::UserBus::all();
-
-		$debug and print "\%inputs\n================\n", yaml_out(\%inputs),
-			"\%outputs\n================\n", yaml_out(\%outputs);
-
-		write_chains();
-		$ecasound_globals_ecs = $ecasound_globals;
- 		return 1;
- 	} else { 
-
-		$ecasound_globals_ecs = $ecasound_globals;
-		print "No inputs found!\n"; return 0};
-1;
 }
+sub process_static_bus_rules { map { $_->apply() } Audio::Nama::Bus::all(); }
+
+sub maybe_write_chains {
+	if ( grep{keys %{ $outputs{$_} }} qw(file device jack_client jack_multi)){
+		write_chains();
+ 		1;
+ 	} else { print "No inputs found!\n"; 0 };
+}
+
 sub override {
 	my ($hash_ref, $name) = @_;
 		my $attr = $g->get_vertex_attributes($name);
@@ -1972,12 +1925,6 @@ sub chain {
 	my $name = shift;
 	$tn{$name} ? $tn{$name}->n : $name;
 }
-sub loopn {
-	my $name = shift;
-	"loop,$name"
-}
-
-
 sub add_entry_h {
 	my $h = shift;
 	$debug2 and say "add_entry_h";
@@ -2004,21 +1951,6 @@ sub soundcard_output {
  	$Audio::Nama::jack_running 
 		? [qw(jack_client system)]
 		: ['device', $Audio::Nama::alsa_playback_device]
-}
-
-sub useful_Master_effects {
-
-	# we have effects other than standard vol/pan
-	scalar @{$tn{Master}->ops} > 2 
-
-	or 
-	# pan is not 50
-	$copp{$tn{Master}->pan}->[0] != 50
-
-	or
-	# vol is not 100
-	
-	$copp{$tn{Master}->vol}->[0] != 100
 }
 
 sub write_chains {
@@ -2100,7 +2032,7 @@ WARN
  			$debug and print "found chain id: $n\n";
 			$format = signal_format(
 						$devices{jack}->{signal_format},	
-						$ti{$n}->ch_count
+						$ti{$n}->width
 			);
 		}
 		push  @input_chains, 
@@ -2183,7 +2115,7 @@ WARN
 		my $n = $1;
 		$format = signal_format(
 			$devices{jack}->{signal_format},	
-			$ti{$n}->ch_count
+			$ti{$n}->width
 			);
 		push  @output_chains, 
 		"-a:" . join(",",@chain_ids) 
@@ -2215,7 +2147,7 @@ WARN
  			$debug and print "found chain id: $n\n";
 			$format = signal_format(
 						$devices{jack}->{signal_format},	
-						$ti{$n}->ch_count
+						$ti{$n}->width
 	 		);
 		}
 		push  @output_chains, 
@@ -2253,9 +2185,17 @@ WARN
 	
 	my $ecs_file = "# ecasound chainsetup file\n\n";
 	$ecs_file   .= "# general\n\n";
-	$ecs_file   .= $tn{Mixdown}->rec_status eq 'REC' 
-					? $ecasound_globals_for_mixdown
-					: $ecasound_globals;
+	my $globals = $ecasound_globals_default;
+
+	# use realtime globals if they exist and we are
+	# recording to a non-mixdown file
+	
+	$globals = $ecasound_globals_realtime
+		if $ecasound_globals_realtime 
+			and grep{ ! /Mixdown/} really_recording();
+			# and exists latency-sensitive monitor output # we should also add
+			
+	$ecs_file   .= $globals;
 	$ecs_file   .= "\n\n";
 	$ecs_file   .= "# audio inputs\n\n";
 	$ecs_file   .= join "\n", sort @input_chains;
@@ -2286,7 +2226,8 @@ sub load_ecs {
 		eval_iam("cs-disconnect") if eval_iam("cs-connected");
 		eval_iam("cs-remove") if eval_iam("cs-selected");
 		eval_iam("cs-load ". $project_file);
-		$debug and map{print "$_\n\n"}map{eval_iam($_)} qw(cs es fs st ctrl-status);
+		eval_iam("cs-select ". $project_file); # needed by Audio::Ecasound, but not Net-ECI !!
+		$debug and map{eval_iam($_)} qw(cs es fs st ctrl-status);
 }
 
 sub arm {
@@ -2363,10 +2304,14 @@ sub reconfigure_engine {
 
 	# only act if change in configuration
 
-	my $status_snapshot = status_snapshot();
-	
-	#print ("no change in setup\n"),
-	 return 0 if yaml_out($old_snapshot) eq yaml_out($status_snapshot);
+	my $current = yaml_out(status_snapshot());
+	my $old = yaml_out($old_snapshot);
+
+	if ( $current eq $old){
+			$debug and print ("no change in setup\n");
+			return;
+	}
+	$debug and print ("setup change\n");
 
 	# restore playback position unless 
 	
@@ -2375,38 +2320,40 @@ sub reconfigure_engine {
     #  - change in project
     #  - user or Mixdown track is REC enabled
 	
-	my $old_pos;
+# 	my $old_pos;
+# 
+# 	my $will_record = ! $preview 
+# 						&&  grep { $_->{rec_status} eq 'REC' } 
+# 							@{ $status_snapshot->{tracks} };
+# 
+# 	# restore playback position if possible
+# 
+# 	if (	$preview eq 'doodle'
+# 		 	or  $old_snapshot->{project} ne $status_snapshot->{project} 
+# 			or  $old_snapshot->{global_version} 
+# 					ne $status_snapshot->{global_version} 
+# 			or  $will_record  ){
+# 
+# 		$old_pos = undef;
+# 
+# 	} else { $old_pos = eval_iam('getpos') }
+# 
+# 	my $was_running = engine_running();
+# 	stop_transport() if $was_running;
 
-	my $will_record = ! $preview 
-						&&  grep { $_->{rec_status} eq 'REC' } 
-							@{ $status_snapshot->{tracks} };
+	$old_snapshot = status_snapshot();
 
-	# restore playback position if possible
-
-	if (	$preview eq 'doodle'
-		 	or  $old_snapshot->{project} ne $status_snapshot->{project} 
-			or  $old_snapshot->{global_version} 
-					ne $status_snapshot->{global_version} 
-			or  $will_record  ){
-
-		$old_pos = undef;
-
-	} else { $old_pos = eval_iam('getpos') }
-
-	my $was_running = engine_running();
-	stop_transport() if $was_running;
-
+	print STDOUT Audio::Nama::Text::show_tracks(Audio::Nama::Track::all()) ;
 	if ( generate_setup() ){
-		print STDOUT Audio::Nama::Text::show_tracks ( Audio::Nama::Track::all ) ;
 		print STDOUT Audio::Nama::Text::show_tracks_extra_info();
 		connect_transport();
-		#eval_iam("setpos $old_pos") if $old_pos; # temp disable
+# 		eval_iam("setpos $old_pos") if $old_pos; # temp disable
+# 		start_transport() if $was_running and ! $will_record;
+		$ui->flash_ready;
+		1; }
+	else {	my $setup = join_path( project_dir(), $chain_setup_file);
+			unlink $setup if -f $setup; }
 
-	}
-	$old_snapshot = $status_snapshot;
-	start_transport() if $was_running and ! $will_record;
-	$ui->flash_ready;
-	1;
 }
 
 		
@@ -2454,29 +2401,22 @@ sub exclude_duplicate_inputs {
 	$debug2 and print "&exclude_duplicate_inputs\n";
 	print ("already excluded duplicate inputs\n"), return if %old_rw;
 	
- 	if ( $main->tracks){
- 		map { # print "track $_ "; 
-			$old_rw{$_} = $tn{$_}->rw;
- 		  	$tn{$_}->set(rw => 'REC');
- 			# print "status: ", $tn{$_}->rw, $/ 
- 		} $main->tracks;
- 	}
-
-		my @user = $main->tracks(); # track names
-		%excluded = ();
-		my %already_used;
-		map{ my $source = $tn{$_}->source;
-			 if( $already_used{$source}  ){
-				$excluded{$_} = $tn{$_}->rw;
-			 }
-			 $already_used{$source}++
-		 } grep { $tn{$_}->rec_status eq 'REC' } @user;
-		if ( keys %excluded ){
+	my @user = $main->tracks(); # track names
+	map { $old_rw{$_} = $tn{$_}->rw } @user;
+	%excluded = ();
+	my %already_used;
+	map{ my $source = $tn{$_}->source;
+		 if( $already_used{$source}  ){
+			$excluded{$_} = $tn{$_}->rw;
+		 }
+		 $already_used{$source}++
+	} grep { $tn{$_}->rec_status eq 'REC' } @user;
+	if ( keys %excluded ){
 #			print "Multiple tracks share same inputs.\n";
 #			print "Excluding the following tracks: ", 
 #				join(" ", keys %excluded), "\n";
-			map{ $tn{$_}->set(rw => 'OFF') } keys %excluded;
-		}
+		map{ $tn{$_}->set(rw => 'OFF') } keys %excluded;
+	}
 }
 
 sub adjust_latency {
@@ -2508,14 +2448,17 @@ sub adjust_latency {
 			effect_update_copp_set($ti{$_}->latency, 2, $adjustment);
 			} keys %latency;
 }
+
 sub connect_transport {
 	$debug2 and print "&connect_transport\n";
+	my $no_transport_status = shift;
 	load_ecs(); 
 	eval_iam("cs-selected") and	eval_iam("cs-is-valid")
 		or print("Invalid chain setup, engine not ready.\n"),return;
 	find_op_offsets(); 
 	apply_ops();
 	eval_iam('cs-connect');
+	# or say("Failed to connect setup, engine not ready"),return;
 	my $status = eval_iam("engine-status");
 	if ($status ne 'not started'){
 		print("Invalid chain setup, cannot connect engine.\n");
@@ -2531,9 +2474,10 @@ sub connect_transport {
 	$ui->length_display(-text => colonize($length));
 	# eval_iam("cs-set-length $length") unless @record;
 	$ui->clock_config(-text => colonize(0));
-	transport_status();
+	transport_status() unless $no_transport_status;
 	$ui->flash_ready();
 	#print eval_iam("fs");
+	1;
 	
 }
 
@@ -2545,6 +2489,9 @@ sub transport_status {
 	my $start  = Audio::Nama::Mark::loop_start();
 	my $end    = Audio::Nama::Mark::loop_end();
 	#print "start: $start, end: $end, loop_enable: $loop_enable\n";
+	if (%cooked_record_pending){
+		say join(" ", keys %cooked_record_pending), ": ready for caching";
+	}
 	if ($loop_enable and $start and $end){
 		#if (! $end){  $end = $start; $start = 0}
 		print "looping from ", d1($start), 
@@ -2557,12 +2504,14 @@ sub transport_status {
 				: " " ),
 				$/;
 	}
+	say "Engine is ready.";
 	print "setup length is ", d1($length), 
 		($length > 120	?  " (" . colonize($length). ")" : "" )
 		,$/;
 	print "now at ", colonize( eval_iam( "getpos" )), $/;
 	print "\nPress SPACE to start or stop engine.\n\n"
-		unless (ref $ui) =~ /Graphical/;
+		if $press_space_to_start_transport;
+	#$term->stuff_char(10); 
 }
 sub start_transport { 
 
@@ -2584,36 +2533,65 @@ sub start_transport {
 	eval_iam('start');
 	sleeper(0.5) unless really_recording();
 	unmute();
-	$ui->start_heartbeat();
+	$ui->set_engine_mode_color_display();
+	start_heartbeat();
 	print "engine is ", eval_iam("engine-status"), "\n\n"; 
 
 	sleep 1; # time for engine to stabilize
 }
+sub stop_transport { 
+
+	$debug2 and print "&stop_transport\n"; 
+	mute();
+	eval_iam('stop');	
+	sleeper(0.5);
+	print "\nengine is ", eval_iam("engine-status"), "\n\n"; 
+	unmute();
+	stop_heartbeat();
+	$ui->project_label_configure(-background => $old_bg);
+}
+sub transport_running { eval_iam('engine-status') eq 'running'  }
+
+sub disconnect_transport {
+	return if transport_running();
+		eval_iam("cs-disconnect") if eval_iam("cs-connected");
+}
+
+sub start_heartbeat {
+ 	$event_id{heartbeat} = AE::timer(0, 1, \&Audio::Nama::heartbeat);
+}
+
+sub stop_heartbeat {
+	$event_id{heartbeat} = undef; 
+	$ui->reset_engine_mode_color_display();
+	rec_cleanup() }
+
 sub heartbeat {
 
 	#	print "heartbeat fired\n";
 
 	my $here   = eval_iam("getpos");
 	my $status = eval_iam('engine-status');
-	$ui->stop_heartbeat
+	say("\nengine is stopped"),revise_prompt(),stop_heartbeat()
 		#if $status =~ /finished|error|stopped/;
 		if $status =~ /finished|error/;
 	#print join " ", $status, colonize($here), $/;
 	my ($start, $end);
 	$start  = Audio::Nama::Mark::loop_start();
 	$end    = Audio::Nama::Mark::loop_end();
-	$ui->schedule_wraparound() 
+	schedule_wraparound() 
 		if $loop_enable 
 		and defined $start 
 		and defined $end 
 		and ! really_recording();
 
-	# update time display
-	#
-	$ui->clock_config(-text => colonize(eval_iam('cs-get-position')));
+	update_clock_display();
 
 }
 
+sub update_clock_display { 
+	$ui->clock_config(-text => colonize(eval_iam('cs-get-position')));
+}
 sub schedule_wraparound {
 
 	return unless $loop_enable;
@@ -2624,25 +2602,26 @@ sub schedule_wraparound {
 	$debug and print "here: $here, start: $start, end: $end, diff: $diff\n";
 	if ( $diff < 0 ){ # go at once
 		eval_iam("setpos ".$start);
-		$ui->cancel_wraparound();
+		cancel_wraparound();
 	} elsif ( $diff < 3 ) { #schedule the move
 	$ui->wraparound($diff, $start);
 		
 		;
 	}
 }
-sub stop_transport { 
-
-	$debug2 and print "&stop_transport\n"; 
-	$ui->stop_heartbeat();
-	mute();
-	eval_iam('stop');	
-	sleeper(0.5);
-	print "\nengine is ", eval_iam("engine-status"), "\n\n"; 
-	unmute();
-	$ui->project_label_configure(-background => $old_bg);
-	rec_cleanup();
+sub cancel_wraparound {
+	$event_id{wraparound} = undef;
 }
+sub wraparound {
+	package Audio::Nama;
+	@_ = discard_object(@_);
+	my ($diff, $start) = @_;
+	#print "diff: $diff, start: $start\n";
+	$event_id{wraparound} = undef;
+	$event_id{wraparound} = AE::timer($diff,0, sub{set_position($start)});
+}
+
+sub poll_jack { $event_id{poll_jack} = AE::timer(0,5,\&jack_update) }
 
 sub mute {
 	return if $tn{Master}->rw eq 'OFF' or really_recording();
@@ -2651,15 +2630,6 @@ sub mute {
 sub unmute {
 	return if $tn{Master}->rw eq 'OFF' or really_recording();
 	$tn{Master}->unmute;
-}
-
-sub transport_running {
-#	$debug2 and print "&transport_running\n";
-	 eval_iam('engine-status') eq 'running' ;
-}
-sub disconnect_transport {
-	return if transport_running();
-		eval_iam("cs-disconnect") if eval_iam("cs-connected");
 }
 
 # for GUI transport controls
@@ -2758,55 +2728,43 @@ sub jump {
 	sleeper( 0.6);
 }
 ## post-recording functions
-
-
 sub rec_cleanup {  
 	$debug2 and print "&rec_cleanup\n";
 	print("transport still running, can't cleanup"),return if transport_running();
- 	my @k = really_recording();
-	$debug and print "intended recordings: " , join $/, @k;
-	return unless @k;
-	print "I was recording!\n";
-	my $recorded = 0;
- 	for my $k (@k) {    
- 		my ($n) = $outputs{file}{$k}[-1] =~ m/(\d+)/; 
-		print "k: $k, n: $n\n";
-		my $file = $k;
-		$file =~ s/ .*$//;
- 		my $test_wav = $file;
-		$debug and print "track: $n, file: $test_wav\n";
- 		my ($v) = ($test_wav =~ /_(\d+)\.wav$/); 
-		$debug and print "n: $n\nv: $v\n";
-		$debug and print "testing for $test_wav\n";
-		if (-e $test_wav) {
-			$debug and print "exists. ";
-			if (-s $test_wav > 44100) { # 0.5s x 16 bits x 44100/s
-				$debug and print "bigger than a breadbox.  \n";
-				$ti{$n}->set(active => undef); 
-				$ui->update_version_button($n, $v);
-			$recorded++;
-			}
-			else { unlink $test_wav }
-		}
+	if( my (@files) = new_files_were_recorded() ){
+		say join $/, "Now reviewing your recorded files...", (@files);
+		(grep /Mixdown/, @files) ? command_process('mixplay') : post_rec_configure();
+	reconfigure_engine();
 	}
-	rememoize();
-	my $mixed = scalar ( grep{ /\bmix*.wav/i} @k );
-	
-	$debug and print "recorded: $recorded mixed: $mixed\n";
-	if ( ($recorded -  $mixed) >= 1) {
-			# i.e. there are first time recorded tracks
-			$ui->global_version_buttons(); # recreate
-			$main->set( rw => 'MON');
-			$ui->refresh();
-			print <<REC;
-WAV files were recorded! 
+}
+sub post_rec_configure {
 
-Now reviewing your recording...
-
-REC
-			reconfigure_engine();
+		$ui->global_version_buttons(); # recreate
+		$main->set( rw => 'MON');
+		$ui->refresh();
+		reconfigure_engine();
+}
+sub new_files_were_recorded {
+ 	return unless my @files = really_recording();
+	$debug and print join $/, "intended recordings:", @files;
+	my @recorded =
+		grep { 	my ($name, $version) = /([^\/]+)_(\d+).wav$/;
+				if (-e ) {
+					if (-s  > 44100) { # 0.5s x 16 bits x 44100/s
+						$debug and print "found bigger than 44100 bytes:\n";
+						$debug and print "$_\n";
+						$tn{$name}->set(active => undef) if $tn{$name};
+						$ui->update_version_button($tn{$name}->n, $version);
+					1;
+					}
+					else { unlink $_; 0 }
+				}
+		} @files;
+	if(@recorded){
+		rememoize();
+		say join $/,"recorded:",@recorded;
 	}
-		
+	@recorded 
 } 
 
 ## effect functions
@@ -2816,22 +2774,17 @@ sub add_effect {
 	$debug2 and print "&add_effect\n";
 	
 	my %p 			= %{shift()};
-	my $n 			= $p{chain};
-	my $code 			= $p{type};
-
-	my $parent_id = $p{parent_id};  
-	my $id		= $p{cop_id};   # initiates restore
-	my $parameter		= $p{parameter};  # for controllers
+	my ($n,$code,$parent_id,$id,$parameter,$values) =
+		@p{qw( chain type parent_id cop_id parameter values)};
 	my $i = $effect_i{$code};
-	my $values = $p{values};
 
 	return if $id and ($id eq $ti{$n}->vol 
 				or $id eq $ti{$n}->pan);   # skip these effects 
 			   								# already created in add_track
 
 	$id = cop_add(\%p); 
-	my %pp = ( %p, cop_id => $id); # replace chainop id
-	$ui->add_effect_gui(\%pp);
+	%p = ( %p, cop_id => $id); # replace chainop id
+	$ui->add_effect_gui(\%p);
 	if( eval_iam("cs-is-valid") ){
 		my $er = engine_running();
 		$ti{$n}->mute if $er;
@@ -2845,7 +2798,6 @@ sub modify_effect {
 	my ($op_id, $parameter, $sign, $value) = @_;
 	print("$op_id: effect does not exist\n"), return 
 		unless $cops{$op_id};
-	#print "id $op_id p: $parameter, sign: $sign value: $value\n";
 
 		my $new_value = $value; 
 		if ($sign) {
@@ -2941,7 +2893,7 @@ sub ecasound_effect_index {
 sub remove_op {
 
 	$debug2 and print "&remove_op\n";
-	return unless eval_iam('cs-is-valid');
+	return unless eval_iam('cs-connected') and eval_iam('cs-is-valid');
 	my $id = shift;
 	my $n = $cops{$id}->{chain};
 	my $index;
@@ -3027,38 +2979,49 @@ sub ctrl_index {
 }
 sub cop_add {
 	$debug2 and print "&cop_add\n";
-	my %p 			= %{shift()};
-	my $n 			= $p{chain};
-	my $code		= $p{type};
-	my $parent_id = $p{parent_id};  
-	my $id		= $p{cop_id};   # causes restore behavior when present
-	my $i       = $effect_i{$code};
-	my @values = @{ $p{values} } if $p{values};
-	my $parameter	= $p{parameter};  # needed for parameter controllers
-	                                  # zero based
-$debug and print <<PP;
-n:          $n
-code:       $code
-parent_id:  $parent_id
-cop_id:     $id
-effect_i:   $i
-parameter:  $parameter
-PP
+	my $p = shift;
+	my %p = %$p;
+	$debug and say yaml_out($p);
 
-	return $id if $id; # do nothing if cop_id has been issued
+	# do nothing if cop_id has been issued
+	return $p{cop_id} if $p{cop_id};
+
+	local $cop_id = $magical_cop_id if $magical_cop_id;
 
 	# make entry in %cops with chain, code, display-type, children
 
-	$debug and print "Issuing a new cop_id for track $n: $cop_id\n";
-	# from the cop_id, we may also need to know chain number and effect
+	my ($n, $type, $parent_id, $parameter)  = 
+		@p{qw(chain type parent_id parameter)};
+	my $i = $effect_i{$type};
+
+
+	$debug and print "Issuing a cop_id for track $n: $cop_id\n";
 
 	$cops{$cop_id} = {chain => $n, 
-					  type => $code,
+					  type => $type,
 					  display => $effects[$i]->{display},
-					  owns => [] }; # DEBUGGIN TEST
+					  owns => [] }; 
 
-	$p{cop_id} = $cop_id;
- 	cop_init( \%p );
+	$p->{cop_id} = $cop_id;
+
+	# set defaults
+	
+	if (! $p{values}){
+		my @vals;
+		$debug and print "no settings found, loading defaults if present\n";
+		my $i = $effect_i{ $cops{$cop_id}->{type} };
+		
+		# don't initialize first parameter if operator has a parent
+		# i.e. if operator is a controller
+		
+		for my $p ($parent_id ? 1 : 0..$effects[$i]->{count} - 1) {
+		
+			my $default = $effects[$i]->{params}->[$p]->{default};
+			push @vals, $default;
+		}
+		$debug and print "copid: $cop_id defaults: @vals \n";
+		$copp{$cop_id} = \@vals;
+	}
 
 	if ($parent_id) {
 		$debug and print "parent found: $parent_id\n";
@@ -3082,51 +3045,16 @@ PP
  		my $end = scalar @{ $ti{$n}->ops } - 1 ; 
  		for my $i (0..$end){
  			splice ( @{$ti{$n}->ops}, $i+1, 0, $cop_id ), last
- 				if $ti{$n}->ops->[$i] eq $parent_id 
+ 				if $ti{$n}->ops->[$i] eq $parent_id
  		}
 	}
 	else { push @{$ti{$n}->ops }, $cop_id; } 
 
 	# set values if present
 	
-	$copp{$cop_id} = \@values if @values; # needed for text mode
+	$copp{$cop_id} = $p{values} if $p{values};
 
 	$cop_id++; # return value then increment
-}
-
-sub cop_init {
-	
-	$debug2 and print "&cop_init\n";
-	my $p = shift;
-	my %p = %$p;
-	my $id = $p{cop_id};
-	my $parent_id = $p{parent_id};
-	my $vals_ref  = $p{vals_ref};
-	
-	$debug and print "cop__id: $id\n";
-
-	my @vals;
-	if (ref $vals_ref) {
-		@vals = @{ $vals_ref };
-		$debug and print ("values supplied\n");
-		@{ $copp{$id} } = @vals;
-		return;
-	} 
-	else { 
-		$debug and print "no settings found, loading defaults if present\n";
-		my $i = $effect_i{ $cops{$id}->{type} };
-		
-		# don't initialize first parameter if operator has a parent
-		# i.e. if operator is a controller
-		
-		for my $p ($parent_id ? 1 : 0..$effects[$i]->{count} - 1) {
-		
-			my $default = $effects[$i]->{params}->[$p]->{default};
-			push @vals, $default;
-		}
-		@{ $copp{$id} } = @vals;
-		$debug and print "copid: $id defaults: @vals \n";
-	}
 }
 
 sub effect_update_copp_set {
@@ -3136,11 +3064,14 @@ sub effect_update_copp_set {
 	$copp{$id}->[$param] = $val;
 }
 	
-	
+
 sub effect_update {
+
+	# update the parameters of the Ecasound chain operator
+	# referred to by a Nama operator_id
 	
-	# why not use this routine to update %copp values as
-	# well?
+	# (why not use this routine to update %copp values as
+	# well?)
 	
 	#$debug2 and print "&effect_update\n";
 	my $es = eval_iam("engine-status");
@@ -3148,6 +3079,7 @@ sub effect_update {
 	return if $es !~ /not started|stopped|running/;
 
 	my ($id, $param, $val) = @_;
+	$param++; # so the value at $p[0] is applied to parameter 1
 	my $chain = $cops{$id}{chain};
 
 	carp("effect $id: non-existent chain\n"), return
@@ -3155,31 +3087,79 @@ sub effect_update {
 
 	$debug and print "chain $chain id $id param $param value $val\n";
 
-	# $param gets incremented, therefore is zero-based. 
-	# if I check i will find %copp is  zero-based
+	# $param is zero-based. 
+	# %copp is  zero-based.
 
 	return if $ti{$chain}->rec_status eq "OFF"; 
+
+	# above will produce a wrong result if the user changes track status
+	# while the engine is running BUG
+
 	return if $ti{$chain}->name eq 'Mixdown' and 
 			  $ti{$chain}->rec_status eq 'REC';
+
+	# above is irrelevant the way that mixdown is now
+	# implemented DEPRECATED
+	
  	$debug and print join " ", @_, "\n";	
 
-	# update Ecasound's copy of the parameter
-
-	$debug and print "valid: ", eval_iam("cs-is-valid"), "\n";
-	my $controller; 
-	for my $op (0..scalar @{ $ti{$chain}->ops } - 1) {
-		$ti{$chain}->ops->[$op] eq $id and $controller = $op;
-	}
-	$param++; # so the value at $p[0] is applied to parameter 1
-	$controller++; # translates 0th to chain-operator 1
-	$debug and print 
-	"cop_id $id:  track: $chain, controller: $controller, offset: ",
-	$offset{$chain}, " param: $param, value: $val$/";
+	my $old_chain = eval_iam('c-selected');
 	eval_iam("c-select $chain");
-	eval_iam("cop-select ". ($offset{$chain} + $controller));
-	eval_iam("copp-select $param");
-	eval_iam("copp-set $val");
+
+	# update Ecasound's copy of the parameter
+	if( is_controller($id)){
+		my $i = ecasound_controller_index($id);
+		$debug and print 
+		"controller $id: track: $chain, index: $i param: $param, value: $val\n";
+		eval_iam("ctrl-select $i");
+		eval_iam("ctrlp-select $param");
+		eval_iam("ctrlp-set $val");
+	}
+	else { # is operator
+		my $i = ecasound_operator_index($id);
+		$debug and print 
+		"operator $id: track $chain, index: $i, offset: ",
+		$offset{$chain}, " param $param, value $val\n";
+		eval_iam("cop-select ". ($offset{$chain} + $i));
+		eval_iam("copp-select $param");
+		eval_iam("copp-set $val");
+	}
+	eval_iam("c-select $old_chain");
 }
+
+sub is_controller { my $id = shift; $cops{$id}{belongs_to} }
+
+sub ecasound_operator_index { # does not include offset
+	my $id = shift;
+	my $chain = $cops{$id}{chain};
+	my $track = $ti{$chain};
+	my @ops = @{$track->ops};
+	my $controller_count = 0;
+	my $position;
+	for my $i (0..scalar @ops - 1) {
+		$position = $i, last if $ops[$i] eq $id;
+		$controller_count++ if $cops{$ops[$i]}{belongs_to};
+	}
+	$position -= $controller_count; # skip controllers 
+	++$position; # translates 0th to chain-position 1
+}
+	
+	
+sub ecasound_controller_index {
+	my $id = shift;
+	my $chain = $cops{$id}{chain};
+	my $track = $ti{$chain};
+	my @ops = @{$track->ops};
+	my $operator_count = 0;
+	my $position;
+	for my $i (0..scalar @ops - 1) {
+		$position = $i, last if $ops[$i] eq $id;
+		$operator_count++ if ! $cops{$ops[$i]}{belongs_to};
+	}
+	$position -= $operator_count; # skip operators
+	++$position; # translates 0th to chain-position 1
+}
+	
 sub fade {
 	my ($id, $param, $from, $to, $seconds) = @_;
 
@@ -3297,30 +3277,6 @@ sub apply_op {
 	#map{apply_op($_)} @owns;
 
 }
-# unused 
-sub prepare_command_dispatch {
-	map{ 
-		if (my $subtext = $commands{$_}->{sub}){ # to_start
-			my @short = split " ", $commands{$_}->{short};
-			my @keys = $_;
-			push @keys, @short if @short;
-			map { $dispatch{$_} = eval qq(sub{ $subtext() }) } @keys;
-		}
-	} keys %commands;
-# regex languge
-#
-my $key = qr/\w+/;
-my $someval = qr/[\w.+-]+/;
-my $sign = qr/[+-]/;
-my $op_id = qr/[A-Z]+/;
-my $parameter = qr/\d+/;
-my $value = qr/[\d\.eE+-]+/; # -1.5e-6
-my $dd = qr/\d+/;
-my $name = qr/[\w:]+/;
-my $name2 = qr/[\w-]+/;
-my $name3 = qr/\S+/;
-}
-	
 
 sub prepare_effects_help {
 
@@ -3337,7 +3293,7 @@ sub prepare_effects_help {
 	my $label;
 	map{ 
 
-		if (  my ($_label) = /-(el:\w+)/  ){
+		if (  my ($_label) = /-(el:[-\w]+)/  ){
 				$label = $_label;
 				s/^\s+/ /;				 # trim spaces 
 				s/'//g;     			 # remove apostrophes
@@ -3365,7 +3321,6 @@ sub prepare_effects_help {
 	#			split "\n",eval_iam("control-register");
 	#pager (@lrg, @prg); exit;
 }
-
 
 sub prepare_static_effects_data{
 	
@@ -3435,7 +3390,7 @@ sub prepare_effect_index {
 	%effect_j = ();
 	map{ 
 		my $code = $_;
-		my ($short) = $code =~ /:(\w+)/;
+		my ($short) = $code =~ /:([-\w]+)/;
 		if ( $short ) { 
 			if ($effect_j{$short}) { warn "name collision: $_\n" }
 			else { $effect_j{$short} = $code }
@@ -3547,9 +3502,9 @@ sub read_in_effects_data {
 		^(\d+) # number
 		\.    # dot
 		\s+  # spaces
-		(\w.+?) # name, starting with word-char,  non-greedy
+		(.+?) # name, starting with word-char,  non-greedy
 		\s+     # spaces
-		-(el:\w+),? # ladspa_id maybe followed by comma
+		-(el:[-\w]+),? # ladspa_id maybe followed by comma
 		(.*$)        # rest
 	/x;
 
@@ -3694,6 +3649,7 @@ sub get_ladspa_hints{
 			$ladspa_help{$plugin_label} = $stanza;
 			$effects_ladspa_file{$plugin_unique_id} = $file;
 			$ladspa_unique_id{$plugin_label} = $plugin_unique_id; 
+			$ladspa_unique_id{$plugin_name} = $plugin_unique_id; 
 			$ladspa_label{$plugin_unique_id} = $plugin_label;
 			$effects_ladspa{$plugin_label}->{name}  = $plugin_name;
 			$effects_ladspa{$plugin_label}->{id}    = $plugin_unique_id;
@@ -3815,6 +3771,15 @@ sub save_state {
 	$debug and print "saving palette\n";
 	$ui->save_palette;
 
+	# save %effect_chain, common to all projects
+	
+ 	serialize (
+ 		file => join_path(project_root(), $effect_chain_file),
+		format => 'yaml',
+ 		vars => [ qw( %effect_chain ) ],
+ 		class => 'Audio::Nama');
+	
+
 	# do nothing more if only Master and Mixdown
 	
 	if (scalar @Audio::Nama::Track::all == 2 ){
@@ -3849,8 +3814,9 @@ map { my $t = $_;
 				qw(ch_r ch_m source_select send_select jack_source jack_send);
 } @tracks_data;
 
-@sub_bus_data = (); # 
-map{ push @sub_bus_data, $_->hashref } Audio::Nama::UserBus::all();
+@bus_data = (); # 
+map{ push @bus_data, $_->hashref } 
+	grep{ $_->name !~ /Main_Bus|Null_Bus/} Audio::Nama::Bus::all();
 
 # prepare marks data for storage (new Mark objects)
 
@@ -3861,6 +3827,9 @@ map { push @marks_data, $_->hashref } Audio::Nama::Mark::all();
 $debug and print "copying groups data\n";
 @groups_data = ();
 map { push @groups_data, $_->hashref } Audio::Nama::Group::all();
+
+$debug and print "copying bus data\n";
+
 
 # save history
 
@@ -3895,7 +3864,7 @@ sub assign_var {
 	assign_vars(
 				source => $source,
 				vars   => \@vars,
-		#		format => 'yaml', # breaks, stupid!
+		#		format => 'yaml', # breaks
 				class => 'Audio::Nama');
 }
 sub restore_state {
@@ -3903,22 +3872,31 @@ sub restore_state {
 	my $file = shift;
 	$file = $file || $state_store_file;
 	$file = join_path(project_dir(), $file);
-	my $yamlfile = $file;
-	$yamlfile .= ".yml" unless $yamlfile =~ /yml$/;
-	$file = $yamlfile if -f $yamlfile;
+	$file .= ".yml" unless $file =~ /yml$/;
 	! -f $file and (print "file not found: $file\n"), return;
 	$debug and print "using file: $file\n";
+	
+	my $yaml = io($file)->all;
 
-	assign_var($file, @persistent_vars );
+	# rewrite obsolete null hash/array substitution
+	$yaml =~ s/~NULL_HASH/{}/g;
+	$yaml =~ s/~NULL_ARRAY/[]/g;
+
+	# rewrite %cops 'owns' field to []
+	
+	$yaml =~ s/owns: ~/owns: []/g;
+
+	# restore persistent variables
+
+	assign_var($yaml, @persistent_vars );
+
+	# restore effect chains
+
+	assign_var(join_path(project_root(), $effect_chain_file), qw(%effect_chain));
 
 	##  print yaml_out \@groups_data; 
 	# %cops: correct 'owns' null (from YAML) to empty array []
 	
-	#  destroy and recreate all groups
-
-
-	Audio::Nama::Group::initialize();	
-
 	# backward compatibility fixes for older projects
 
 	if (! $saved_version ){
@@ -3927,66 +3905,93 @@ sub restore_state {
 	
 		map{ $_->{name} = 'Main'} grep{ $_->{name} eq 'Tracker' } @groups_data;
 		
-		for (@tracks_data){
-			delete $_->{delay};
-			delete $_->{length};
-			delete $_->{start_position};
-			$_->{group} =~ s/Tracker/Main/;
-
-			if( $_->{source_select} eq 'soundcard'){
-				$_->{source_type} = 'soundcard' ;
-				$_->{source_id} = $_->{ch_r}
+		for my $t (@tracks_data){
+			$t->{group} =~ s/Tracker/Main/;
+			if( $t->{source_select} eq 'soundcard'){
+				$t->{source_type} = 'soundcard' ;
+				$t->{source_id} = $t->{ch_r}
 			}
-			elsif( $_->{source_select} eq 'jack'){
-				$_->{source_type} = 'jack_client' ;
-				$_->{source_id} = $_->{jack_source}
+			elsif( $t->{source_select} eq 'jack'){
+				$t->{source_type} = 'jack_client' ;
+				$t->{source_id} = $t->{jack_source}
 			}
-			if( $_->{send_select} eq 'soundcard'){
-				$_->{send_type} = 'soundcard' ;
-				$_->{send_id} = $_->{ch_m}
+			if( $t->{send_select} eq 'soundcard'){
+				$t->{send_type} = 'soundcard' ;
+				$t->{send_id} = $t->{ch_m}
 			}
-			elsif( $_->{send_select} eq 'jack'){
-				$_->{send_type} = 'jack_client' ;
-				$_->{send_id} = $_->{jack_send}
+			elsif( $t->{send_select} eq 'jack'){
+				$t->{send_type} = 'jack_client' ;
+				$t->{send_id} = $t->{jack_send}
 			}
 		}
 	}
-		
+	if( $saved_version < 0.9986){
+	
+		map { 	# store insert without intermediate array
+
+				my $t = $_;
+
+				# use new storage format for inserts
+				my $i = $t->{inserts};
+				if($i =~ /ARRAY/){ 
+					$t->{inserts} = scalar @$i ? $i->[0] : {}  }
+				
+				# initialize inserts effect_chain_stack and cache_map
+
+				$t->{inserts} //= {};
+				$t->{effect_chain_stack} //= [];
+				$t->{cache_map} //= {};
+
+				# set class for Mastering tracks
+
+				$t->{class} = 'Audio::Nama::MasteringTrack' if $t->{group} eq 'Mastering';
+				$t->{class} = 'Audio::Nama::SimpleTrack' if $t->{name} eq 'Master';
+
+				# rename 'ch_count' field to 'width'
+				
+				$t->{width} = $t->{ch_count};
+				delete $t->{ch_count};
+
+				# set Mixdown track width to 2
+				
+				$t->{width} = 2 if $t->{name} eq 'Mixdown';
+				
+				# remove obsolete fields
+				
+				map{ delete $t->{$_} } qw( 
+											delay 
+											length 
+											start_position 
+											ch_m 
+											ch_r
+											source_select 
+											jack_source   
+											send_select
+											jack_send);
+		}  @tracks_data;
+	}
+
+	#  destroy and recreate all groups
+
+	Audio::Nama::Group::initialize();	
 	map { Audio::Nama::Group->new( %{ $_ } ) } @groups_data;  
-	$main = $Audio::Nama::Group::by_name{Main};
+	create_groups(); # make sure we have them all
 
-	create_groups('no warning'); # make sure we have them
-
-	# restore user buses, directly, skipping constructor 
+	# restore user buses
 	
-	map{ bless $_, 'Audio::Nama::UserBus'} @sub_bus_data;
-	%Audio::Nama::UserBus::by_name = ();
-	@Audio::Nama::UserBus::buses = @sub_bus_data;
-	map{$Audio::Nama::UserBus::by_name{$_->name} = $_  } @Audio::Nama::UserBus::buses ;
+	map{ my $class = $_->{class}; Audio::Nama::Bus->new( %$_ ) } @bus_data;
 	
-	# create user tracks
+	# restore user tracks
 	
 	my $did_apply = 0;
 
 	map{ 
 		my %h = %$_; 
-		$Audio::Nama::Track::n = $h{n} if $h{n}; # set class Track's counter
-		#my @hh = %h; print "size: ", scalar @hh, $/;
 		my $track = Audio::Nama::Track->new( %h ) ; # initially Audio::Nama::Track 
 		if ( $track->class ){ bless $track, $track->class } # current scheme
-
-		# for backward compatibility
-		else { set_track_class($track, 'Audio::Nama::MasteringTrack') 
-				if $track->group eq 'Mastering'; }
-		my $n = $track->n;
-		#print "new n: $n\n";
-		$debug and print "restoring track: $n\n";
 	} @tracks_data;
 
 	$ui->create_master_and_mix_tracks();
-
-	# for backwards compatibility
-	set_track_class( $tn{Master}, 'Audio::Nama::SimpleTrack');   
 
 	map{ 
 		my $n = $_->{n};
@@ -4038,7 +4043,7 @@ sub restore_state {
 
 	# restore command history
 	
-	$term->SetHistory(@command_history);	
+	$term->SetHistory(@command_history);
 } 
 
 sub set_track_class {
@@ -4116,9 +4121,7 @@ sub all {
 sub show_chain_setup {
 	$debug2 and print "&show_chain_setup\n";
 	my $setup = join_path( project_dir(), $chain_setup_file);
-	print qq(No chain setup available.
-Perhaps you need to create some tracks to record/play.
-), return unless -f $setup;
+	say("No tracks to record or play."), return unless -f $setup;
 	my $chain_setup;
 	io( $setup ) > $chain_setup; 
 	pager( $chain_setup );
@@ -4200,6 +4203,7 @@ sub process_line {
 		command_process( $user_input );
 		exclude_duplicate_inputs() if $preview eq 'doodle';
 		reconfigure_engine();
+		revise_prompt();
 	}
 }
 
@@ -4212,6 +4216,8 @@ sub command_process {
 	if ($cmd eq 'for' 
 			and my ($bunchy, $do) = $predicate =~ /\s*(.+?)\s*;(.+)/){
 		$debug and print "bunch: $bunchy do: $do\n";
+		my ($do_part, $after) = $do =~ /(.+?);;(.+)/;
+		$do = $do_part if $do_part;
 		my @tracks;
 		if ( lc $bunchy eq 'all' ){
 			$debug and print "special bunch: all\n";
@@ -4240,6 +4246,7 @@ sub command_process {
 		for my $t(@tracks) {
 			command_process("$t; $do");
 		}
+		command_process($after) if $after;
 	} elsif ($cmd eq 'eval') {
 			$debug and print "Evaluating perl code\n";
 			pager( eval $predicate );
@@ -4281,7 +4288,8 @@ sub command_process {
 			} elsif ($cmd =~ /^\d+$/ and $ti{$cmd}) { 
 				$debug and print qq(Selecting track ), $ti{$cmd}->name, $/;
 				$this_track = $ti{$cmd};
-				my $c = q(c-select ) . $this_track->n; eval_iam( $c );
+				my $c = q(c-select ) . $this_track->n; 
+				eval_iam( $c );
 				$predicate !~ /^\s*$/ and $parser->command($predicate);
 			} elsif ($iam_cmd{$cmd}){
 				$debug and print "Found Iam command\n";
@@ -4297,15 +4305,15 @@ sub command_process {
 			}    
 		} @user_input;
 	}
+	
 	$ui->refresh; # in case we have a graphic environment
 }
 sub load_keywords {
-
-@keywords = keys %commands;
-push @keywords, grep{$_} map{split " ", $commands{$_}->{short}} @keywords;
-push @keywords, keys %iam_cmd;
-push @keywords, keys %effect_j;
-push @keywords, "Audio::Nama::";
+	@keywords = keys %commands;
+	push @keywords, grep{$_} map{split " ", $commands{$_}->{short}} @keywords;
+	push @keywords, keys %iam_cmd;
+	push @keywords, keys %effect_j;
+	push @keywords, "Audio::Nama::";
 }
 
 sub complete {
@@ -4314,9 +4322,8 @@ sub complete {
     return $term->completion_matches($text,\&keyword);
 };
 
-{
-    my $i;
-    sub keyword {
+{ 	my $i;
+sub keyword {
         my ($text, $state) = @_;
         return unless $text;
         if($state) {
@@ -4329,8 +4336,7 @@ sub complete {
             return $keywords[$i] if $keywords[$i] =~ /^\Q$text/;
         };
         return undef;
-    }
-};
+} };
 
 sub jack_update {
 	# cache current JACK status
@@ -4346,6 +4352,7 @@ sub jack_client {
 
 	# synth:in_1 input
 	# synth input
+	# aeolus:out.R
 	
 	my $port;
 	($name, $port) = $name =~ /^([^:]+):?(.*)/;
@@ -4367,11 +4374,11 @@ sub jack_client {
 	map{ 
 		my ($direction) = /properties: (input|output)/;
 		s/properties:.+//;
-		my @ports = /(\w+:\w+ )/g;
+		my @ports = /([^:]+:.+)/g;
 		map { 
 				s/ $//; # remove trailing space
 				$jack{ $_ }{ $direction }++;
-				my ($client, $port) = /(\w+):(\w+)/;
+				my ($client, $port) = /(.+?):(.+)/;
 				$jack{ $client }{ $direction }++;
 
 		 } @ports;
@@ -4384,23 +4391,14 @@ sub jack_client {
 
 sub automix {
 
-	# use Smart::Comments '###';
-	# add -ev to mixtrack
+	#use Smart::Comments '###';
+	# add -ev to summed signal
 	my $ev = add_effect( { chain => $tn{Master}->n, type => 'ev' } );
 	### ev id: $ev
 
-	# use Ecasound globals for mixdown 
-	# mixplay() below restores normal values
-	
 	# turn off audio output
 	
 	$main_out = 0;
-
-	# turn off mixdown_to_file rule
-	#$MIX_down->set(   status => 0);
-
-	# turn on mix_down_ev
-	$mix_down_ev->set(status => 1);
 
 	### Status before mixdown:
 
@@ -4411,63 +4409,53 @@ sub automix {
 	command_process( 'for mon; vol/10');
 
 	#command_process('show');
-	
-	command_process('arm; start');
 
+	generate_setup('automix'); # pass a bit of magic
+	connect_transport();
+	
+	# start_transport() does a rec_cleanup() on transport stop
+	
+	eval_iam('start'); # don't use heartbeat
+	sleep 2; # time for engine to stabilize
 	while( eval_iam('engine-status') ne 'finished'){ 
-		print q(.); sleep 5; $ui->refresh } ; print "Done\n";
+		print q(.); sleep 2; update_clock_display()}; 
+	print " Done\n";
 
 	# parse cop status
 	my $cs = eval_iam('cop-status');
-	my $cs_re = qr/Chain "2".+?result-max-multiplier ([\.\d]+)/s;
+	### cs: $cs
+	my $cs_re = qr/Chain "1".+?result-max-multiplier ([\.\d]+)/s;
 	my ($multiplier) = $cs =~ /$cs_re/;
 
 	### multiplier: $multiplier
 
-	if ( $multiplier - 1 > 0.01 ){
-
-		### apply multiplier to individual tracks
-
-		command_process( "for mon; vol*$multiplier" );
-
-		# keep same audible output volume: UNUSED
-		
-	#	my $master_multiplier = $multiplier/10;
-
-
-		### master multiplier: $multiplier/10
-
-		# command_process("Master; vol/$master_multiplier")
-
-
-	}
 	remove_effect($ev);
+
+	# deal with all silence case, where multiplier is 0.00000
 	
-	### turn off 
-	$mix_down_ev->set(status => 0);
+	if ( $multiplier < 0.00001 ){
 
-	### turn on mixdown_to_file
-	#$mix_down->set(status => 1);
+		say "Signal appears to be silence. Skipping.";
+		command_process( 'for mon; vol*10');
+		$main_out = 1;
+		return;
+	}
 
+	### apply multiplier to individual tracks
+
+	command_process( "for mon; vol*$multiplier" );
+
+	# $main_out = 1; # mixdown will turn off and turn on main out
+	
 	### mixdown
-	command_process('mixdown');
+	command_process('mixdown; arm; start');
 
-	command_process('show');
+	### turn on audio output
 
-	command_process('arm; start');
+	# command_process('mixplay'); # rec_cleanup does this
+	# automatically
 
-	while( eval_iam('engine-status') ne 'finished'){ 
-		print q(.); sleep 5; $ui->refresh } ; print "Done\n";
-
-	### turn on audio output output
-
-	$main_out = 1;
-
-	### default to playing back Mixdown track, setting user tracks to OFF
-
-	command_process('mixplay');
-	
-#	no Smart::Comments;
+	#no Smart::Comments;
 	
 }
 
@@ -4490,13 +4478,16 @@ sub master_on {
 		add_mastering_effects();
 		$this_track = $old_track;
 	} else { unhide_mastering_tracks() }
-
-		
 	
 }
+sub master_off {
+
+	$mastering_mode = 0;
+	hide_mastering_tracks();
+}
+
 
 sub add_mastering_tracks {
-
 
 	map{ 
 		my $track = Audio::Nama::MasteringTrack->new(
@@ -4534,19 +4525,9 @@ sub add_mastering_effects {
 	command_process("append_effect $compressor");
 	command_process("append_effect $spatialiser");
 
-
 	$this_track = $tn{Boost};
 	
 	command_process("append_effect $limiter"); # insert after vol
- 
-}
-
-
-
-sub master_off {
-
-	$mastering_mode = 0;
-	hide_mastering_tracks();
 }
 
 sub unhide_mastering_tracks {
@@ -4559,7 +4540,7 @@ sub hide_mastering_tracks {
 		
 # vol/pan requirements of mastering tracks
 
-my %volpan = (
+{ my %volpan = (
 	Eq => {},
 	Low => {},
 	Mid => {},
@@ -4572,7 +4553,7 @@ sub need_vol_pan {
 	return 1 unless $volpan{$track_name};
 	return 1 if $volpan{$track_name}{$type};
 	return 0;
-}
+} }
 sub pan_check {
 	my $new_position = shift;
 	my $current = $copp{ $this_track->pan }->[0];
@@ -4625,40 +4606,76 @@ sub status_snapshot {
 	# engine
 	
 	my %snapshot = ( project 		=> 	$project_name,
-					 global_version =>  $main->version,
+					 #global_version =>  $main->version,
 					 mastering_mode => $mastering_mode,
 					 preview        => $preview,
-					 main 			=> $main_out,
-#					 global_rw      =>  $main->rw,
+					 main_out 		=> $main_out,
+					 cache_rec		=> {%cooked_record_pending},# copy
+					 #global_rw      =>  $main->rw,
+					 tracks			=> [],
 					
- );
-	$snapshot{tracks} = [];
+	);
+	my @relevant_fields = qw(
+		width
+		offset 
+		group 
+		playat
+		region_start	
+		region_end
+		looping
+		source_id
+		source_type
+		send_id
+		send_type
+		project
+		target
+		rec_defeat
+		inserts );
 	map { 
-		push @{ $snapshot{tracks} }, 
-			{
-				name 			=> $_->name,
-				rec_status 		=> $_->rec_status,
-				channel_count 	=> $_->ch_count,
-				current_version => $_->current_version,
-				send 			=> $_->send_id,
-				source 			=> $_->source_id,
-				shift			=> $_->playat,
-				region_start    => $_->region_start,
-				region_end    	=> $_->region_ending,
-				group			=> $_->group,
-				inserts			=> yaml_out($_->inserts),
-
-				
-			} unless $_->rec_status eq 'OFF'
-
-	} Audio::Nama::Track::all();
-	\%snapshot
+		my %track = %$_; # deref object
+		my %tr = map{ $_, $track{$_}} @relevant_fields;
+		push @{ $snapshot{tracks}}, {
+			%tr, 
+			rec_status => $_->rec_status,
+		 	current_version => $_->current_version,
+			}
+	}  Audio::Nama::Track::all();
+	\%snapshot;
 }
 sub set_region {
 	my ($beg, $end) = @_;
-	$Audio::Nama::this_track->set(region_start => $beg);
-	$Audio::Nama::this_track->set(region_end => $end);
+	$this_track->set(region_start => $beg);
+	$this_track->set(region_end => $end);
 	Audio::Nama::Text::show_region();
+}
+sub new_region {
+	my ($beg, $end, $name) = @_;
+	my $orig = $this_track;
+	$name ||= new_region_name();
+	add_track_alias($name, $this_track->name);	
+	set_region($beg,$end);
+}
+sub new_region_name {
+	my $name = $this_track->name . '_region_';
+	my $i;
+	map{ my ($j) = /_(\d+)$/; $i = $j if $j > $i; }
+		grep{/$name/} keys %Audio::Nama::Track::by_name;
+	$name . ++$i
+}
+sub remove_region {
+	if (! $this_track->region_start){
+		say $this_track->name, ": no region is defined. Skipping.";
+		return;
+	} elsif ($this_track->target ){
+		say $this_track->name, ": looks like a region...  removing.";
+		$this_track->remove;
+	} else { undefine_region() }
+}
+	
+sub undefine_region {
+	$this_track->set(region_start => undef );
+	$this_track->set(region_end => undef );
+	print $this_track->name, ": Region definition removed. Full track will play.\n";
 }
 
 sub add_sub_bus {
@@ -4666,7 +4683,7 @@ sub add_sub_bus {
 	if ($Audio::Nama::Group::by_name{$name} or $tn{$name}){
 		say qq(group, bus, or track "$name" already exists. Skipping."), return;
 	}
-	Audio::Nama::UserBus->new( 
+	Audio::Nama::SubBus->new( 
 		name => $name, 
 		bus_type => 'sub',
 		groups => [$name],
@@ -4695,22 +4712,26 @@ sub add_send_bus {
 	
 	print "name: $name: dest_type: $dest_type dest_id: $dest_id\n";
 
-	if ($Audio::Nama::UserBus::by_name{$name}){
+	if ($Audio::Nama::Bus::by_name{$name}){
 		say qq(monitor bus "$name" already exists. Updating with new tracks.");
 
 	} else {
-	Audio::Nama::UserBus->new( 
+	my @args = (
 		name => $name, 
 		bus_type => $bus_type,
 		groups => [$name],
-		rules => ($bus_type eq 'cooked' 
+		rules => $bus_type eq 'cooked' 
 			?  [qw(send_bus_out )]
 			:  [qw(rec_setup mon_setup send_bus_out)],
 		destination_type => $dest_type,
 		destination_id	 => $dest_id,
-		
-		),
-	) or carp("can't create bus!\n"), return;
+	);
+
+	my $bus = $bus_type eq 'cooked'
+		?  Audio::Nama::SendBusCooked->new( @args ) 
+		:  Audio::Nama::SendBusRaw->new( @args );
+
+	$bus or carp("can't create bus!\n"), return;
 	Audio::Nama::Group->new( name => $name, rw => 'REC');
 	}
 
@@ -4725,7 +4746,6 @@ sub add_send_bus {
 						)
    } $main->tracks;
 		
-	
 }
 
 sub dest_type { 
@@ -4741,10 +4761,152 @@ sub dest_type {
 sub update_send_bus {
 	my $name = shift;
 		add_send_bus( $name, 
-						 $Audio::Nama::UserBus::by_name{$name}->destination_id),
+						 $Audio::Nama::Bus::by_name{$name}->destination_id),
 						 "dummy",
 }
 
+sub new_effect_chain_name {
+	my $name = '_'.$this_track->name . '_';
+	my $i;
+	map{ my ($j) = /_(\d+)$/; $i = $j if $j > $i; }
+	@{ $this_track->effect_chain_stack }, 
+		grep{/$name/} keys %effect_chain;
+	$name . ++$i
+}
+
+# too many functions in push and pop!!
+
+sub push_effect_chain {
+	say("no effects to store"), return unless $this_track->fancy_ops;
+	my %vals = @_; 
+	###my $add_name = $vals{add}; # undef in case of bypass # disabled!
+	my $save_name   = $vals{save} || new_effect_chain_name();
+	#$debug and say "add: $add_name save: $save_name"; 
+	new_effect_chain( $save_name ); # current track effects
+	push @{ $this_track->effect_chain_stack }, $save_name;
+	map{ remove_effect($_)} $this_track->fancy_ops;
+	###add_effect_chain($add_name) if $add_name; # disabled!
+	#say "save name $save_name";
+	$save_name;
+}
+
+sub pop_effect_chain { # restore previous, save current as name if supplied
+	my $save_name = shift;
+	my $previous = pop @{$this_track->effect_chain_stack};
+	say ("no previous effect chain"), return unless $previous;
+	if($save_name){ 
+		push_effect_chain( save => $save_name, add => $previous);
+	} 
+	else { 
+		map{ remove_effect($_)} $this_track->fancy_ops;
+		add_effect_chain($previous);
+	}
+	delete $effect_chain{$previous};
+}
+sub uncache { 
+	my $t = $this_track;
+	# skip unless MON;
+	my $cm = $t->cache_map;
+	my $v = $t->monitor_version;
+	if(is_cached()){
+		# blast away any existing effects, TODO: warn or abort	
+		say $t->name, ": removing effects (except vol/pan)" if $t->fancy_ops;
+		map{ remove_effect($_)} $t->fancy_ops;
+		$t->set(active => $cm->{$v}{original});
+		print $t->name, ": setting uncached version ", $t->active, $/;
+		add_effect_chain($cm->{$v}{effect_chain});
+	} 
+	else { print $t->name, ": version $v is not cached\n"}
+}
+sub is_cached {
+	my $cm = $this_track->cache_map;
+	$cm->{$this_track->monitor_version}
+}
+	
+
+sub replace_effects { is_cached() ? uncache() : pop_effect_chain()}
+
+sub new_effect_chain {
+	my ($name, @ops) = @_;
+#	say "name: $name, ops: @ops";
+	@ops or @ops = $this_track->fancy_ops;
+	$effect_chain{$name} = { 
+					ops 	=> \@ops,
+					type 	=> { map{$_ => $cops{$_}{type} 	} @ops},
+					params	=> { map{$_ => $copp{$_} 		} @ops},
+	}
+}
+
+sub add_effect_chain {
+	my $name = shift;
+	say ("$name: effect chain does not exist"), return 
+		if ! $effect_chain{$name};
+	map {  $magical_cop_id = $_ unless $cops{$_}; # try to reuse cop_id
+			command_process( join " ", 
+				'add_effect',
+				$effect_chain{$name}{type}{$_}, 
+				@{$effect_chain{$name}{params}{$_}});
+			$magical_cop_id = undef;
+	} @{$effect_chain{$name}{ops}};
+			
+}	
+sub cleanup_exit {
+ 	remove_small_wavs();
+ 	kill 15, ecasound_pid() if $sock;  	
+	$term->rl_deprep_terminal();
+	CORE::exit; 
+}
+	
+sub cache_track {
+	print($this_track->name, ": track caching requires MON status.\n\n"), 
+		return unless $this_track->rec_status eq 'MON';
+	print($this_track->name, ": no effects to cache!  Skipping.\n\n"), 
+		return unless $this_track->fancy_ops;
+ 	initialize_chain_setup_vars();
+	my $orig = $this_track; 
+	my $orig_version = $this_track->monitor_version;
+	my $cooked = $this_track->name . '_cooked';
+	my $temp_track = Audio::Nama::CacheRecTrack->new(
+		width => 2,
+		name => $cooked,
+		group => 'Cooked',
+		target => $this_track->name,
+	);
+	$g->add_path( 'wav_in',$orig->name, $cooked, 'wav_out');
+	add_paths_for_sub_buses();  # we will prune unneeded ones
+	my $temp_tracks = Audio::Nama::Graph::expand_graph($g); # array ref
+	push @$temp_tracks, $temp_track;
+	Audio::Nama::Graph::add_inserts($g);
+	process_routing_graph();
+	maybe_write_chains() or say("nothing to do"), return;
+	map{ $_->remove } @$temp_tracks;
+	connect_transport('no_transport_status')
+		or say ("Couldn't connect engine! Skipping."), return;
+	say $/,$orig->name,": length ". d2($length). " seconds";
+	say "Starting cache operation. Please wait.";
+	eval_iam("cs-set-length $length");
+	eval_iam("start");
+	sleep 2; # time for transport to stabilize
+	while( eval_iam('engine-status') ne 'finished'){ 
+	print q(.); sleep 2; update_clock_display() } ; print " Done\n";
+	$this_track = $orig;
+	my $name = $this_track->name;
+	my @files = grep{/$name/} new_files_were_recorded();
+	if (@files ){ 
+		$debug and say "updating track cache_map";
+		#say "cache map",yaml_out($this_track->cache_map);
+		my $cache_map = $this_track->cache_map;
+		$cache_map->{$this_track->last} = { 
+			original 			=> $orig_version,
+			effect_chain	=> push_effect_chain(), # bypass
+		};
+		pop @{$this_track->effect_chain_stack};
+		#say "cache map",yaml_out($this_track->cache_map);
+		say qq(Saving effects for cached track "$name".
+'replace' will restore effects and set version $orig_version\n);
+		post_rec_configure();
+	} else { say "track cache operation failed!"; }
+}
 ### end
 
 
@@ -4757,17 +4919,17 @@ sub init_gui {
 	init_palettefields(); # keys only
 
 
-### 	Tk root window 
+	### 	Tk root window 
 
 	# Tk main window
  	$mw = MainWindow->new;  
 	get_saved_colors();
-	$set_event = $mw->Label();
 	$mw->optionAdd('*font', 'Helvetica 12');
 	$mw->optionAdd('*BorderWidth' => 1);
 	$mw->title("Ecasound/Nama"); 
 	$mw->deiconify;
 	$parent{mw} = $mw;
+
 
 	### init effect window
 
@@ -4777,6 +4939,15 @@ sub init_gui {
 #	$ew->withdraw;
 	$parent{ew} = $ew;
 
+	### Exit via Ctrl-C 
+
+	$mw->bind('<Control-Key-c>' => \&cleanup_exit); 
+	$ew->bind('<Control-Key-c>' => \&cleanup_exit);
+
+    ## Press SPACE to start/stop transport
+
+	$mw->bind('<Control-Key- >' => \&toggle_transport); 
+	$ew->bind('<Control-Key- >' => \&toggle_transport); 
 	
 	$canvas = $ew->Scrolled('Canvas')->pack;
 	$canvas->configure(
@@ -4784,9 +4955,6 @@ sub init_gui {
 		-width => 1200,
 		-height => 700,	
 		);
-# 		scrollregion =>[2,2,10000,2000],
-# 		-width => 1000,
-# 		-height => 4000,	
 	$effect_frame = $canvas->Frame;
 	my $id = $canvas->createWindow(30,30, -window => $effect_frame,
 											-anchor => 'nw');
@@ -4830,6 +4998,7 @@ sub init_gui {
 		-textvariable => \$project,
 		-width => 25
 	)->pack(-side => 'left');
+
 	$sn_load = $load_frame->Button->pack(-side => 'left');;
 	$sn_new = $load_frame->Button->pack(-side => 'left');;
 	$sn_quit = $load_frame->Button->pack(-side => 'left');
@@ -5155,13 +5324,10 @@ sub flash_ready {
 	$debug and print "flash color: $color\n";
 	length_display(-background => $color);
 	project_label_configure(-background => $color) unless $preview;
-# 	$event_id{tk_flash_ready}->cancel() if defined $event_id{tk_flash_ready};
-# 	$event_id{tk_flash_ready} = $set_event->after(3000, 
-# 		sub{ length_display(-background => $off);
-# 			 project_label_configure(-background => $off) 
-# }
-# );
+ 	$event_id{heartbeat} = AE::timer(5, 0, \&reset_engine_mode_color_display);
 }
+sub reset_engine_mode_color_display { project_label_configure(-background => $off) }
+sub set_engine_mode_color_display { project_label_configure(-background => engine_mode_color()) }
 sub group_gui {  
 	@_ = discard_object(@_);
 	my $group = $main; 
@@ -5584,11 +5750,8 @@ sub add_effect_gui {
 		$debug2 and print "&add_effect_gui\n";
 		@_ = discard_object(@_);
 		my %p 			= %{shift()};
-		my $n 			= $p{chain};
-		my $code 			= $p{type};
-		my $parent_id = $p{parent_id};  
-		my $id		= $p{cop_id};   # initiates restore
-		my $parameter		= $p{parameter}; 
+		my ($n,$code,$id,$parent_id,$parameter) =
+			@p{qw(chain type cop_id parent_id parameter)};
 		my $i = $effect_i{$code};
 
 		$debug and print yaml_out(\%p);
@@ -5900,34 +6063,7 @@ sub destroy_marker {
 	$mark_widget{$pos}->destroy; 
 }
 
-sub wraparound {
-	@_ = discard_object @_;
-	my ($diff, $start) = @_;
-	cancel_wraparound();
-	$event_id{tk_wraparound} = $set_event->after( 
-		int( $diff*1000 ), sub{ set_position( $start) } )
-}
-sub cancel_wraparound { tk_event_cancel("tk_wraparound") }
 
-sub start_heartbeat {
-	#print ref $set_event; 
-	$event_id{tk_heartbeat} = $set_event->repeat( 
-		3000, \&heartbeat);
-		# 3000, *heartbeat{SUB}); # equivalent to above
-}
-sub poll_jack {
-	package Audio::Nama; # no necessary we are already in base class
-	$event_id{tk_poll_jack} = $set_event->repeat( 
-		5000, \&jack_update
-	);
-}
-sub stop_heartbeat { tk_event_cancel( qw(tk_heartbeat tk_wraparound)) }
-
-sub tk_event_cancel {
-	@_ = discard_object @_;
-	map{ (ref $event_id{$_}) =~ /Tk/ and $set_event->afterCancel($event_id{$_}) 
-	} @_;
-}
 sub get_saved_colors {
 	$debug2 and print "&get_saved_colors\n";
 
@@ -6066,10 +6202,8 @@ sub save_palette {
  		class => 'Audio::Nama')
 }
 
-
-
 ### end
-
+ # root namespace!
 
 ## refresh functions
 
@@ -6195,18 +6329,14 @@ our @ISA = 'Audio::Nama';      ## default to root class
 ## The following methods belong to the Graphical interface class
 
 sub hello {"make a window";}
-sub install_handlers{};
 sub loop {
-    package Audio::Nama;
-    #MainLoop;
-	my $attribs = $term->Attribs;
-	$attribs->{attempted_completion_function} = \&complete;
+	package Audio::Nama;
+	$attribs->{already_prompted} = 0;
 	$term->tkRunning(1);
-    $OUT = $term->OUT || \*STDOUT;
-	while (1) {
-		my ($user_input) = $term->readline($prompt) ;
-		process_line( $user_input );
-	}
+  	while (1) {
+  		my ($user_input) = $term->readline($prompt) ;
+  		Audio::Nama::process_line( $user_input );
+  	}
 }
 
 ## The following methods belong to the Text interface class
@@ -6214,22 +6344,30 @@ sub loop {
 package Audio::Nama::Text;
 our @ISA = 'Audio::Nama';
 use Carp;
+use Audio::Nama::Assign qw(:all);
 
 sub hello {"hello world!";}
 
-use Carp;
-use Text::Format;
-use Audio::Nama::Assign qw(:all);
-$text_wrap = new Text::Format {
-	columns 		=> 75,
-	firstIndent 	=> 0,
-	bodyIndent		=> 0,
-	tabstop			=> 4,
-};
+sub loop {
+	package Audio::Nama;
+	issue_first_prompt();
+	$Event::DIED = sub {
+	   my ($event, $errmsg) = @_;
+	   say $errmsg;
+	   $attribs->{line_buffer} = q();
+	   $term->clear_message();
+	   $term->rl_reset_line_state();
+	};
+	Event::loop();
+}
 
 sub show_versions {
- 	"All versions: ". join " ", @{$this_track->versions}, $/
-		if @{$this_track->versions};
+		if (@{$this_track->versions} ){
+			my $cache_map = $this_track->cache_map;
+			"All versions: ". join(" ", 
+				map { $_ . ( $cache_map->{$_} and 'c') } @{$this_track->versions}
+			). $/
+		} else { q() }
 }
 
 sub show_effects {
@@ -6241,7 +6379,7 @@ sub show_effects {
  		 push @lines, $op_id. ": " . $effects[ $i ]->{name}.  "\n";
  		 my @pnames = @{$effects[ $i ]->{params}};
 			map{ push @lines,
-			 	"    " . $pnames[$_]->{name} . ": ".  $copp{$op_id}->[$_] . "\n";
+			 	"    ".($_+1).q(. ) . $pnames[$_]->{name} . ": ".  $copp{$op_id}->[$_] . "\n";
 		 	} (0..scalar @pnames - 1);
 			#push @lines, join("; ", @params) . "\n";
  
@@ -6251,7 +6389,7 @@ sub show_effects {
 
 	# display if there is actually something there
 
-	if ($i = $i->[0]){ push @lines, yaml_out($i) }
+	if ($i->{insert_type}){ push @lines, yaml_out($i) }
 		
 	join "", @lines;
  	
@@ -6260,6 +6398,11 @@ sub show_modifiers {
 	join "", "Modifiers: ",$this_track->modifiers, $/
 		if $this_track->modifiers;
 }
+sub show_effect_chain_stack {
+		"Bypassed effect chains: ".scalar @{ $this_track->effect_chain_stack }.$/
+			if @{ $this_track->effect_chain_stack } 
+}
+	
 sub show_region {
 	my @lines;
 	push @lines, "Start delay: ",
@@ -6268,7 +6411,7 @@ sub show_region {
 		if $this_track->region_start;
 	push @lines, "Region end: ", $this_track->region_end, $/
 		if $this_track->region_end;
-	join "", @lines;
+	return(join "", @lines);
 }
 
 sub show_status {
@@ -6286,116 +6429,6 @@ sub show_status {
 	push @fields, "master" if $mastering_mode;
 	"[ ". join(", ", @fields) . " ]\n";
 }
-	
-sub poll_jack {
-	package Audio::Nama;
-	$event_id{Event_poll_jack} = Event->timer(
-	    desc   => 'poll_jack',               # description;
-	    prio   => 5,                         # low priority;
-		interval => 5,
-	    cb     =>   \&jack_update, # callback;
-	);
-}
-
-sub install_handlers {
-
-	# we are using the Event module's handlers and event loop
-	
-	package Audio::Nama;
-
-	# setup Term::Readline::GNU
-	$term = new Term::ReadLine("Ecasound/Nama");
-	$attribs = $term->Attribs;
-	$attribs->{attempted_completion_function} = \&complete;
-
-	# store output buffer in a scalar (for print)
-	my $outstream = $attribs->{'outstream'};
-
-	# install STDIN handler
-	$event_id{stdin} = Event->io(
-		desc   => 'STDIN handler',           # description;
-		fd     => \*STDIN,                   # handle;
-		poll   => 'r',	                   # watch for incoming chars
-		cb     => sub{ 
-
-					&{$attribs->{'callback_read_char'}}();
-					if ( $attribs->{line_buffer} eq " " ){
-						if (engine_running()){ stop_transport() }
-						else { start_transport() }
-						$attribs->{line_buffer} = q();
- 						$attribs->{point} 		= 0;
- 						$attribs->{end}   		= 0;
-						$term->stuff_char(10);
-					    &{$attribs->{'callback_read_char'}}();
-
-					}
- 				},
-		repeat => 1,                         # keep alive after event;
-	 );
-#  	$event_id{sigint} = Event->signal(
-#  		desc   => 'Signal handler',           # description;
-#  		signal => $SIG{INT},
-#  		cb     => sub{ die "here" }, # callback;
-#  	 );
-
-	$event_id{Event_heartbeat} = Event->timer(
-		parked => 1, 						# start it later
-	    desc   => 'heartbeat',               # description;
-	    prio   => 5,                         # low priority;
-		interval => 3,
-	    cb     => \&heartbeat,               # callback;
-	);
-	if ( $midi_inputs =~ /on|capture/ ){
-		my $command = "aseqdump ";
-		$command .= "-p $controller_ports" if $controller_ports;
-		open MIDI, "$command |" or die "can't fork $command: $!";
-		$event_id{sequencer} = Event->io(
-			desc   => 'read ALSA sequencer events',
-			fd     => \*MIDI,                    # handle;
-			poll   => 'r',	                     # watch for incoming chars
-			cb     => \&process_control_inputs, # callback;
-			repeat => 1,                         # keep alive after event;
-		 );
-		$event_id{sequencer_error} = Event->io(
-			desc   => 'read ALSA sequencer events',
-			fd     => \*MIDI,                    # handle;
-			poll   => 'e',	                     # watch for exception
-			cb     => sub { die "sequencer pipe read failed" }, # callback;
-		 );
-	
-	}
-}
-sub loop {
-	package Audio::Nama;
-	$term->callback_handler_install($prompt, \&process_line);
-	Event::loop();
-
-}
-sub wraparound {
-	package Audio::Nama;
-	@_ = discard_object(@_);
-	my ($diff, $start) = @_;
-	#print "diff: $diff, start: $start\n";
-	$event_id{Event_wraparound}->cancel()
-		if defined $event_id{Event_wraparound};
-	$event_id{Event_wraparound} = Event->timer(
-	desc   => 'wraparound',               # description;
-	after  => $diff,
-	cb     => sub{ set_position($start) }, # callback;
-   );
-
-}
-
-
-sub start_heartbeat {$event_id{Event_heartbeat}->start() }
-
-sub stop_heartbeat {$event_id{Event_heartbeat}->stop() }
-
-sub cancel_wraparound {
-	$event_id{Event_wraparound}->cancel() if defined $event_id{Event_wraparound}
-}
-
-
 sub placeholder { 
 	my $val = shift;
 	return $val if $val;
@@ -6481,8 +6514,9 @@ sub helpline {
 		$text .=  $commands{$cmd}->{parameters}
 	}
 	$text .= "\n";
-	$text .=  "Example: ". eval( qq("$commands{$cmd}->{example}") ) . $/  
-			if $commands{$cmd}->{example};
+	my $example = $commands{$cmd}->{example};
+	$example =~ s/!n/\n/g;
+	$text .=  "Example: $example\n" if $example;
 	($/, ucfirst $text, $/);
 	
 }
@@ -6547,6 +6581,7 @@ sub help_effect {
 		$input = $ladspa_label{$input}
 			or print("$input: effect not found.\n\n"), return;
 	}
+	elsif ( my $id = $ladspa_unique_id{$input} ){$input = $ladspa_label{$id} }
 	if ( $effect_i{$input} ) {} # do nothing
 	elsif ( $effect_j{$input} ) { $input = $effect_j{$input} }
 	else { print("$input: effect not found.\n\n"), return }
@@ -6621,8 +6656,6 @@ sub t_create_project {
 sub t_add_ctrl {
 	package Audio::Nama;
 	my ($parent, $code, $values) = @_;
-	print "code: $code, parent: $parent\n";
-	$values and print "values: ", join " ", @{$values};
 	if ( $effect_i{$code} ) {} # do nothing
 	elsif ( $effect_j{$code} ) { $code = $effect_j{$code} }
 	else { warn "effect code not found: $code\n"; return }
@@ -6633,8 +6666,6 @@ sub t_add_ctrl {
 				values => $values,
 				type => $code,
 			);
-			#print "adding effect\n";
-			# print (yaml_out(\%p));
 		add_effect( \%p );
 }
 
@@ -6642,7 +6673,6 @@ sub t_insert_effect {
 	package Audio::Nama;
 	my ($before, $code, $values) = @_;
 	$code = effect_code( $code );	
-	$code = effect_code( $code );
 	my $running = engine_running();
 	print ("Cannot insert effect while engine is recording.\n"), return 
 		if $running and Audio::Nama::really_recording;
@@ -6760,6 +6790,7 @@ sub bunch {
 	$bunch{$bunchname} = [ @tracks ];
 	}
 }
+sub add_to_bunch {}
 
 
 ## NO-OP GRAPHIC METHODS 
@@ -6797,6 +6828,8 @@ sub init_palette {}
 sub save_palette {}
 sub paint_mute_buttons {}
 sub remove_track_gui {}
+sub reset_engine_mode_color_display {}
+sub set_engine_mode_color_display {}
 
 package Audio::Nama;
 
@@ -6806,6 +6839,8 @@ $debug2 and print "Reading grammar\n";
 
 $commands_yml = <<'YML';
 ---
+testq:
+  what: test
 help:
   what: display help 
   short: h
@@ -6948,11 +6983,6 @@ link_track:
   what: create a read-only track that uses .WAV files from another track. 
   parameters: <s_name> <s_target> [ <s_project> ]
   example: link_track intro Mixdown song_intro creates a track 'intro' using all .WAV versions from the Mixdown track of 'song_intro' project
-slave_track:
-  type: track:
-  short: slave
-  what: create a read-only track that gets most of its settings from an existing track, used for instrument monitor buses
-  parameters: name target
 import_audio:
   type: track
   short: import
@@ -7065,34 +7095,40 @@ pan_center:
 pan_back:
   type: track
   short: pb
-  what: restore current track pan setting prior to pan_left, pan_right or pan_center 
+  what: restore current track pan setting prior to pan_left, pan_right or pan_center
   parameters: none
 show_tracks:
   type: track 
-  short: show tracks
+  short: show tracks list_tracks lt
   what: show status of all tracks
 show_track:
   type: track
   short: sh
   what: show current track status
-region:
+set_region:
   type: track
-  what: Specify a track region for playback using marks. Nama allows one region per track. 
+  short: srg
+  what: Specify a playback region for the current track using marks. Use 'new_region' for multiple regions.
   parameters: <s_start_mark_name> <s_end_mark_name>
+new_region:
+  type: track
+  short: nrg
+  what: Create a region for the current track using an auxiliary track 
+  parameters: <s_start_mark_name> <s_end_mark_name> [<s_region_name>]
 remove_region:
   type: track
-  short: rmr
-  what: remove region definition. Entire track plays back. 
+  short: rrg
+  what: remove region (including associated auxiliary track)
   parameters: none
 shift_track:
   type: track
   short: shift
-  what: set playback delay for track/region
+  what: set playback delay for track or region
   parameters: <s_start_mark_name> | <i_start_mark_index | <f_start_seconds> 
 unshift_track:
   type: track
   short: unshift
-  what: remove playback delay for track/region
+  what: remove playback delay for track or region
   parameters: none
 modifiers:
   type: track
@@ -7119,9 +7155,14 @@ autofix_tracks:
   parameters: none
 remove_track:
   type: track
-  short: rmt
+  short:
   what: remove effects, parameters and GUI for current track
   parameters: none 
+cache_track:
+  type: track
+  short: cache ct
+  what: record the post-fader signal as a new version
+  parameters: none
 group_rec:
   type: group
   short: grec R
@@ -7141,21 +7182,26 @@ group_off:
   short: goff Z 
   what: group OFF mode, exclude all user tracks from chain setup
   parameters: none
-bunch:
+new_bunch:
   type: group
-  short: bn
-  what: define/list groups of tracks
-  parameters: [ <s_group_name> [track1] [track2...] ]
+  short: nb
+  what: define a bunch of tracks
+  parameters: <s_group_name> [<s_track1> <s_track2>...]
 list_bunches:
   type: group
   short: lb
-  what: list groups of tracks (bunches)
+  what: list track bunches
   parameters: none
 remove_bunches:
   short: rb
   type: group
-  what: remove alias for group(s) of tracks (bunches)
+  what: remove the definition of a track bunch
   parameters: <s_bunch_name> [<s_bunch_name>...]
+add_to_bunch:
+  short: ab
+  type: group
+  what: add track(s) to a bunch
+  parameters: <s_bunch_name> <s_track1> [<s_track2>...]
 save_state:
   type: project
   short: keep save
@@ -7219,15 +7265,15 @@ loop_disable:
   short: noloop nl
   what: disable automatic looping
   parameters: none
-add_ctrl:
+add_controller:
   type: effect
-  what: add a controller to an operator
+  what: add a controller to an operator (use mfx to modify, rfx to remove)
   parameters: <s_parent_id> <s_effect_code> [ <f_param1> <f_param2>...]
-  short: acl cla
+  short: acl
 add_effect:
   type: effect
   what: add effect to current track (placed before volume control)
-  short: fxa afx
+  short: afx
   parameters: <s_effect_code> [ <f_param1> <f_param2>... ]
   example: add_effect amp 6 (LADSPA Simple amp 6dB gain)!nadd_effect var_dali (preset var_dali) Note: no el: or pn: prefix is required
 append_effect:
@@ -7236,19 +7282,19 @@ append_effect:
   parameters: <s_effect_code> [ <f_param1> <f_param2>... ]
 insert_effect:
   type: effect
-  short: ifx fxi
+  short: ifx
   what: place effect before specified effect (engine stopped, prior to arm only)
   parameters: <s_insert_point_id> <s_effect_code> [ <f_param1> <f_param2>... ]
 modify_effect:
   type: effect
   what: modify an effect parameter
   parameters: <s_effect_id> <i_parameter> [ + | - | * | / ] <f_value>
-  short: fxm mfx
-  example: modify_effect V 1 1000 (set effect_id V, parameter 1 to 1000)!nmodify_effect V 1 - 10 (reduce effect_id V, parameter 1 by 10)!nset multiple effects/parameters: mfx V 1,2,3 + 0.5 mfx V,AC,AD 1,2 3.14
+  short: mfx modify_controller mcl
+  example: modify_effect V 1 -1 (set effect_id V, parameter 1 to -1)!nmodify_effect V 1 - 10 (reduce effect_id V, parameter 1 by 10)!nset multiple effects/parameters: mfx V 1,2,3 + 0.5 ; mfx V,AC,AD 1,2 3.14
 remove_effect:
   type: effect
   what: remove effects from selected track
-  short: fxr rfx
+  short: rfx remove_controller rcl
   parameters: <s_effect_id1> [ <s_effect_id2>...]
 add_insert_cooked:
   type: effect 
@@ -7282,34 +7328,34 @@ ladspa_register:
   parameters: none
 list_marks:
   type: mark
-  short: lm
+  short: lmk lm
   what: List all marks
   parameters: none
 to_mark:
   type: mark
-  short: tom
+  short: tmk tom
   what: move playhead to named mark or mark index
   parameters: <s_mark_id> | <i_mark_index> 
   example: to_mark start (go to mark named 'start')
-mark:
+new_mark:
   type: mark
   what: drop mark at current playback position
-  short: k
+  short: mark k
   parameters: [ <s_mark_id> ]
 remove_mark:
   type: mark
   what: Remove mark, default to current mark
-  short: rmm
+  short: rmk rom
   parameters: [ <s_mark_id> | <i_mark_index> ]
   example: remove_mark start (remove mark named 'start')
 next_mark:
   type: mark
-  short: nm
+  short: nmk nm
   what: Move playback head to next mark
   parameters: none
 previous_mark:
   type: mark
-  short: pm
+  short: pmk pm
   what: Move playback head to previous mark
   parameters: none
 name_mark:
@@ -7320,7 +7366,7 @@ name_mark:
   example: name_mark start
 modify_mark:
   type: mark
-  short: move_mark mm
+  short: move_mark mmk mm
   what: change the time setting of current mark
   parameters: [ + | - ] <f_seconds>
 engine_status:
@@ -7377,16 +7423,59 @@ update_send_bus:
   what: include tracks added since send bus was created
   parameters: <s_name>
   example: usb Some_bus 
-add_slave_track:
-  type: track
-  short: ast
-  what: add a slave track to an existing user bus
-  parameters: <s_bus_name> <s_target_track_name> 
 remove_bus:
   type: bus
-  short: rmb
+  short:
   what: remove a bus
   parameters: <s_bus_name>
+list_buses:
+  type: bus
+  short: lbs
+  what: list buses and their parameters TODO
+  parameters: none
+set_bus:
+  type: bus
+  short: sbs
+  what: set bus parameters TODO
+new_effect_chain:
+  type: effect
+  short: nec
+  what: define a reusable sequence of effects (effect chain) with current parameters
+  parameters: <s_name> [<op1>, <op2>,...]
+add_effect_chain:
+  type: effect
+  short: aec
+  what: add an effect chain to the current track
+  parameters: <s_name>
+overwrite_effect_chain:
+  type: effect
+  short: oec
+  what: add an effect chain overwriting current effects (which are pushed onto stack)
+  parameters: <s_name>
+delete_effect_chain:
+  type: effect
+  short: dec
+  what: remove an effect chain definition from the list
+  parameters: <s_name>
+list_effect_chains:
+  type: effect
+  short: lec
+  what: list effect chains, matching any strings provided
+  parameters: [<s_frag1> <s_frag2>... ]
+bypass_effects:
+  type: effect
+  short: bypass bye
+  what: bypass track effects (pushing them onto stack) except vol/pan 
+  parameters: none
+replace_effects:
+  type: effect
+  short: replace rep 
+  what: restore bypassed track effects
+uncache_track:
+  type: effect
+  short: uncache unc
+  what: set uncached track version, restoring effects (if current version is cached)
+  parameters: none
 ...
 
 YML
@@ -7893,17 +7982,16 @@ name: /\w[\w:,]*\/?/
 name2: /[\w\-+:]+/
 name3: /\S+/
 name4: /\w+/
-markname: /\w+/ { 
+marktime: /\d+\.\d+/ 
+markname: /\w+/ { 	 
 	print("$item[1]}: non-existent mark name. Skipping\n"), return undef 
 		unless $Audio::Nama::Mark::by_name{$item[1]};
 	$item[1];
 }
-marktime: /\d+\.\d+/
 path: /(["'])[\w-\. \/]+$1/
 path: /[\w\-\.\/]+/
 modifier: 'audioloop' | 'select' | 'reverse' | 'playat' | value
 end: /[;\s]*$/ 
-nomodifiers: _nomodifiers end { $Audio::Nama::this_track->set(modifiers => ""); 1}
 help_effect: _help_effect name end { Audio::Nama::Text::help_effect($item{name}) ; 1}
 find_effect: _find_effect name3(s) { 
 	Audio::Nama::Text::find_effect(@{$item{"name3(s)"}}); 1}
@@ -7960,20 +8048,17 @@ link_track: _link_track name target end {
 }
 target: name
 project: name
-region: _region end { print( Audio::Nama::Text::show_region() ); 1 }		
-region: _region beginning ending end { 
+set_region: _set_region beginning ending end { 
 	Audio::Nama::set_region( @item{ qw( beginning ending ) } );
 	1;
 }
-region: _region beginning end { 
-	Audio::Nama::set_region( $item{beginning}, 'END' );
+set_region: _set_region beginning end { Audio::Nama::set_region( $item{beginning}, 'END' );
 	1;
 }
-remove_region: _remove_region end {
-	$Audio::Nama::this_track->set(region_start => undef );
-	$Audio::Nama::this_track->set(region_end => undef );
-	print $Audio::Nama::this_track->name, ": Region definition removed. Full track will play.\n";
-	1;
+remove_region: _remove_region end { Audio::Nama::remove_region(); 1; }
+new_region: _new_region beginning ending name(?) end {
+	my ($name) = @{$item{'name(?)'}};
+	Audio::Nama::new_region(@item{qw(beginning ending)}, $name); 1
 }
 shift_track: _shift_track start_position end {
 	my $pos = $item{start_position};
@@ -8020,6 +8105,7 @@ modifiers: _modifiers modifier(s) end {
 	@{$item{"modifier(s)"}}, q() ));
 	1;}
 modifiers: _modifiers end { print $Audio::Nama::this_track->modifiers, "\n"; 1}
+nomodifiers: _nomodifiers end { $Audio::Nama::this_track->set(modifiers => ""); 1}
 show_chain_setup: _show_chain_setup { Audio::Nama::show_chain_setup(); 1}
 show_io: _show_io { Audio::Nama::show_io(); 1}
 show_track: _show_track end {
@@ -8027,8 +8113,9 @@ show_track: _show_track end {
 	$output .= Audio::Nama::Text::show_effects();
 	$output .= Audio::Nama::Text::show_versions();
 	$output .= Audio::Nama::Text::show_modifiers();
-	$output .= join "", "Signal width: ", Audio::Nama::width($Audio::Nama::this_track->ch_count), "\n";
+	$output .= join "", "Signal width: ", Audio::Nama::width($Audio::Nama::this_track->width), "\n";
 	$output .= Audio::Nama::Text::show_region();
+	$output .= Audio::Nama::Text::show_effect_chain_stack();
 	Audio::Nama::pager( $output );
 	1;}
 show_track: _show_track name end { 
@@ -8049,9 +8136,9 @@ automix: _automix { Audio::Nama::automix(); 1 }
 autofix_tracks: _autofix_tracks { Audio::Nama::command_process("for mon; fixdc; normalize"); 1 }
 master_on: _master_on end { Audio::Nama::master_on(); 1 }
 master_off: _master_off end { Audio::Nama::master_off(); 1 }
-exit: _exit end { 	Audio::Nama::save_state($Audio::Nama::state_store_file); 
-					kill 15, Audio::Nama::ecasound_pid();  	
-					CORE::exit(); 1}
+exit: _exit end {   Audio::Nama::save_state($Audio::Nama::state_store_file); 
+					Audio::Nama::cleanup_exit();
+                    1}	
 source: _source name { print "source with argument$/"; $Audio::Nama::this_track->set_source( $item{name} ); 1 }
 source: _source end { 
 	my $source = $Audio::Nama::this_track->source;
@@ -8066,12 +8153,12 @@ source: _source end {
 send: _send name { $Audio::Nama::this_track->set_send($item{name}); 1}
 send: _send end { $Audio::Nama::this_track->set_send(); 1}
 stereo: _stereo { 
-	$Audio::Nama::this_track->set(ch_count => 2); 
+	$Audio::Nama::this_track->set(width => 2); 
 	print $Audio::Nama::this_track->name, ": setting to stereo\n";
 	1;
 }
 mono: _mono { 
-	$Audio::Nama::this_track->set(ch_count => 1); 
+	$Audio::Nama::this_track->set(width => 1); 
 	print $Audio::Nama::this_track->name, ": setting to mono\n";
 	1; }
 off: 'off' end {$Audio::Nama::this_track->set_off(); 1}
@@ -8136,8 +8223,8 @@ remove_mark: _remove_mark end {
 	return unless (ref $Audio::Nama::this_mark) =~ /Mark/;
 	$Audio::Nama::this_mark->remove;
 	1;}
-mark: _mark name end { Audio::Nama::drop_mark $item{name}; 1}
-mark: _mark end {  Audio::Nama::drop_mark(); 1}
+new_mark: _new_mark name end { Audio::Nama::drop_mark $item{name}; 1}
+new_mark: _new_mark end {  Audio::Nama::drop_mark(); 1}
 next_mark: _next_mark end { Audio::Nama::next_mark(); 1}
 previous_mark: _previous_mark end { Audio::Nama::previous_mark(); 1}
 loop_enable: _loop_enable someval(s) end {
@@ -8184,7 +8271,7 @@ remove_effect: _remove_effect op_id(s) end {
 	Audio::Nama::sleeper(0.5);
 	Audio::Nama::unmute();
 	1;}
-add_ctrl: _add_ctrl parent name value(s?) end {
+add_controller: _add_controller parent name value(s?) end {
 	my $code = $item{name};
 	my $parent = $item{parent};
 	my $values = $item{"value(s?)"};
@@ -8236,10 +8323,11 @@ group_version: _group_version dd end {
 	my $n = $item{dd};
 	$n = undef if $n == 0;
 	$Audio::Nama::main->set( version => $n ); 1}
-bunch: _bunch name(s?) { Audio::Nama::Text::bunch( @{$item{'name(s?)'}}); 1}
+new_bunch: _new_bunch name(s) { Audio::Nama::Text::bunch( @{$item{'name(s)'}}); 1}
 list_bunches: _list_bunches end { Audio::Nama::Text::bunch(); 1}
 remove_bunches: _remove_bunches name(s) { 
  	map{ delete $Audio::Nama::bunch{$_} } @{$item{'name(s)'}}; 1}
+add_to_bunch: _add_to_bunch name(s) end { Audio::Nama::Text::add_to_bunch( @{$item{'name(s)'}});1 }
 list_versions: _list_versions end { 
 	print join " ", @{$Audio::Nama::this_track->versions}, "\n"; 1}
 ladspa_register: _ladspa_register end { 
@@ -8257,13 +8345,14 @@ destroy_current_wav: _destroy_current_wav {
 	$Audio::Nama::main->set(rw => 'MON');
 	my $wav = $Audio::Nama::this_track->full_path;
 	print "delete WAV file $wav? [n] ";
-	my $reply = <STDIN>;
+	my $reply = chr($Audio::Nama::term->read_key());
 	if ( $reply =~ /y/i ){
 		print "Unlinking.\n";
 		unlink $wav or warn "couldn't unlink $wav: $!\n";
 		Audio::Nama::rememoize();
 	}
 	$Audio::Nama::main->set(rw => $old_group_status);
+	$Audio::Nama::this_track = $Audio::Nama::tn{Master};
 	1;
 }
 memoize: _memoize { 
@@ -8310,31 +8399,25 @@ add_sub_bus: _add_sub_bus bus_name destination(?) end {
 	Audio::Nama::add_sub_bus( $item{bus_name}, $dest_type, $dest_id); 1
 }
 add_slave_track: _add_slave_track bus_name target end {
-	Audio::Nama::add_slave_track( $item{bus_name}, $item{target} ); 1; } bus_name: /[A-Z]\w+/
+	Audio::Nama::add_slave_track( group => $item{bus_name}, target => $item{target} ); 1; } 
+bus_name: /[A-Z]\w+/
 destination: /\d+/ | /loop,\w+/ | name2
 remove_bus: _remove_bus bus_name end {
-	foreach my $i ( 0..(scalar @Audio::Nama::UserBus::buses - 1) ){
- 		if( $Audio::Nama::UserBus::buses[$i]->name eq $item{bus_name} ){
- 			print "removing bus: $item{bus_name}\n";
- 			splice @Audio::Nama::UserBus::buses, $i, 1;
-			$Audio::Nama::tn{$item{bus_name}}->remove_track;
- 			map{ $Audio::Nama::tn{$_}->remove } 
- 				grep{ (ref $Audio::Nama::tn{$_}) =~ /SlaveTrack/ } 
- 				$Audio::Nama::Group::by_name{$item{bus_name}}->tracks;
- 			last;
- 		}
-  	}
+	print ("$item{bus_name}: no such bus\n"), return 
+		unless $Audio::Nama::Bus::by_name{$item{bus_name}};
+	$Audio::Nama::Bus::by_name{$item{bus_name}}->remove;
 	1;
 }
 update_send_bus: _update_send_bus bus_name end {
  	Audio::Nama::update_send_bus( $item{bus_name} );
  	1;
 }
+set_bus: _set_bus { print "stub command, does nothing, sorry.\n"}
+list_buses: _list_buses end { Audio::Nama::pager(map{ $_->dump } Audio::Nama::Bus::all()) }
 add_insert_cooked: _add_insert_cooked send_id return_id(?) end {
 	my $return_id = "@{$item{'return_id(?)'}}";
 	my $send_id = $item{send_id};
 	my $t = $Audio::Nama::this_track;
-	$t->remove_insert;
 	my $i = {
 		insert_type => 'cooked',
 		send_type 	=> Audio::Nama::dest_type($send_id),
@@ -8348,7 +8431,7 @@ add_insert_cooked: _add_insert_cooked send_id return_id(?) end {
 		$i->{return_id} =  $i->{send_id} if $i->{return_type} eq 'jack_client';
 		$i->{return_id} =  $i->{send_id} + 2 if $i->{return_type} eq 'soundcard';
 	}
-	$t->set(inserts => [$i]); 1;
+	$t->set(inserts => $i); 1;
 }
 send_id: name
 return_id: name
@@ -8356,16 +8439,17 @@ set_insert_wetness: _set_insert_wetness parameter end {
 	my $p = $item{parameter};
 	print ("wetness parameter must be an integer between 0 and 100\n"), return 1
 		if ! ($p <= 100 and $p >= 0);
-	my $i = $Audio::Nama::this_track->inserts->[0];
+	my $i = $Audio::Nama::this_track->inserts;
 	print ("track '",$Audio::Nama::this_track->n, "' has no insert.  Skipping.\n"),
 		return 1 unless $i;
 	$i->{wetness} = $p;
 	Audio::Nama::modify_effect($i->{wet_vol}, 0, undef, $p);
+	Audio::Nama::sleeper(0.1);
 	Audio::Nama::modify_effect($i->{dry_vol}, 0, undef, 100 - $p);
 	1;
 }
 set_insert_wetness: _set_insert_wetness end {
-	my $i = $Audio::Nama::this_track->inserts->[0];
+	my $i = $Audio::Nama::this_track->inserts;
 	print ("track ",$Audio::Nama::this_track->n, " has no insert.\n"), return 1 unless $i;
 	 print "The insert is ", 
 		$i->{wetness}, "% wet, ", (100 - $i->{wetness}), "% dry.\n";
@@ -8374,8 +8458,45 @@ remove_insert: _remove_insert end {
 	$Audio::Nama::this_track->remove_insert;
 	1;
 }
+cache_track: _cache_track end { Audio::Nama::cache_track(); 1 }
+uncache_track: _uncache_track end { Audio::Nama::uncache(); 1 }
+new_effect_chain: _new_effect_chain name op_id(s?) end {
+	Audio::Nama::new_effect_chain($item{name}, @{ $item{'op_id(s?)'} });
+	1;
+}
+add_effect_chain: _add_effect_chain name end {
+	Audio::Nama::add_effect_chain($item{name});
+	1;
+}
+delete_effect_chain: _delete_effect_chain name(s) end {
+	map{ delete $Audio::Nama::effect_chain{$_} } @{ $item{'name(s)'} };
+	1;
+}
+list_effect_chains: _list_effect_chains name(s?) end {
+    my @ids = grep{ ! /^_/ } keys %Audio::Nama::effect_chain;
+	if (my @frags = @{$item{'name(s?)'}}){
+		@ids = grep{ my $id = $_; grep{ $id =~ /$_/} @frags} @ids; 
+	}
+	map{ my $name = $_;
+		print join ' ', "$name:", 
+		map{$Audio::Nama::effect_chain{$name}{type}{$_},
+			@{$Audio::Nama::effect_chain{$name}{params}{$_}}
+		} @{$Audio::Nama::effect_chain{$name}{ops}};
+		print "\n";
+	} @ids;
+	1;
+}
+bypass_effects:   _bypass_effects end { Audio::Nama::push_effect_chain(); 1}
+replace_effects: _replace_effects end {  Audio::Nama::replace_effects(); 1;}
+overwrite_effect_chain: _overwrite_effect_chain name end {
+	my $name = $item{name};
+	print("$name: unknown effect chain.\n"), return if !  $Audio::Nama::effect_chain{$name};
+	Audio::Nama::push_effect_chain() if $Audio::Nama::this_track->fancy_ops;
+	Audio::Nama::add_effect_chain($name); 1
+}
 
 
+command: testq
 command: help
 command: help_effect
 command: find_effect
@@ -8405,7 +8526,6 @@ command: main_on
 command: add_track
 command: add_tracks
 command: link_track
-command: slave_track
 command: import_audio
 command: set_track
 command: rec
@@ -8432,7 +8552,8 @@ command: pan_center
 command: pan_back
 command: show_tracks
 command: show_track
-command: region
+command: set_region
+command: new_region
 command: remove_region
 command: shift_track
 command: unshift_track
@@ -8442,13 +8563,15 @@ command: normalize
 command: fixdc
 command: autofix_tracks
 command: remove_track
+command: cache_track
 command: group_rec
 command: group_mon
 command: group_version
 command: group_off
-command: bunch
+command: new_bunch
 command: list_bunches
 command: remove_bunches
+command: add_to_bunch
 command: save_state
 command: get_state
 command: list_projects
@@ -8462,7 +8585,7 @@ command: disconnect
 command: show_chain_setup
 command: loop_enable
 command: loop_disable
-command: add_ctrl
+command: add_controller
 command: add_effect
 command: append_effect
 command: insert_effect
@@ -8476,7 +8599,7 @@ command: preset_register
 command: ladspa_register
 command: list_marks
 command: to_mark
-command: mark
+command: new_mark
 command: remove_mark
 command: next_mark
 command: previous_mark
@@ -8492,8 +8615,18 @@ command: add_send_bus_cooked
 command: add_send_bus_raw
 command: add_sub_bus
 command: update_send_bus
-command: add_slave_track
 command: remove_bus
+command: list_buses
+command: set_bus
+command: new_effect_chain
+command: add_effect_chain
+command: overwrite_effect_chain
+command: delete_effect_chain
+command: list_effect_chains
+command: bypass_effects
+command: replace_effects
+command: uncache_track
+_testq: /testq\b/
 _help: /help\b/ | /h\b/
 _help_effect: /help_effect\b/ | /hfx\b/ | /he\b/
 _find_effect: /find_effect\b/ | /ffx\b/ | /fe\b/
@@ -8523,7 +8656,6 @@ _main_on: /main_on\b/
 _add_track: /add_track\b/ | /add\b/ | /new\b/
 _add_tracks: /add_tracks\b/ | /add\b/ | /new\b/
 _link_track: /link_track\b/ | /link\b/
-_slave_track: /slave_track\b/ | /slave\b/
 _import_audio: /import_audio\b/ | /import\b/
 _set_track: /set_track\b/ | /set\b/
 _rec: /rec\b/
@@ -8548,10 +8680,11 @@ _pan_right: /pan_right\b/ | /pr\b/
 _pan_left: /pan_left\b/ | /pl\b/
 _pan_center: /pan_center\b/ | /pc\b/
 _pan_back: /pan_back\b/ | /pb\b/
-_show_tracks: /show_tracks\b/ | /show\b/ | /tracks\b/
+_show_tracks: /show_tracks\b/ | /show\b/ | /tracks\b/ | /list_tracks\b/ | /lt\b/
 _show_track: /show_track\b/ | /sh\b/
-_region: /region\b/
-_remove_region: /remove_region\b/ | /rmr\b/
+_set_region: /set_region\b/ | /srg\b/
+_new_region: /new_region\b/ | /nrg\b/
+_remove_region: /remove_region\b/ | /rrg\b/
 _shift_track: /shift_track\b/ | /shift\b/
 _unshift_track: /unshift_track\b/ | /unshift\b/
 _modifiers: /modifiers\b/ | /mods\b/ | /mod\b/
@@ -8559,14 +8692,16 @@ _nomodifiers: /nomodifiers\b/ | /nomods\b/ | /nomod\b/
 _normalize: /normalize\b/ | /norm\b/ | /ecanormalize\b/
 _fixdc: /fixdc\b/ | /ecafixdc\b/
 _autofix_tracks: /autofix_tracks\b/ | /autofix\b/
-_remove_track: /remove_track\b/ | /rmt\b/
+_remove_track: /remove_track\b/ | /HASH(0x9f8b630)\b/
+_cache_track: /cache_track\b/ | /cache\b/ | /ct\b/
 _group_rec: /group_rec\b/ | /grec\b/ | /R\b/
 _group_mon: /group_mon\b/ | /gmon\b/ | /M\b/
 _group_version: /group_version\b/ | /gn\b/ | /gver\b/ | /gv\b/
 _group_off: /group_off\b/ | /goff\b/ | /Z\b/
-_bunch: /bunch\b/ | /bn\b/
+_new_bunch: /new_bunch\b/ | /nb\b/
 _list_bunches: /list_bunches\b/ | /lb\b/
 _remove_bunches: /remove_bunches\b/ | /rb\b/
+_add_to_bunch: /add_to_bunch\b/ | /ab\b/
 _save_state: /save_state\b/ | /keep\b/ | /save\b/
 _get_state: /get_state\b/ | /recall\b/ | /restore\b/ | /retrieve\b/
 _list_projects: /list_projects\b/ | /lp\b/
@@ -8580,26 +8715,26 @@ _disconnect: /disconnect\b/ | /dcon\b/
 _show_chain_setup: /show_chain_setup\b/ | /chains\b/
 _loop_enable: /loop_enable\b/ | /loop\b/
 _loop_disable: /loop_disable\b/ | /noloop\b/ | /nl\b/
-_add_ctrl: /add_ctrl\b/ | /acl\b/ | /cla\b/
-_add_effect: /add_effect\b/ | /fxa\b/ | /afx\b/
+_add_controller: /add_controller\b/ | /acl\b/
+_add_effect: /add_effect\b/ | /afx\b/
 _append_effect: /append_effect\b/
-_insert_effect: /insert_effect\b/ | /ifx\b/ | /fxi\b/
-_modify_effect: /modify_effect\b/ | /fxm\b/ | /mfx\b/
-_remove_effect: /remove_effect\b/ | /fxr\b/ | /rfx\b/
+_insert_effect: /insert_effect\b/ | /ifx\b/
+_modify_effect: /modify_effect\b/ | /mfx\b/ | /modify_controller\b/ | /mcl\b/
+_remove_effect: /remove_effect\b/ | /rfx\b/ | /remove_controller\b/ | /rcl\b/
 _add_insert_cooked: /add_insert_cooked\b/ | /ainc\b/
 _set_insert_wetness: /set_insert_wetness\b/ | /wet\b/
 _remove_insert: /remove_insert\b/ | /rin\b/
 _ctrl_register: /ctrl_register\b/ | /crg\b/
 _preset_register: /preset_register\b/ | /prg\b/
 _ladspa_register: /ladspa_register\b/ | /lrg\b/
-_list_marks: /list_marks\b/ | /lm\b/
-_to_mark: /to_mark\b/ | /tom\b/
-_mark: /mark\b/ | /k\b/
-_remove_mark: /remove_mark\b/ | /rmm\b/
-_next_mark: /next_mark\b/ | /nm\b/
-_previous_mark: /previous_mark\b/ | /pm\b/
+_list_marks: /list_marks\b/ | /lmk\b/ | /lm\b/
+_to_mark: /to_mark\b/ | /tmk\b/ | /tom\b/
+_new_mark: /new_mark\b/ | /mark\b/ | /k\b/
+_remove_mark: /remove_mark\b/ | /rmk\b/ | /rom\b/
+_next_mark: /next_mark\b/ | /nmk\b/ | /nm\b/
+_previous_mark: /previous_mark\b/ | /pmk\b/ | /pm\b/
 _name_mark: /name_mark\b/ | /nmk\b/ | /nom\b/
-_modify_mark: /modify_mark\b/ | /move_mark\b/ | /mm\b/
+_modify_mark: /modify_mark\b/ | /move_mark\b/ | /mmk\b/ | /mm\b/
 _engine_status: /engine_status\b/ | /egs\b/
 _dump_track: /dump_track\b/ | /dumpt\b/ | /dump\b/
 _dump_group: /dump_group\b/ | /dumpgroup\b/ | /dumpg\b/
@@ -8610,9 +8745,19 @@ _add_send_bus_cooked: /add_send_bus_cooked\b/ | /asbc\b/
 _add_send_bus_raw: /add_send_bus_raw\b/ | /asbr\b/
 _add_sub_bus: /add_sub_bus\b/ | /asub\b/
 _update_send_bus: /update_send_bus\b/ | /usb\b/
-_add_slave_track: /add_slave_track\b/ | /ast\b/
-_remove_bus: /remove_bus\b/ | /rmb\b/
+_remove_bus: /remove_bus\b/ | /HASH(0x9f9a218)\b/
+_list_buses: /list_buses\b/ | /lbs\b/
+_set_bus: /set_bus\b/ | /sbs\b/
+_new_effect_chain: /new_effect_chain\b/ | /nec\b/
+_add_effect_chain: /add_effect_chain\b/ | /aec\b/
+_overwrite_effect_chain: /overwrite_effect_chain\b/ | /oec\b/
+_delete_effect_chain: /delete_effect_chain\b/ | /dec\b/
+_list_effect_chains: /list_effect_chains\b/ | /lec\b/
+_bypass_effects: /bypass_effects\b/ | /bypass\b/ | /bye\b/
+_replace_effects: /replace_effects\b/ | /replace\b/ | /rep\b/
+_uncache_track: /uncache_track\b/ | /uncache\b/ | /unc\b/
 );
+
 
 $parser = new Parse::RecDescent ($grammar) or croak "Bad grammar!\n";
 
@@ -8765,9 +8910,10 @@ track => <<TRACK,
 
  - cutting and time shifting
 
-   region                  - specify a track region using mark names
-   remove_region, rmr      - remove region definition. Entire track plays back
-   shift_track, shift      - set playback delay for track/region
+   set_region,    srg      - specify a track region using times or mark names
+   new_region,    nrg      - define a region creating an auxiliary track
+   remove_region, rrg      - remove auxiliary track or region definition
+   shift_track,   shift    - set playback delay for track/region
    unshift_track, unshift  - eliminate playback delay for track/region
 
  - hazardous commands for advanced users
@@ -8812,15 +8958,15 @@ transport => <<TRANSPORT,
 TRANSPORT
 
 marks => <<MARKS,
-   mark, k            - drop mark at current position, with optional name
-   list_marks, lm     - list marks showing index, time, name
-   next_mark, nm      - jump to next mark 
-   previous_mark, pm  - jump to previous mark 
-   name_mark, nom     - give a name to current mark 
-   to_mark, tom       - jump to a mark by name or index
-   remove_mark, rmm   - remove current mark
-   modify_mark,
-   move_mark, mm      - change the time setting of current mark
+   new_mark,      mark, k     - drop mark at current position, with optional name
+   list_marks,    lmk,  lm    - list marks showing index, time, name
+   next_mark,     nmk,  nm    - jump to next mark 
+   previous_mark, pmk,  pm    - jump to previous mark 
+   name_mark,           nom   - give a name to current mark 
+   to_mark,       tmk,  tom   - jump to a mark by name or index
+   remove_mark,   rmk,  rom   - remove current mark
+   modify_mark, move_mark, 
+    mmk, mm                   - change the time setting of current mark
 MARKS
 
 effects => <<EFFECTS,
@@ -8829,8 +8975,8 @@ effects => <<EFFECTS,
 
    ladspa_register, lrg       - list LADSPA effects
    preset_register, prg       - list Ecasound presets
-   ctrl_register, crg         - list Ecasound controllers 
-   find_effect, fe            - list available effects matching arguments
+   ctrl_register,   crg       - list Ecasound controllers 
+   find_effect,     fe        - list available effects matching arguments
                                 example: find_effect reverb
    help_effect, he            - full information about an effect 
                                 example: help_effect 1209 
@@ -8840,13 +8986,15 @@ effects => <<EFFECTS,
 
  - effect manipulation commands
 
-   add_effect,    fxa, afx    - add an effect to the current track
-   insert_effect, fxi, ifx    - insert an effect before another effect
-   modify_effect, fxm, mfx    - set, increment or decrement an effect parameter
-   remove_effect, fxr, rfx    - remove an effect or controller
+   add_effect,     afx        - add an effect to the current track
+   add_controller, acl        - add an Ecasound controller
+   insert_effect,  ifx        - insert an effect before another effect
+   modify_effect,  mfx,
+     modify_controller, mcl   - set, increment or decrement effect parameter
+   remove_effect, rfx         
+     remove_controller, rcl   - remove an effect or controller
    append_effect              - add effect to the end of current track
-                                effect chain
-   add_controller, acl, cla   - add an Ecasound controller
+                                effect list 
 
 -  send/receive inserts
 
@@ -8854,6 +9002,16 @@ effects => <<EFFECTS,
    remove_insert,      rin    - remove current track's insert
    set_insert_wetness, wet    - set/query insert wetness 
                                 example: wet 99 (99% wet, 1% dry)
+
+-  effect chains
+
+   new_effect_chain,   nec    - define a new effect chain
+   add_effect_chain,   aec    - add an effect chain to the current track
+   delete_effect_chain,dec    - delete an effect chain
+   list_effect_chains, lec    - list effect chains and their parameters
+   bypass_effects,     bye    - suspend current track effects except vol/pan
+   replace_effects,    rep    - restore track effects
+
 EFFECTS
 
 group => <<GROUP,
@@ -8863,44 +9021,42 @@ group => <<GROUP,
    group_version, gver, gv    - select default group version 
                               - used for switching among 
                                 several multitrack recordings
-   bunch, bn                  - name a group of tracks
+   new_bunch, bunch, nb       - name a bunch of tracks
                                 e.g. bunch strings violins cello bass
                                 e.g. bunch 3 4 6 7 (track indexes)
-   list_bunches, lb           - list groups of tracks (bunches)
-   remove_bunches, rb         - remove bunch definitions
+   list_bunches,     lb       - list groups of tracks (bunches)
+   remove_bunches,   rb       - remove bunch definitions
 
-   for                        - execute command on several tracks 
-                                or a bunch
+   for                        - execute commands on several tracks 
+                                by name, or by specifying a group or bunch
                                 example: for strings; vol +10
                                 example: for drumkit congas; mute
-                                example: for all; version 5
                                 example: for 3 5; vol * 1.5
+                                example: for all; version 5;; show
+                                  'show' follows ';;' so executes only once
                 
 GROUP
 
 bus => <<BUS,
-   add_send_bus_raw, asbr     - create bus and slave tracks for 
+   add_send_bus_raw,    asbr  - create bus and slave tracks for 
                                 sending pre-fader track signals
    add_send_bus_cooked, asbc  - as above, for post-fader signals
-   update_send_bus, usb       - refresh send bus track list
-   remove_bus, rb             - remove a bus
-   add_sub_bus, asub          - create a sub-bus feeding a regular user track
+   update_send_bus,     usb   - refresh send bus track list
+   remove_bus,                - remove a bus
+   add_sub_bus,         asub  - create a sub-bus feeding a regular user track
                                 of the same name
                                 example: add_sub_bus Strings 
                                          add_tracks violin cello bass
                                          for cello violin bass; set bus Strings
-   add_slave_track, ast       - add a slave_track to an existing user bus
 
 BUS
 
-
-
 mixdown => <<MIXDOWN,
-   mixdown, mxd                - enable mixdown 
-   mixoff,  mxo                - disable mixdown 
-   mixplay, mxp                - playback a recorded mix 
+   mixdown,    mxd             - enable mixdown 
+   mixoff,     mxo             - disable mixdown 
+   mixplay,    mxp             - playback a recorded mix 
    automix                     - normalize track vol levels, then mixdown
-   master_on, mr               - enter mastering mode
+   master_on,  mr              - enter mastering mode
    master_off, mro             - leave mastering mode
 MIXDOWN
 
@@ -8919,10 +9075,10 @@ PROMPT
 
 diagnostics => <<DIAGNOSTICS,
 
-   dump_all, dumpall, dumpa     - dump most internal state
-   dump_track, dumpt, dump      - dump current track data
+   dump_all,   dumpall,   dumpa - dump most internal state
+   dump_track, dumpt,     dump  - dump current track data
    dump_group, dumpgroup, dumpg - dump group settings for user tracks
-   show_io, showio              - show chain inputs and outputs
+   show_io,    showio           - show chain inputs and outputs
    engine_status, egs           - display ecasound audio processing engine
                                    status
 DIAGNOSTICS
@@ -9018,7 +9174,7 @@ devices:
     output_format: s32_le,10,frequency
   null:
     ecasound_id: null
-    output_format: cd-stereo
+    output_format: ~
 
 # ALSA device assignments and formats
 
@@ -9028,20 +9184,24 @@ mixer_out_format: cd-stereo      # for ALSA/OSS
 
 # audio file formats
 
-mix_to_disk_format: cd-stereo
+mix_to_disk_format: s16_le,N,frequency
 raw_to_disk_format: s16_le,N,frequency
 
 # globals for our chain setups
 
-ecasound_globals: "-B auto -r -z:mixmode,sum -z:psr "
+ecasound_globals_realtime: "-B auto -r -z:mixmode,sum -z:psr "
 
-ecasound_globals_for_mixdown: "-B auto -r -z:mixmode,sum -z:psr "
+ecasound_globals_default: "-B auto -z:mixmode,sum -z:psr "
 
 # ecasound_tcp_port: 2868  
 
 # WAVs recorded at the same time get the same numeric suffix
 
 use_group_numbering: 1
+
+# Enable pressing SPACE to start/stop transport (in terminal, cursor in column 1)
+
+press_space_to_start_transport: 1
 
 # commands to execute each time a project is loaded
 
@@ -9121,11 +9281,12 @@ palette:
 PALETTE
 
 1;
+
 __END__
 
 =head1 NAME
 
-B<Nama> - Lightweight recorder, mixer and mastering system
+B<Nama> - Ecasound-based recorder, mixer and mastering system
 
 =head1 SYNOPSIS
 
@@ -9133,15 +9294,17 @@ B<nama> [I<options>] [I<project_name>]
 
 =head1 DESCRIPTION
 
-B<Nama> is a lightweight recorder/mixer application using
-Ecasound in the back end to provide multitrack recording,
-effects processing, and mastering. Nama provides aux sends,
-inserts, buses and other functions more typical of digital
-audio workstations.
+B<Nama> is a recorder/mixer application using Ecasound in
+the back end to provide multitrack recording, effects
+processing, and mastering. Nama includes aux sends, inserts,
+buses, regions and time-shifting functions. Full help is
+provided, including commands by category, search for
+commands or effects by name or by arbitrary string.
 
 By default, Nama starts up a GUI interface with a command
 line interface running in the terminal window. The B<-t>
-option provides a text-only interface for console users.
+option provides a text-only interface for console
+users.
 
 =head1 OPTIONS
 
@@ -9219,10 +9382,10 @@ Emit debugging information
 
 =head1 CONTROLLING NAMA/ECASOUND
 
-Ecasound is configured through use of I<chain setups>.
-Nama generates appropriate chain setups for 
-recording, playback, mixing, mastering
-inserts and bus routing.
+Ecasound is configured through use of I<chain setups>. Nama
+serves as intermediary generating appropriate chain setups
+for recording, playback, mixing, etc. and running the audio
+processing engine according to user commands.
 
 Commands for audio processing with Nama/Ecasound fall into
 two categories: I<static commands> that influence the chain
@@ -9234,40 +9397,27 @@ behavior of the audio processing engine.
 Static commands affect I<future> runs of the audio
 processing engine. For example, B<rec, mon> and B<off>
 determine whether the current track will get its audio
-stream from a live source or whether an existing WAV file will be
-played back. Nama responds to static commands by reconfiguring the
-engine as necessary by generating and loading chain setup
-files.
+stream from a live source or whether an existing WAV file
+will be played back. Nama responds to static commands by
+reconfiguring the engine and displaying the updated
+track status in text and GUI form.
 
 =head2 DYNAMIC COMMANDS
 
-Once a chain setup is loaded and the engine launched,
+Once a chain setup is loaded and the engine is launched,
 another subset of commands controls the realtime behavior of
 the audio processing engine. Commonly used I<dynamic
 commands> include transport C<start> and C<stop>; playback
-head repositioning commands such C<forward>,
-C<rewind> and C<setpos>; and C<vol> and C<pan> for adjusting effect
-parameters. Effects can be added during audio processing,
-however this action may be accompanied by an audible click.
+head repositioning commands such C<forward>, C<rewind> and
+C<setpos>. Effects may be added, modified or removed 
+while the engine is running.
 
 =head2 CONFIGURATION
 
 General configuration of sound devices and program options
-is performed by editing the file F<.namarc>. Nama
-automatically generates this file on the program's first
-run, usually placing it in the user's home directory.
-
-=head1 DIAGNOSTICS
-
-By inspecting the current chain setup with the C<chains>
-command, one can easily determine if the audio engine is
-properly configured. (It is much easier to read these setups
-than to write them!) The C<showio> command displays the data
-structure used to generate the chain setup. C<dump> displays
-data for the current track.  The C<dumpall> command shows
-the state of most program objects and variables using the
-same format as the F<State.yml> file created by the
-C<save> command.
+is performed by editing the F<.namarc> file. On Nama's first
+run, a default version of F<.namarc> is usually placed in
+the user's home directory.
 
 =head1 Tk GRAPHICAL UI 
 
@@ -9524,7 +9674,7 @@ C<master_off>) the following network is used:
 
                           +-(Low)-+ 
                           |       |
-    Eq-in -(Eq)-> Eq_out -+-(Mid)-+- Boost_in -(Boost)-> soundcard/mixdown
+    Eq-in -(Eq)-> Eq_out -+-(Mid)-+- Boost_in -(Boost)-> soundcard/wav_out
                           |       |
                           +-(High)+ 
 
@@ -9548,6 +9698,14 @@ signal source. The C<arm> command releases both preview
 and doodle modes.
 
 =head1 TEXT COMMANDS
+
+=head4 B<testq> - Test
+
+=over 8
+
+C<testq> 
+
+=back
 
 =head2 Help commands
 
@@ -9809,18 +9967,6 @@ C<link_track intro Mixdown song_intro creates a track 'intro' using all .WAV ver
 
 =back
 
-=head2 Track: commands
-
-=head4 B<slave_track> (slave) - Create a read-only track that gets most of its settings from an existing track, used for instrument monitor buses
-
-=over 8
-
-C<slave_track> name target
-
-=back
-
-=head2 Track commands
-
 =head4 B<import_audio> (import) - Import a WAV file to the current track, resampling if necessary
 
 =over 8
@@ -10021,7 +10167,7 @@ C<pan_back>
 
 =back
 
-=head4 B<show_tracks> (show tracks) - Show status of all tracks
+=head4 B<show_tracks> (show tracks list_tracks lt) - Show status of all tracks
 
 =over 8
 
@@ -10037,15 +10183,23 @@ C<show_track>
 
 =back
 
-=head4 B<region> - Specify a track region for playback using marks. Nama allows one region per track.
+=head4 B<set_region> (srg) - Specify a playback region for the current track using marks. Use 'new_region' for multiple regions.
 
 =over 8
 
-C<region> <s_start_mark_name> <s_end_mark_name>
+C<set_region> <s_start_mark_name> <s_end_mark_name>
 
 =back
 
-=head4 B<remove_region> (rmr) - Remove region definition. Entire track plays back.
+=head4 B<new_region> (nrg) - Create a region for the current track using an auxiliary track
+
+=over 8
+
+C<new_region> <s_start_mark_name> <s_end_mark_name> [<s_region_name>]
+
+=back
+
+=head4 B<remove_region> (rrg) - Remove region (including associated auxiliary track)
 
 =over 8
 
@@ -10053,7 +10207,7 @@ C<remove_region>
 
 =back
 
-=head4 B<shift_track> (shift) - Set playback delay for track/region
+=head4 B<shift_track> (shift) - Set playback delay for track or region
 
 =over 8
 
@@ -10061,7 +10215,7 @@ C<shift_track> <s_start_mark_name> | <i_start_mark_index | <f_start_seconds>
 
 =back
 
-=head4 B<unshift_track> (unshift) - Remove playback delay for track/region
+=head4 B<unshift_track> (unshift) - Remove playback delay for track or region
 
 =over 8
 
@@ -10113,11 +10267,19 @@ C<autofix_tracks>
 
 =back
 
-=head4 B<remove_track> (rmt) - Remove effects, parameters and GUI for current track
+=head4 B<remove_track> (HASH(0x9f9c630)) - 
 
 =over 8
 
 C<remove_track> 
+
+=back
+
+=head4 B<cache_track> (cache ct) - Record the post-fader signal as a new version
+
+=over 8
+
+C<cache_track> 
 
 =back
 
@@ -10155,15 +10317,15 @@ C<group_off>
 
 =back
 
-=head4 B<bunch> (bn) - Define/list groups of tracks
+=head4 B<new_bunch> (nb) - Define a bunch of tracks
 
 =over 8
 
-C<bunch> [ <s_group_name> [track1] [track2...] ]
+C<new_bunch> <s_group_name> [<s_track1> <s_track2>...]
 
 =back
 
-=head4 B<list_bunches> (lb) - List groups of tracks (bunches)
+=head4 B<list_bunches> (lb) - List track bunches
 
 =over 8
 
@@ -10171,11 +10333,19 @@ C<list_bunches>
 
 =back
 
-=head4 B<remove_bunches> (rb) - Remove alias for group(s) of tracks (bunches)
+=head4 B<remove_bunches> (rb) - Remove the definition of a track bunch
 
 =over 8
 
 C<remove_bunches> <s_bunch_name> [<s_bunch_name>...]
+
+=back
+
+=head4 B<add_to_bunch> (ab) - Add track(s) to a bunch
+
+=over 8
+
+C<add_to_bunch> <s_bunch_name> <s_track1> [<s_track2>...]
 
 =back
 
@@ -10297,15 +10467,15 @@ C<loop_disable>
 
 =head2 Effect commands
 
-=head4 B<add_ctrl> (acl cla) - Add a controller to an operator
+=head4 B<add_controller> (acl) - Add a controller to an operator (use mfx to modify, rfx to remove)
 
 =over 8
 
-C<add_ctrl> <s_parent_id> <s_effect_code> [ <f_param1> <f_param2>...]
+C<add_controller> <s_parent_id> <s_effect_code> [ <f_param1> <f_param2>...]
 
 =back
 
-=head4 B<add_effect> (fxa afx) - Add effect to current track (placed before volume control)
+=head4 B<add_effect> (afx) - Add effect to current track (placed before volume control)
 
 =over 8
 
@@ -10327,7 +10497,7 @@ C<append_effect> <s_effect_code> [ <f_param1> <f_param2>... ]
 
 =back
 
-=head4 B<insert_effect> (ifx fxi) - Place effect before specified effect (engine stopped, prior to arm only)
+=head4 B<insert_effect> (ifx) - Place effect before specified effect (engine stopped, prior to arm only)
 
 =over 8
 
@@ -10335,23 +10505,23 @@ C<insert_effect> <s_insert_point_id> <s_effect_code> [ <f_param1> <f_param2>... 
 
 =back
 
-=head4 B<modify_effect> (fxm mfx) - Modify an effect parameter
+=head4 B<modify_effect> (mfx modify_controller mcl) - Modify an effect parameter
 
 =over 8
 
 C<modify_effect> <s_effect_id> <i_parameter> [ + | - | * | / ] <f_value>
 
-C<modify_effect V 1 1000 (set effect_id V, parameter 1 to 1000)>
+C<modify_effect V 1 -1 (set effect_id V, parameter 1 to -1)>
 
 C<modify_effect V 1 - 10 (reduce effect_id V, parameter 1 by 10)>
 
-C<set multiple effects/parameters: mfx V 1,2,3 + 0.5 mfx V,AC,AD 1,2 3.14>
+C<set multiple effects/parameters: mfx V 1,2,3 + 0.5 ; mfx V,AC,AD 1,2 3.14>
 
 
 
 =back
 
-=head4 B<remove_effect> (fxr rfx) - Remove effects from selected track
+=head4 B<remove_effect> (rfx remove_controller rcl) - Remove effects from selected track
 
 =over 8
 
@@ -10409,7 +10579,7 @@ C<ladspa_register>
 
 =head2 Mark commands
 
-=head4 B<list_marks> (lm) - List all marks
+=head4 B<list_marks> (lmk lm) - List all marks
 
 =over 8
 
@@ -10417,7 +10587,7 @@ C<list_marks>
 
 =back
 
-=head4 B<to_mark> (tom) - Move playhead to named mark or mark index
+=head4 B<to_mark> (tmk tom) - Move playhead to named mark or mark index
 
 =over 8
 
@@ -10429,15 +10599,15 @@ C<to_mark start (go to mark named 'start')>
 
 =back
 
-=head4 B<mark> (k) - Drop mark at current playback position
+=head4 B<new_mark> (mark k) - Drop mark at current playback position
 
 =over 8
 
-C<mark> [ <s_mark_id> ]
+C<new_mark> [ <s_mark_id> ]
 
 =back
 
-=head4 B<remove_mark> (rmm) - Remove mark, default to current mark
+=head4 B<remove_mark> (rmk rom) - Remove mark, default to current mark
 
 =over 8
 
@@ -10449,7 +10619,7 @@ C<remove_mark start (remove mark named 'start')>
 
 =back
 
-=head4 B<next_mark> (nm) - Move playback head to next mark
+=head4 B<next_mark> (nmk nm) - Move playback head to next mark
 
 =over 8
 
@@ -10457,7 +10627,7 @@ C<next_mark>
 
 =back
 
-=head4 B<previous_mark> (pm) - Move playback head to previous mark
+=head4 B<previous_mark> (pmk pm) - Move playback head to previous mark
 
 =over 8
 
@@ -10477,7 +10647,7 @@ C<name_mark start>
 
 =back
 
-=head4 B<modify_mark> (move_mark mm) - Change the time setting of current mark
+=head4 B<modify_mark> (move_mark mmk mm) - Change the time setting of current mark
 
 =over 8
 
@@ -10589,54 +10759,146 @@ C<usb Some_bus>
 
 =back
 
-=head2 Track commands
-
-=head4 B<add_slave_track> (ast) - Add a slave track to an existing user bus
+=head4 B<remove_bus> (HASH(0x9fab218)) - 
 
 =over 8
 
-C<add_slave_track> <s_bus_name> <s_target_track_name>
+C<remove_bus> 
 
 =back
 
-=head2 Bus commands
-
-=head4 B<remove_bus> (rmb) - Remove a bus
+=head4 B<list_buses> (lbs) - List buses and their parameters TODO
 
 =over 8
 
-C<remove_bus> <s_bus_name>
+C<list_buses> 
+
+=back
+
+=head4 B<set_bus> (sbs) - Set bus parameters TODO
+
+=over 8
+
+C<set_bus> 
+
+=back
+
+=head2 Effect commands
+
+=head4 B<new_effect_chain> (nec) - Define a reusable sequence of effects (effect chain) with current parameters
+
+=over 8
+
+C<new_effect_chain> <s_name> [<op1>, <op2>,...]
+
+=back
+
+=head4 B<add_effect_chain> (aec) - Add an effect chain to the current track
+
+=over 8
+
+C<add_effect_chain> <s_name>
+
+=back
+
+=head4 B<overwrite_effect_chain> (oec) - Add an effect chain overwriting current effects (which are pushed onto stack)
+
+=over 8
+
+C<overwrite_effect_chain> <s_name>
+
+=back
+
+=head4 B<delete_effect_chain> (dec) - Remove an effect chain definition from the list
+
+=over 8
+
+C<delete_effect_chain> <s_name>
+
+=back
+
+=head4 B<list_effect_chains> (lec) - List effect chains, matching any strings provided
+
+=over 8
+
+C<list_effect_chains> [<s_frag1> <s_frag2>... ]
+
+=back
+
+=head4 B<bypass_effects> (bypass bye) - Bypass track effects (pushing them onto stack) except vol/pan
+
+=over 8
+
+C<bypass_effects> 
+
+=back
+
+=head4 B<replace_effects> (replace rep) - Restore bypassed track effects
+
+=over 8
+
+C<replace_effects> 
+
+=back
+
+=head4 B<uncache_track> (uncache unc) - Set uncached track version, restoring effects (if current version is cached)
+
+=over 8
+
+C<uncache_track> 
 
 =back
 
 
+
+=head1 DIAGNOSTICS
+
+Nama has excellent diagnostic functions. In most situations, 
+the GUI display or the output of the C<show_tracks>
+command (executed automatically on any change in setup)
+shows what to expect the next time the engine is started.
+
+Advanced users or those already experienced with Ecasound
+can use the C<chains> command to inspect the current chain
+setup and determine if Ecasound is properly configured for
+the task at hand.  (It is much easier to read these setups
+than to write them!)
+
+Other commands are available to help programmers and support
+the occasional troubleshooting episode. C<showio> displays
+the data structure used to generate the chain setup. C<dump>
+displays data for the current track.  In correspondence, you
+may be asked to include the F<State.yml> file created by the
+C<save> command, which shows the state of all important
+program objects and variables.  You can inspect this same
+information using the C<dumpall> command.
 
 =head1 BUGS AND LIMITATIONS
 
 No waveform or signal level displays are provided.  No
-latency compensation is provided across the various signal
-paths at present, although this feature is planned.
+latency compensation across signal paths is provided at
+present, although this feature is planned.
 
 =head1 SECURITY CONCERNS
 
 If you are using Nama with the NetECI interface (i.e. if
-Audio::Ecasound is I<not> installed) you should firewall TCP port 2868 
-if you computer is exposed to the Internet. 
+Audio::Ecasound is I<not> installed) you should block TCP
+port 2868 if you computer is exposed to the Internet. 
 
-=head1 AVAILABILITY
+=head1 INSTALLATION
 
-CPAN, for the distribution. The following
-command will pull in Nama and all its dependencies:
+The following command, available on Unixlike systems with
+Perl installed, will pull in Nama and other Perl libraries
+required for text mode operation:
 
 PERL_MM_USE_DEFAULT=1 cpan Audio::Nama
 
-You will need to install Tk to use the GUI.
+To use the GUI, you will need to install Tk:
 
 C<cpan Tk>
 
-You may want to install Audio::Ecasound
-if you prefer not to have Ecasound running
-in server mode.
+You may want to install Audio::Ecasound if you prefer not to
+run Ecasound in server mode:
 
 C<cpan Audio::Ecasound>
 
@@ -10646,11 +10908,19 @@ C<git clone git://github.com/bolangi/nama.git>
 
 Consult the F<BUILD> file for build instructions.
 
+=head1 SUPPORT
+
+The Ecasound mailing list is a suitable forum for questions
+regarding Nama installation, usage, feature requests, etc.,
+as well as questions relating to Ecasound itself.
+
+https://lists.sourceforge.net/lists/listinfo/ecasound-list
+
 =head1 PATCHES
 
 The main module, Nama.pm, its sister modules are
-concatenations of several source files. Patches 
-against the source files are preferred.
+concatenations of several source files. Patches against the
+source files are preferred.
 
 =head1 AUTHOR
 

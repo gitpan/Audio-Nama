@@ -41,8 +41,8 @@ sub expand_graph {
 sub add_inserts {
 	my $g = shift;
 	my @track_names = grep{ $Audio::Nama::tn{$_} 
-		and $Audio::Nama::tn{$_}->inserts
-		and $Audio::Nama::tn{$_}->inserts =~ /ARRAY/} $g->vertices;
+		and $Audio::Nama::tn{$_}->inserts =~ /HASH/
+		and $Audio::Nama::tn{$_}->inserts->{insert_type}} $g->vertices;
 	$debug and say "Inserts will be applied to the following tracks: @track_names";
 	map{ add_insert($g, $_) } @track_names;
 }
@@ -56,7 +56,7 @@ sub add_insert {
 	my ($g, $name) = @_;
 	$debug and say "add_insert name: $name";
 	my $t = $Audio::Nama::tn{$name}; 
-	my ($i) = @{ $t->inserts }; # assume one insert
+	my $i = $t->inserts; 
 
 	# assume post-fader send
 	# t's successor will be loop or reserved
@@ -74,7 +74,7 @@ sub add_insert {
 	my $wet = Audio::Nama::Track->new( 
 				name => $dry->name . 'w',
 				group => 'Insert',
-				ch_count => 2, # default for cooked
+				width => 2, # default for cooked
  				send_type => $i->{send_type},
  				send_id => $i->{send_id},
 				hide => 1,
@@ -93,7 +93,7 @@ sub add_insert {
 
 				name => $dry->name . 'wr',
 				group => 'Insert',
-				ch_count => 2, # default for cooked
+				width => 2, # default for cooked
  				source_type => $i->{return_type},
  				source_id => $i->{return_id},
 				rw => 'REC',
@@ -235,5 +235,25 @@ sub inputless_tracks {
 	my $g = shift;
 	(grep{ is_a_track($_) and $g->is_source_vertex($_) } $g->vertices)
 }	
+sub remove_inputless_tracks {
+	my $g = shift;
+	while(my @i = Audio::Nama::Graph::inputless_tracks($g)){
+		map{ 	$g->delete_edges(map{@$_} $g->edges_from($_));
+				$g->delete_vertex($_);
+		} @i;
+	}
+}
+sub outputless_tracks {
+	my $g = shift;
+	(grep{ is_a_track($_) and $g->is_sink_vertex($_) } $g->vertices)
+}	
+sub remove_outputless_tracks {
+	my $g = shift;
+	while(my @i = Audio::Nama::Graph::outputless_tracks($g)){
+		map{ 	$g->delete_edges(map{@$_} $g->edges_to($_));
+				$g->delete_vertex($_);
+		} @i;
+	}
+}
 		
 1;

@@ -2,25 +2,30 @@
 # ------------  Bus --------------------
 
 package Audio::Nama::Bus;
-our $VERSION = 1.0;
-use strict;
-our ($debug); # entire file
-
-use vars qw(%by_name);
+use Modern::Perl;
 use Carp;
+our $VERSION = 1.0;
+our ($debug); # entire file
+use vars qw(%by_name);
 our @ISA;
-use Audio::Nama::Object qw(	name
+use Audio::Nama::Object qw(						
+					name
 					groups
 					tracks 
 					rules
+					destination_type
+					destination_id
 					bus_type
-						
+					class
+
 						);
 
+sub initialize { %by_name = () };
 sub new {
 	my $class = shift;
 	my %vals = @_;
-	croak "undeclared field: @_" if grep{ ! $_is_field{$_} } keys %vals;
+	my @undeclared = grep{ ! $_is_field{$_} } keys %vals;
+    croak "undeclared field: @undeclared" if @undeclared;
 	if (! $vals{name} or $by_name{$vals{name}}){
 		carp($vals{name},": missing or duplicate bus name. Skipping.\n");
 		return;
@@ -29,7 +34,8 @@ sub new {
 		tracks => [], 
 		groups => [], 
 		rules  => [],
-		@_ }, $class; 
+		class => $class,
+		@_ }, $vals{class} // $class;
 	$by_name{$bus->name} = $bus;
 }
 
@@ -131,6 +137,93 @@ sub deref_code {
 		$debug and print "scalar value: $value\n"; 
 		$value }
 }
+sub all { values %by_name };
+
+sub remove { say $_[0]->name, " is system bus, no can remove" }
+
+# we will put the following information in the Track as an aux_send
+# 						destination_type
+# 						destination_id
+# name, init capital e.g. Brass, identical Group name
+# destination: 3, jconv, loop,output
+
+
+package Audio::Nama::SubBus;
+use Modern::Perl;
+use Carp;
+our @ISA = 'Audio::Nama::Bus';
+
+use Audio::Nama::Object qw(
+					name
+					groups
+					tracks 
+					rules
+					destination_type
+					destination_id
+					bus_type
+					class
+
+);
+sub remove {
+	my $bus = shift;
+
+	# all tracks returned to Main group
+	map{$Audio::Nama::tn{$_}->set(group => 'Main') } $Audio::Nama::Group::by_name{$bus->name}->tracks;
+
+	# remove bus mix track
+	$Audio::Nama::tn{$bus->name}->remove;
+
+	# delete group
+	$Audio::Nama::Group::by_name{$bus->name}->remove;
+
+	# remove bus
+	delete $Audio::Nama::Bus::by_name{$bus->name};
+} 
+
+package Audio::Nama::SendBusRaw;
+use Modern::Perl;
+use Carp;
+our @ISA = 'Audio::Nama::Bus';
+use Audio::Nama::Object qw(
+					name
+					groups
+					tracks 
+					rules
+					destination_type
+					destination_id
+					bus_type
+					class
+
+
+);
+sub remove {
+	my $bus = shift;
+
+	# delete all (slave) tracks
+	map{$Audio::Nama::tn{$_}->remove } $Audio::Nama::Group::by_name{$bus->name}->tracks;
+
+	# delete group
+	$Audio::Nama::Group::by_name{$bus->name}->remove;
+
+	# remove bus
+	delete $Audio::Nama::Bus::by_name{$bus->name};
+}
+package Audio::Nama::SendBusCooked;
+use Modern::Perl;
+use Carp;
+our @ISA = 'Audio::Nama::SendBusRaw';
+use Audio::Nama::Object qw(
+					name
+					groups
+					tracks 
+					rules
+					destination_type
+					destination_id
+					bus_type
+					class
+
+);
+
 
 
 # ------------  Rule  --------------------
@@ -200,66 +293,5 @@ sub dump{
 	print "rule: ", $rule->name, $/;
 }
 
-### subclass
-
-package Audio::Nama::MixBus;
-our @ISA = 'Audio::Nama::Bus';
-sub apply {} ; ## TODO 
-
-### subclass
-
-package Audio::Nama::UserBus;
-use strict;
-use Carp;
-our @ISA = 'Audio::Nama::Bus';
-use vars qw(@buses %by_name);
-
-use Audio::Nama::Object qw(	name
-					groups
-					tracks 
-					rules
-					destination_type
-					destination_id
-					bus_type
-
-
-						);
-
-# we will put the following information in the Track as an aux_send
-# 						destination_type
-# 						destination_id
-# name, init capital e.g. Brass, identical Group name
-# destination: 3, jconv, loop,output
-
-
-sub new {
-	my $class = shift;
-	my %vals = @_;
-	croak "undeclared field: @_" if grep{ ! $_is_field{$_} } keys %vals;
-	my $self = bless { 
-		tracks => [], 
-		groups => [], 
-		rules  => [],
-		@_ }, $class; 
-	push @buses, $self;
-	$by_name{$self->name} = $self;
-	return $self;
-}
-
-sub all { @buses }
-
-# not object method
-
-# sub by_name {
-# 	my $name = shift;
-# 	( grep { $_->name  eq $name } @buses ); # list context return object
-# }
-
 1;
 __END__
-
-
-						
-						);
-
-1;
