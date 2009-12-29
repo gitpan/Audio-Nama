@@ -17,7 +17,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 0.9986;
+$VERSION = '1.00';
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -43,6 +43,16 @@ use Graph;
 # use AnyEvent;		# loaded after Tk or Event
 # use Tk::FontDialog; # hmmm might be nice to use
 use Text::Format;
+
+## Load my modules
+
+use Audio::Nama::Assign qw(:all);
+use Audio::Nama::Track;
+use Audio::Nama::Group;
+use Audio::Nama::Bus;    
+use Audio::Nama::Mark;
+use Audio::Nama::IO;
+use Audio::Nama::Graph;
 
 ## Definitions ##
 
@@ -149,6 +159,7 @@ our (
 					# implemented
 	$this_track,	 # the currently active track -- 
 					 # used by Text UI only at present
+	$old_this_track, # when we need to save/restore current track
 	$this_op,      # currently selected effect # future
 	$this_mark,    # current mark  # for future
 
@@ -200,6 +211,8 @@ our (
 
 	@input_chains,	# list of input chain segments 
 	@output_chains, # list of output chain segments
+	@post_input,	# post-input chain operators
+	@pre_output, 	# pre-output chain operators
 
 	%subst,			# alias, substitutions for the config file
 	$tkeca_effects_data,	# original tcl code, actually
@@ -331,7 +344,6 @@ our (
 	$OUT,				# filehandle for Text mode print
 	#$commands,	# ref created from commands.yml
 	%commands,	# created from commands.yml
-	%dispatch,  # variable for generate_setup dispatch table
 	$commands_yml, # the string form of commands.yml
 	$cop_hints_yml, # ecasound effects hinting
 
@@ -356,8 +368,8 @@ our (
 	@groups_data, # 
 	@marks_data, # 
 
-	$alsa_playback_device,       # where to send stereo output
-	$capture_device,    # where to get our inputs
+	$alsa_playback_device,
+	$alsa_capture_device,
 
 	$main_out, # do I route audio output to soundcard?
 
@@ -401,11 +413,8 @@ our (
                     # (used with JACK only)
     $prompt,        # for text mode
 	$preview,       # am running engine with rec_file disabled
-	$unique_inputs_only,  # exclude tracks sharing same source
-
-
-	%excluded,      # tracks sharing source with other tracks,
-	                # after the first
+	%duplicate_inputs, # named tracks will be OFF in doodle mode
+	%already_used,  #  source => used_by
 	$memoize,       # do I cache this_wav_dir?
 	$hires,        # do I have Timer::HiRes?
 	$fade_time, 	# duration for fadein(), fadeout()
@@ -424,6 +433,9 @@ our (
 	%effect_chain, # named effect sequences
 	$sock, 			# socket for Net-ECI mode
 	%versions,		# store active versions for use after engine run
+	@io, 			# accumulate IO objects for generating setup
+	$track_snapshots, # to save recalculating for each IO object
+	$chain_setup,	# current chain setup
 );
  
 
@@ -439,7 +451,7 @@ our (
 						$raw_to_disk_format
 						$mixer_out_format
 						$alsa_playback_device
-						$capture_device	
+						$alsa_capture_device	
 						$project_root 	
 						$use_group_numbering
 						$press_space_to_start_transport
@@ -548,18 +560,7 @@ $memoize = 1;
 
 @mastering_track_names = qw(Eq Low Mid High Boost);
 
-## Load my modules
-
-use Audio::Nama::Assign qw(:all);
-use Audio::Nama::Track;
-use Audio::Nama::Bus;    
-use Audio::Nama::Mark;
-use Audio::Nama::IO;
-use Audio::Nama::Graph;
-
-package Audio::Nama::Wav;
-memoize('candidates') if $Audio::Nama::memoize;
-package Audio::Nama;
+init_memoize() if $memoize;
 
 # aliases for concise access
 
@@ -582,11 +583,12 @@ sub hello {"superclass hello"}
 
 sub new { my $class = shift; return bless {@_}, $class }
 
-sub nama { 
+sub main { 
 	process_options();
 	prepare(); 
 	command_process($execute_on_project_load);
 	reconfigure_engine();
+	command_process($opts{X});
 	$ui->loop;
 }
 sub prepare {
@@ -602,20 +604,7 @@ sub prepare {
 
 	read_config(global_config());  # from .namarc if we have one
 
-	if ( can_load( modules => { 'Audio::Ecasound' => undef } )
-			and ! $opts{n} ){ 
-		say "\nUsing Ecasound via Audio::Ecasound (libecasoundc).";
-		{ no warnings qw(redefine);
-		*eval_iam = \&eval_iam_libecasoundc; }
-		$e = Audio::Ecasound->new();
-	} else { 
-
-		no warnings qw(redefine);
-		launch_ecasound_server($ecasound_tcp_port);
-		init_ecasound_socket($ecasound_tcp_port); 
-		*eval_iam = \&eval_iam_neteci;
-	}
-	
+	select_ecasound_interface();
 
 	$debug and print "reading config file\n";
 	if ($opts{d}){
@@ -626,7 +615,10 @@ sub prepare {
 	# capture the sample frequency from .namarc
 	($ladspa_sample_rate) = $devices{jack}{signal_format} =~ /(\d+)(,i)?$/;
 
-	first_run();
+	# skip initializations if user (test) supplies project
+	# directory
+	
+	first_run() unless $opts{d}; 
 
 	prepare_static_effects_data() unless $opts{e};
 
@@ -635,13 +627,6 @@ sub prepare {
 
 	chdir $project_root # for filename autocompletion
 		or warn "$project_root: chdir failed: $!\n";
-
-	
-	
-	initialize_rules(); 					# bus/rule routing
-	$debug and say join " ", %Audio::Nama::Rule::by_name;
-	#die "here";
-	initialize_routing_dispatch_table();	# graph-based routing
 
 	$ui->init_gui;
 	$ui->transport_gui;
@@ -666,6 +651,25 @@ sub issue_first_prompt {
 	print prompt();
 	$attribs->{already_prompted} = 0;
 }
+
+sub select_ecasound_interface {
+	return if $opts{E} or $opts{A};
+	if ( can_load( modules => { 'Audio::Ecasound' => undef } )
+			and ! $opts{n} ){ 
+		say "\nUsing Ecasound via Audio::Ecasound (libecasoundc).";
+		{ no warnings qw(redefine);
+		*eval_iam = \&eval_iam_libecasoundc; }
+		$e = Audio::Ecasound->new();
+	} else { 
+
+		no warnings qw(redefine);
+		launch_ecasound_server($ecasound_tcp_port);
+		init_ecasound_socket($ecasound_tcp_port); 
+		*eval_iam = \&eval_iam_neteci;
+	}
+}
+	
+
 
 sub choose_sleep_routine {
 	if ( can_load(modules => {'Time::HiRes'=> undef} ) ) 
@@ -824,7 +828,11 @@ sub process_options {
 		no-static-effects-data		s
 		no-static-effects-cache		e
 		no-reconfigure-engine		R
+		fake-jack					J
+		fake-alsa					A
+		fake-ecasound				E
 		debugging-output			D
+		execute-command=s			X
 );
 
 	map{$opts{$_} = ''} values %options;
@@ -862,11 +870,15 @@ Debugging options:
 --no-static-effects-cache, -e    Bypass effects data cache
 --regenerate-effects-cache, -r   Regenerate the effects data cache
 --no-reconfigure-engine, -R      Don't automatically configure engine
-                                 (manually use 'generate' and 'connect' commands)
 --debugging-output, -D           Emit debugging information
+--fake-jack, -J                  Simulate JACK environment
+--fake-alsa, -A                  Simulate ALSA environment
+--no-ecasound, -E                Don't spawn Ecasound process
+--execute-command, -X            Supply a command to execute
 
 HELP
 
+#--no-ecasound, -E                Don't load Ecasound (for testing)
 
 	say $banner;
 
@@ -979,15 +991,20 @@ sub colonize { # convert seconds to hours:minutes:seconds
 }
 
 ## configuration file
-
-sub project_root { File::Spec::Link->resolve_all($project_root)};
+{ # OPTIMIZATION
+my %proot; 
+sub project_root { $proot{$project_root} ||= File::Spec::Link->resolve_all($project_root)};
+}
 
 sub config_file { $opts{f} ? $opts{f} : ".namarc" }
+{ # OPTIMIZATION
+my %wdir; 
 sub this_wav_dir {
 	$project_name and
-	File::Spec::Link->resolve_all(
+	$wdir{$project_name} ||= File::Spec::Link->resolve_all(
 		join_path( project_root(), $project_name, q(.wav) )  
 	);
+}
 }
 sub project_dir  {$project_name and join_path( project_root(), $project_name)
 }
@@ -1069,10 +1086,9 @@ Loading project "untitled".
 			return;
 		}
 	} 
-	#chdir project_dir();
+	# we used to check each project dir for customized .namarc
 	# read_config( global_config() ); 
-	initialize_rules();
-	init_buses();	
+	initialize_buses();	
 	initialize_project_data();
 
 	remove_small_wavs(); 
@@ -1084,6 +1100,9 @@ Loading project "untitled".
 		Audio::Nama::SimpleTrack->new( 
 			group => 'Master', 
 			name => 'Master',
+			send_type => 'soundcard',
+			send_id => 1,
+			width => 2,
 			rw => 'MON',); # no dir, we won't record tracks
 
 
@@ -1109,298 +1128,51 @@ Loading project "untitled".
 	$debug and print "project_dir: ", project_dir() , $/;
 
  1;
-
+}	
+BEGIN { # OPTMIZATION
+my @wav_functions = qw(
+	get_versions 
+	candidates 
+	targets 
+	versions 
+	last 
+);
+my @track_functions = qw(
+	dir 
+	basename 
+	full_path 
+	group_last 
+	last 
+	current_wav 
+	full_wav_path 
+	current_version 
+	monitor_version 
+	maybe_monitor 
+	rec_status 
+	region_start_time 
+	region_end_time 
+	playat_time 
+	fancy_ops 
+	input_path 
+);
+sub track_memoize { # before generate_setup
+	return unless $memoize;
+	map{package Audio::Nama::Track; memoize($_) } @track_functions;
+}
+sub track_unmemoize { # after generate_setup
+	return unless $memoize;
+	map{package Audio::Nama::Track; unmemoize ($_)} @track_functions;
 }
 sub rememoize {
 	return unless $memoize;
-	package Audio::Nama::Wav;
-	unmemoize('candidates');
-	memoize(  'candidates');
+	map{package Audio::Nama::Wav; unmemoize ($_); memoize($_) } 
+		@wav_functions;
 }
-
-sub init_buses {
-	Audio::Nama::Bus->initialize();
-	$main_bus  = Audio::Nama::Bus->new(
-		name => 'Main_Bus',
-		groups => [qw(Main)],
-		tracks => [],
-		rules  => [ qw(
-						aux_send 
-						rec_file) ],
-	);
-
-	# print join (" ", map{ $_->name} Audio::Nama::Rule::all_rules() ), $/;
-
-	# for metronome or other tracks using 'null' as source
-	
-	$null_bus = Audio::Nama::Bus->new(
-		name => 'Null_Bus',
-		groups => [qw(null) ],
-		rules => [qw(null_setup)],
-	);
-
+sub init_memoize {
+	return unless $memoize;
+	map{package Audio::Nama::Wav; memoize($_) } @wav_functions;
 }
-
-sub initialize_routing_dispatch_table {
-
-	%dispatch = (
-		wav_in => sub {
-			my $name = shift;
-			my $t = $tn{$name};
-			add_entry_h({
-				dir			=> 'inputs',
-				name		=> $name,  # for override
-				type 		=> 'file',
-				id	 		=> $t->full_path,
-				chain		=> $t->n,
-				post_input	=> $t->mono_to_stereo,
-			});
-		},
-		wav_out	=> sub {
-			my $name = shift;
-			my $t = $tn{$name};
-			add_entry_h({
-				dir			=> 'outputs',
-				name		=> $name,  # for override
-				type 		=> 'file',
-				id	 		=> $t->full_path,
-				chain		=> $t->n,
-				pre_output	=> '-f:'.signal_format($raw_to_disk_format, $t->width),
-			});
-		},
-		loop_source => sub {
-			my ($name, $input) = @_; 
-			my $h = {
-				dir			=> 'inputs',
-				name		=> $name,  # for override
-				type 		=> 'loop',
-				id	 		=> "loop,$input",
-				chain		=> $tn{$name}->n,
-			};
-			add_entry_h($h);
-		},
-		loop_sink 		=> sub {
-			my ($name, $output) = @_; 
-			my $h = {
-				dir			=> 'outputs',
-				name		=> $name,  # for override
-				type 		=> 'loop',
-				id	 		=> "loop,$output",
-				chain		=> $tn{$name}->n,
-			};
-			add_entry_h($h);
-		},
-		null_in			=> sub {},
-		null_out		=> sub {
-			my $name = shift;
-			my $t = $tn{$name};
-			my ($type, $id) = qw(device null);
-			add_entry_h({
-				dir  	=> 'outputs',
-				name	=> $name,
-				type 	=> $type,
-				id		=> $id,
-				chain	=> $t->n,
-			});
-		},
-		jack_client_in 	=> sub {
-			my $name = shift;
-			my $t = $tn{$name};
-			my ($type, $id) = @{$t->source_input};
-			add_entry_h({
-				dir  	=> 'inputs',
-				name	=> $name,
-				type 	=> $type,
-				id		=> $id,
-				chain	=> $t->n,
-				post_input => $t->rec_route .  $t->mono_to_stereo, 
-			});
-		},
-		jack_client_out	=> sub {
-			my $name = shift;
-			my $t = $tn{$name};
-			my ($type, $id) = @{$t->send_output};
-			add_entry_h({
-				dir  	=> 'outputs',
-				name	=> $name,
-				type 	=> $type,
-				id		=> $id,
-				chain	=> $t->n,
-				pre_output => $t->pre_send,
-			});
-		},
-		soundcard_in	=> sub { 
-			my $name = shift;
-			my $t = $tn{$name};
-			my ($type, $id) = @{$t->soundcard_input};
-			add_entry_h({
-				dir  	=> 'inputs',
-				name	=> $name,
-				type 	=> $type,
-				id		=> $id,
-				chain	=> $t->n,
-				post_input => $t->rec_route .  $t->mono_to_stereo, 
-				});
-			},
-		soundcard_out	=> sub { 
-			my $name = shift;
-			my $t = $tn{$name};
-			my ($type, $id) = @{soundcard_output()};
-			add_entry_h({
-				dir  	=> 'outputs',
-				name	=> $name,
-				type 	=> $type,
-				id		=> $id,
-				chain	=> $t->n,
-				pre_output => $t->pre_send,
-			});
-		},
-	);
-
-# 	we might use the same routines for jack_client_in/out
-# 	for soundcard_in/out, except the latter would require
-# 	settings for send_type, send_id, width in Master/Mixdown
-# 	or any other track that is graphically directed
-#	to the sound device
-
-	
-	#@dispatch{qw(soundcard_in soundcard_out)} 
-	#	= @dispatch{qw(jack_client_in jack_client_out)};
-	
 }
-sub initialize_rules {
-
-
-	# bus/rules-style routing 
-
-	# first make IO_Helper objects, just for pretty syntax
-	
-	my $soundcard_input = Audio::Nama::IO_Helper->new(
-		type => 	sub { my $track = shift; $track->soundcard_input()->[0]}, 
-		object => 	sub { my $track = shift; $track->soundcard_input()->[1]},);
-	my $soundcard_output = Audio::Nama::IO_Helper->new(
-		type => 	sub { my $track = shift; $track->soundcard_output()->[0]}, 
-		object => 	sub { my $track = shift; $track->soundcard_output()->[1]},);
-	my $source_input = Audio::Nama::IO_Helper->new(
-		type => 	sub { my $track = shift; $track->source_input()->[0]}, 
-		object => 	sub { my $track = shift; $track->source_input()->[1]},);
-	my $send_output = Audio::Nama::IO_Helper->new(
-		type => 	sub { my $track = shift; $track->send_output()->[0]}, 
-		object => 	sub { my $track = shift; $track->send_output()->[1]},);
-
-	package Audio::Nama::Rule;
-		$n = 0;
-		@by_index = ();	# return ref to Track by numeric key
-		%by_name = ();	# return ref to Track by name
-		%rule_names = (); 
-	package Audio::Nama;
-
-	# records unprocessed live input to file
-		
-	$rec_file = Audio::Nama::Rule->new(
-
-		name			=> 'rec_file', 
-		target			=> 'REC',
-		chain_id		=> sub{ my $track = shift; 'R'. $track->n },   
-		input_type		=> $source_input->type,
-		input_object	=> $source_input->object,
-		output_type		=>  'file',
-		output_object   => sub { my $track = shift; $track->full_path },
-		post_input			=>	sub{ my $track = shift; $track->rec_route },
-		pre_output	=> sub { my $track = shift; 
-						'-f:'.signal_format($raw_to_disk_format, $track->width);
-						},
-		condition		=> sub {my $track = shift; ! $track->rec_defeat },
-		status		=>  1,
-	);
-
-
-
-# aux_send 
-# 
-# send a 'loop' signal to a soundcard output channel or JACK client
-
-	
-$aux_send = Audio::Nama::Rule->new(  
-
-
-		name			=>  'aux_send', 
-		target			=>  'all',
-		chain_id 		=>	sub{ "M".$_[0]->n },
-		input_type		=>  'loop', 
-		input_object	=>  sub{ "loop," .  $_[0]->n},
-		output_type		=>  $send_output->type,
-		output_object	=>  $send_output->object,
-		pre_output		=>	sub{ $_[0]->pre_send},
- 		condition 		=> sub { "satisfied" if $_[0]->send_type},
-		status			=>  1,
-	);
-
-# null_setup - for metronome tracks
-#
-# brings input from null device to mixer input
-
-
-	$null_setup = Audio::Nama::Rule->new(
-		
-		name			=>  'null_setup', 
-		target			=>  'all',
-		chain_id 		=>	sub{ $_[0]->n },
-		input_type		=>  'device',
-		input_object	=>  'null',
-		output_type		=>  'loop',
-		output_object	=>  'loop,Master_in',
-		post_input		=>	sub{ my $track = shift; $track->mono_to_stereo},
-		condition 		=> 1,
-		status			=>  1,
-	);
-
-	# rules for instrument monitor buses using raw inputs
-	
-	$mon_setup = Audio::Nama::Rule->new(
-		
-		name			=>  'mon_setup', 
-		target			=>  'MON',
-		chain_id 		=>	sub{ my $track = shift; $track->n },
-		input_type		=>  'file',
-		input_object	=>  sub{ my $track = shift; $track->full_path },
-		post_input		=>	sub{ my $track = shift; $track->mono_to_stereo},
-		condition 		=> 1,
-		status			=>  1,
-	);
-
-
- 	$rec_setup = Audio::Nama::Rule->new(	 	# used by user buses 
-		
-		name			=>	'rec_setup', 
-		chain_id		=>  sub{ $_[0]->n },   
-		target			=>	'REC',
-		input_type		=> $source_input->type,
-		input_object	=> $source_input->object,
-		post_input			=>	sub{ my $track = shift;
-										$track->rec_route .
-										$track->mono_to_stereo 
-										},
-		condition 		=> 1,
-		status			=>  1,
-	);
-
-	$send_bus_out = Audio::Nama::Rule->new(
-
-		name			=>  'send_bus_out',
-		chain_id		=>  sub { $_[0]->n },
-		target			=>  'all',
-		output_type		=> $send_output->type,
-		output_object	=> $send_output->object,
-		pre_output		=>	sub{ $_[0]->pre_send},
-		condition        => sub{ $tn{$_[0]->target()}->rec_status ne 'OFF'},
-		status			=>  1,
-		
-	);
-
-
-}
-
 sub jack_running {
 	my @pids = split " ", qx(pgrep jackd);
 	my @jack  = grep{   my $pid;
@@ -1413,8 +1185,12 @@ sub engine_running {
 	eval_iam("engine-status") eq "running"
 };
 
+sub initialize_buses {
+	Audio::Nama::Bus->initialize();
+	$main_bus = Audio::Nama::Bus->new(name => 'Main');
+	$null_bus = Audio::Nama::Bus->new(name => 'Null');
+}
 	
-
 sub initialize_project_data {
 	$debug2 and print "&initialize_project_data\n";
 
@@ -1457,7 +1233,6 @@ sub initialize_project_data {
 
 	# $is_armed = 0;
 	
-	%excluded = ();
 	$old_snapshot = {};
 	$preview = $initial_user_mode;
 	$mastering_mode = 0;
@@ -1465,6 +1240,7 @@ sub initialize_project_data {
 	
 	%bunch = ();	
 	
+	Audio::Nama::Bus->initialize();
 	Audio::Nama::Group->initialize();
 	create_groups();
 	Audio::Nama::Track->initialize();
@@ -1474,10 +1250,13 @@ sub initialize_project_data {
 }
 sub create_groups {
 
-	Audio::Nama::Group->new(name => 'Master');
+	Audio::Nama::Group->new(name => 'Master'); # master fader
 	Audio::Nama::Group->new(name => 'Mixdown', rw => 'REC');
-	Audio::Nama::Group->new(name => 'Insert');
-	Audio::Nama::Group->new(name => 'Cooked');
+	Audio::Nama::Group->new(name => 'Mastering'); # mastering network
+	Audio::Nama::Group->new(name => 'Insert'); # auxiliary tracks for inserts
+	Audio::Nama::Group->new(name => 'Cooked'); # used by CacheRec tracks
+	Audio::Nama::Group->new(name => 'Temp'); # tracks to be removed
+								#	after generating chain setup
 	$main = Audio::Nama::Group->new(name => 'Main', rw => 'REC');
 	$null    = Audio::Nama::Group->new(name => 'null');
 }
@@ -1520,8 +1299,8 @@ sub add_track {
 		name => $name,
 		@params
 	);
-	$this_track = $track;
 	return if ! $track; 
+	$this_track = $track;
 	$debug and print "ref new track: ", ref $track; 
 	$track->source($ch_r) if $ch_r;
 #		$track->send($ch_m) if $ch_m;
@@ -1667,62 +1446,57 @@ Unable to provide latency compensation.
 
 ## chain setup generation
 
-
-sub all_chains {
-	my @active_tracks = grep { $_->rec_status ne q(OFF) } Audio::Nama::Track::all() 
-		if Audio::Nama::Track::all();
-	map{ $_->n} @active_tracks if @active_tracks;
+# return file output entries, including Mixdown 
+sub really_recording { 
+	map{ /-o:(.*?\.wav)$/} grep{ /-o:/ and /\.wav$/} split "\n", $chain_setup
 }
 
-# return list of indices of user tracks with REC status
-
-sub user_rec_tracks {
-	my @user_tracks = Audio::Nama::Track::all();
-	splice @user_tracks, 0, 2; # drop Master and Mixdown tracks
-	return unless @user_tracks;
-	my @user_rec_tracks = grep { $_->rec_status eq 'REC' } @user_tracks;
-	return unless @user_rec_tracks;
-	map{ $_->n } @user_rec_tracks;
+sub generate_setup { # catch errors and cleanup
+					 
+	local $@;
+	eval { &generate_setup_try };
+	return 1 unless $@;
+	say("error caught while generating setup: $@");
+	remove_temporary_tracks();
+	track_unmemoize();
+	0;
 }
+sub generate_setup_try { 
 
-# return list of indices of user tracks with MON status
-
-sub user_mon_tracks {
-	my @user_tracks = Audio::Nama::Track::all();
-	splice @user_tracks, 0, 2; # drop Master and Mixdown tracks
-	return unless @user_tracks;
-	my @user_mon_tracks = grep { $_->rec_status eq 'MON' } @user_tracks;
-	return unless @user_mon_tracks;
-	map{ $_->n } @user_mon_tracks;
-}
-# return $output{file} entries, including Mixdown 
-sub really_recording {  keys %{$outputs{file}}; }
-
-sub generate_setup { 
 	$debug2 and print "&generate_setup\n";
+	track_memoize(); # assume track state frozen during generate setup
 
-	my $automix = shift; # route Master to null_out
+	my $automix = shift; # route Master to null_out if present
 
 	# save current track
-	my $old_this_track = $this_track;
+	$old_this_track = $this_track;
 
 	initialize_chain_setup_vars();
-	connect_Main_tracks_to_Master();
-	add_paths_for_send_buses();
-	add_paths_for_sub_buses();
+	add_paths_for_main_tracks();
+	$debug and say "The graph is:\n$g";
+	add_paths_for_recording();
+	$debug and say "The graph is:\n$g";
+	add_paths_for_null_input_tracks();
+	$debug and say "The graph is:\n$g";
+	add_paths_for_aux_sends();
+	$debug and say "The graph is:\n$g";
+	map{ $_->apply() } grep{ (ref $_) =~ /Send|Sub/ } Audio::Nama::Bus::all();
+	$debug and say "The graph is:\n$g";
 	add_paths_from_Master(); # do they affect automix?
+	$debug and say "The graph is:\n$g";
 
 	# re-route Master to null for automix
 	if( $automix){
-		$g->delete_edges(map{@$_} $g->edges_from('Master')); # no, they don't
+		$g->delete_edges(map{@$_} $g->edges_from('Master')); 
 		$g->add_edge(qw[Master null_out]);
+		$debug and say "The graph is:\n$g";
 	}
 	add_paths_for_mixdown_handling();
+	$debug and say "The graph is:\n$g";
 	prune_graph();
-	
 	$debug and say "The graph is:\n$g";
 
-	my $temp_tracks = Audio::Nama::Graph::expand_graph($g); # array ref
+	Audio::Nama::Graph::expand_graph($g); 
 
 	$debug and say "The expanded graph is:\n$g";
 
@@ -1733,128 +1507,143 @@ sub generate_setup {
 
 	# create IO lists %inputs and %outputs
 
-	process_routing_graph();
-	# now we have processed graph, we can remove temp tracks
+	process_routing_graph() or say("No tracks to record or play."),return;
 
-	$debug and say "temp tracks to remove";
-	map{ $debug and say $_->name; $_->remove } @$temp_tracks;
+	# now we have processed graph, we can remove temp tracks
 
 	$this_track = $old_this_track;
 
-	process_static_bus_rules();
+	write_chains(); 
 
-	maybe_write_chains();
+	remove_temporary_tracks();
+	track_unmemoize();
+
+	1; # used to sense a chain setup ready to run
+}
+sub remove_temporary_tracks {
+	map { $_->remove  } grep{ $_->group eq 'Temp'} Audio::Nama::Track::all();
+	$this_track = $old_this_track;
 }
 sub initialize_chain_setup_vars {
 
-	  %inputs 
-		= %outputs 
-		= %post_input 
-		= %pre_output 
-		= @input_chains 
-		= @output_chains 
-		= ();
-
-	# initialize graph
-	
-	$g = Graph->new();
+	@io = (); 			# IO object list
+	$g = Graph->new(); 	
+	%inputs = %outputs = %post_input = %pre_output = ();
+	@input_chains = @output_chains = @post_input = @pre_output = ();
+	undef $chain_setup;
 }
-sub connect_Main_tracks_to_Master {
+sub add_paths_for_main_tracks {
+	$debug2 and say "&add_paths_for_main_tracks";
 	map{ 
 
 		# connect signal sources to tracks
 		
 		my @path = $_->input_path;
 		#say "Main bus track input path: @path";
-		$g->add_path(@path) if @path;
+		$Audio::Nama::g->add_path(@path) if @path;
 
 		# connect tracks to Master
 		
-		$g->add_edge($_->name, 'Master'); #  if $g->predecessors($_->name);
+		$Audio::Nama::g->add_edge($_->name, 'Master'); 
 
-	} 	grep{ $_->rec_status ne 'OFF' } 
-		map{$tn{$_}} 	# convert to Track objects
-		$main->tracks;  # list of Track names
+	} 	
+		grep{ 1 unless $preview eq 'doodle'
+			 and $_->rec_status eq 'MON' } # exclude MON tracks in doodle mode	
+		grep{ $_->rec_status ne 'OFF' }    # exclude OFF tracks
+		map{$tn{$_}} 	                   # convert to Track objects
+		$main->tracks;                     # list of Track names
 
 }
 
-sub add_paths_for_send_buses {
+sub add_paths_for_recording {
+	$debug2 and say "&add_paths_for_recording";
+	return if $preview; # don't record during preview modes
 
-	my @user_buses = grep{ $_->name  !~ /Null_Bus|Main_Bus/ } values %Audio::Nama::Bus::by_name;
-	map{
+	# we record tracks set to REC, unless rec_defeat is set 
+	# or the track belongs to the 'null' group
+	my @tracks = Audio::Nama::Track::all();
 
-		my $bus = $_;
-		# we get tracks from a group of the same name as $bus->name
-		my @tracks = grep{ $_->rec_status ne 'OFF' } 
-					 map{$tn{$_}} $Audio::Nama::Group::by_name{$bus->name}->tracks;
+	map{ 
+		# create temporary track for rec_file chain
+		$debug and say "rec file link for $_->name";	
+		my $name = $_->name . '_rec_file';
+		my $anon = Audio::Nama::SlaveTrack->new( 
+			target => $_->name,
+			rw => 'OFF',
+			group => 'Temp',
+			name => $name);
 
-		# raw send buses use only fixed-rule routing
-		# we process them later
+		# connect IO
+		
+		$g->add_path(input_node($_->source_type), $name, 'wav_out');
 
-		if( $bus->bus_type eq 'cooked'){  # post-fader send bus
+		# set chain_id to R3 (if original track is 3) 
+		$g->set_vertex_attributes($name, { chain_id => 'R'.$_->n });
 
-			$debug and say 'process post-fader bus';
-
-			# The signal path is:
-			# [target track] -> [slave track] -> [slave track send_output]
-			
-			map{   $g->add_path( $_->target, $_->name, $_->send_type.'_out');
-			} @tracks; 
-		}
-	} @user_buses;
+	} grep{ (ref $_) !~ /Slave/  # don't record slave tracks
+			and $_->rec_status eq 'REC' 
+			and not $_->group eq 'null'   # nor null-input tracks
+			and not $_->group eq 'Mixdown'# nor Mixdown track
+			and not $_->rec_defeat        # nor rec-defeat tracks
+	} @tracks;
 }
-sub add_paths_for_sub_buses {
 
-	my @user_buses = grep{ $_->name  !~ /Null_Bus|Main_Bus/ } values %Audio::Nama::Bus::by_name;
-	map{
+sub input_node { $_[0].'_in' }
+sub output_node {$_[0].'_out'}
+	
 
-		my $bus = $_;
-		# we get tracks from a group of the same name as $bus->name
-		my @tracks = grep{ $_->rec_status ne 'OFF' } 
-					 map{$tn{$_}} $Audio::Nama::Group::by_name{$bus->name}->tracks;
+sub add_paths_for_null_input_tracks {
+	$debug2 and say "&add_paths_for_null_tracks";
 
-		# raw send buses use only fixed-rule routing
-		# we process them later
-
-		if( $_->bus_type eq 'sub'){   # sub bus
-			$debug and say 'process sub bus';
-			my $output = $bus->destination_type eq 'track' 
-				? $bus->destination_id
-				: $bus->destination_type . '_out';
-
-			$debug and say "bus output: $output";
-
-			# The signal path is:
-			# [track input] -> [track] -> [bus destination]
-			
-			map{ 	my @path = ($_->input_path, $output);
-					say "path: @path";
-					$g->add_path(@path); 
-
-			} @tracks;
-		}
-	} @user_buses;
+	map{ $g->add_path('null_in', $_->name, 'Master') }
+ 	grep{ $_->rec_status eq 'REC' } 
+	map{$tn{$_}} 	# convert to Track objects
+	$Audio::Nama::Group::by_name{null}->tracks; # list of Track names
 }
+
+sub add_paths_for_aux_sends {
+	$debug2 and say "&add_paths_for_aux_sends";
+
+	map {  add_path_for_one_aux_send( $_ ) } 
+	grep { (ref $_) !~ /Slave/ 
+			and $_->group !~ /Mixdown|Master/
+			and $_->send_type 
+			and $_->rec_status ne 'OFF' } Audio::Nama::Track::all();
+}
+sub add_path_for_one_aux_send {
+	my $track = shift;
+		my @e = ($track->name, output_node($track->send_type));
+		$g->add_edge(@e);
+		 $g->set_edge_attributes(@e,
+			  {	track => $track->name,
+				# force stereo output width
+				width => 2,
+				chain_id => 'S'.$track->n,});
+}
+
 sub add_paths_from_Master {
+	$debug2 and say "&add_paths_from_Master";
 
 	if ($mastering_mode){
 		$g->add_path(qw[Master Eq Low Boost]);
 		$g->add_path(qw[Eq Mid Boost]);
 		$g->add_path(qw[Eq High Boost]);
-		$g->add_path(qw[Boost soundcard_out]) if $main_out;
-
-	} else { $g->add_edge('Master','soundcard_out') if $main_out }
+	}
+	$g->add_path($mastering_mode ?  'Boost' : 'Master',
+			output_node($tn{Master}->send_type));
+ 
 
 }
 sub add_paths_for_mixdown_handling {
+	$debug2 and say "&add_paths_for_mixdown_handling";
 
 	if ($tn{Mixdown}->rec_status eq 'REC'){
 		my @p = (($mastering_mode ? 'Boost' : 'Master'), ,'Mixdown', 'wav_out');
 		$g->add_path(@p);
 		$g->set_vertex_attributes('Mixdown', {
-		  pre_output	=> 
-			"-f:".signal_format($mix_to_disk_format,$tn{Mixdown}->width),
-		  chain			=> "Mixdown" }); 
+		  format	=> 
+			signal_format($mix_to_disk_format,$tn{Mixdown}->width),
+		  chain_id			=> "Mixdown" }); 
 		# no effects will be applied because effects are on chain 2
 												 
 	# Mixdown handling - playback
@@ -1868,323 +1657,153 @@ sub add_paths_for_mixdown_handling {
 	}
 }
 sub prune_graph {
+	$debug2 and say "&prune_graph";
 	# prune graph: remove tracks lacking inputs or outputs
 	Audio::Nama::Graph::remove_inputless_tracks($g);
 	Audio::Nama::Graph::remove_outputless_tracks($g); 
 }
+# new object based dispatch from routing graph
+	
 sub process_routing_graph {
-	# the graphic part: we process edges:
-	# 
-	# reserved to track: input 	
-	# loop to track    : input		
-	# track to loop    : output
-	# track to reserved: output
-
-	map { my ($a,$b) = @$_;
-		  $debug and say "edge $a-$b";
-
-		# cases 1,2:  track to ( loop | reserved )
-		if($tn{$a}){ 
-			if(Audio::Nama::Graph::is_a_loop($b)){
-				$dispatch{loop_sink}->($a,$b);
-			} elsif ( $Audio::Nama::Graph::reserved{$b} ){
-				$debug and say "track ($a) to reserved ($b)";
-				$dispatch{$b}->($a);
-			} else {croak qq("$b:" expected loop or reserved); }
-		}
-		# cases 3,4:  ( loop | reserved ) to track
-		elsif($tn{$b}){
-			if(Audio::Nama::Graph::is_a_loop($a)){
-				$dispatch{loop_source}->($b,$a);
-			} elsif ( $Audio::Nama::Graph::reserved{$a} ){
-				$debug and say "reserved ($a) to track ($b)";
-				$dispatch{$a}->($b);
-			} else {croak qq("$a": expected loop or reserved); }
-		}
-		else { croak qq(fell through dispatch tree); }
-	} $g->edges;
- 
+	$debug2 and say "&process_routing_graph";
+	@io = map{ dispatch($_) } $g->edges;
+	map{ $inputs{$_->ecs_string} //= [];
+		push @{$inputs{$_->ecs_string}}, $_->chain_id;
+		$post_input{$_->chain_id} = $_->ecs_extra if $_->ecs_extra;
+	} grep { $_->direction eq 'input' } @io;
+	map{ $outputs{$_->ecs_string} //= [];
+		push @{$outputs{$_->ecs_string}}, $_->chain_id;
+		$pre_output{$_->chain_id} = $_->ecs_extra if $_->ecs_extra;
+	} grep { $_->direction eq 'output' } @io;
+	no warnings 'numeric';
+	my @in_keys = values %inputs;
+	my @out_keys = values %outputs;
+	use warnings 'numeric';
+	%inputs = reverse %inputs;	
+	%outputs = reverse %outputs;	
+	@input_chains = sort map {'-a:'.join(',',sort by_chain @$_)." $inputs{$_}"} @in_keys;
+	@output_chains = sort map {'-a:'.join(',',sort by_chain @$_)." $outputs{$_}"} @out_keys;
+	@post_input = sort by_index map{ "-a:$_ $post_input{$_}"} keys %post_input;
+	@pre_output = sort by_index map{ "-a:$_ $pre_output{$_}"} keys %pre_output;
+	@input_chains + @output_chains # to sense empty chain setup
 }
-sub process_static_bus_rules { map { $_->apply() } Audio::Nama::Bus::all(); }
-
-sub maybe_write_chains {
-	if ( grep{keys %{ $outputs{$_} }} qw(file device jack_client jack_multi)){
-		write_chains();
- 		1;
- 	} else { print "No inputs found!\n"; 0 };
+{ my ($m,$n,$o,$p,$q,$r);
+sub by_chain {
+	($m,$n,$o) = $a =~ /(\D*)(\d+)(\D*)/ ;
+	($p,$q,$r) = $b =~ /(\D*)(\d+)(\D*)/ ;
+	if ($n != $q){ $n <=> $q }
+	elsif ( $m ne $p){ $m cmp $p }
+	else { $o cmp $r }
+}
+}
+sub by_index {
+	my ($i) = $a =~ /(\d+)/;
+	my ($j) = $b =~ /(\d+)/;
+	$i <=> $j
 }
 
+sub non_track_dispatch {
+
+	# loop -> loop
+	#	
+	# assign chain_id to edge based on chain_id of left-side loop's
+	# corresponding track:
+	#	
+	# hihat_out -- J7a -> Master_in
+	#
+	# soundcard_in -> wav_out (rec_file)
+	#
+	# currently handled using an anonymous track
+	#
+	# we expect edge attributes 
+	# to have been provided for handling this. 
+
+	# loop -> soundcard_out
+	#
+	# track7-soundcard_out as aux_send will have chain id S7
+	# that will be transferred by expand_graph() to 
+	# the new edge, loop-soundcard-out
+
+	# we will issue two IO objects, one for the chain input
+	# fragment, one for the chain output
+	
+	my $edge = shift;
+	$debug and say "non-track dispatch: ",join ' -> ',@$edge;
+	my $attr = $g->get_edge_attributes(@$edge);
+	$debug and say "found edge attributes: ",yaml_out($attr) if $attr;
+
+	my $vattr = $g->get_vertex_attributes($edge->[0]);
+	$debug and say "found vertex attributes: ",yaml_out($vattr) if $vattr;
+
+	# loop  fields: n: track->n, j: 'a' (counter)
+	$attr->{chain_id} //= 'J'.$vattr->{n}. 
+		( $vattr->{j} eq 'a' ? ($vattr->{j}++,''): ++$vattr->{j});
+	my @direction = qw(input output);
+	map{ 
+		my $direction = shift @direction;
+		my $class = Audio::Nama::IO::get_class($_, $direction);
+		my $attrib = {%$vattr, %$attr};
+		$attrib->{endpoint} //= $_ if Audio::Nama::Graph::is_a_loop($_); 
+		$debug and say "non-track: $_, class: $class, chain_id: $attrib->{chain_id},",
+ 			"device_id: $attrib->{device_id}";
+		$class->new($attrib ? %$attrib : () ) } @$edge;
+		# we'd like to $class->new(override($edge->[0], $edge)) } @$edge;
+}
+
+sub dispatch { # creates an IO object from a graph edge
+my $edge = shift;
+	return non_track_dispatch($edge) if not grep{ $tn{$_} } @$edge ;
+	$debug and say 'dispatch: ',join ' -> ',  @$edge;
+	my($name, $endpoint, $direction) = decode_edge($edge);
+	$debug and say "name: $name, endpoint: $endpoint, direction: $direction";
+	my $track = $tn{$name};
+	my $class = Audio::Nama::IO::get_class( $endpoint, $direction );
+		# we need the $direction because there can be 
+		# edges to and from loop,Master_in
+	my @args = (track => $name,
+			endpoint => $endpoint, # for loops
+				chain_id => $tn{$name}->n,
+				override($name, $edge));
+	#say "dispatch class: $class";
+	$class->new(@args);
+}
+sub decode_edge {
+	# assume track-endpoint or endpoint-track
+	# return track, endpoint
+	my ($a, $b) = @{$_[0]};
+	#say "a: $a, b: $b";
+	my ($name, $endpoint) = $tn{$a} ? @{$_[0]} : reverse @{$_[0]} ;
+	my $direction = $tn{$a} ? 'output' : 'input';
+	($name, $endpoint, $direction)
+}
 sub override {
-	my ($hash_ref, $name) = @_;
+	# data from edges has priority over data from vertexes
+	# we specify $name, because it could be left or right 
+	# vertex
+	$debug2 and say "&override";
+	my ($name, $edge) = @_;
+	(override_from_vertex($name), override_from_edge($edge))
+}
+	
+sub override_from_vertex {
+	my $name = shift;
+		warn("undefined graph\n"), return () unless (ref $g) =~ /Graph/;
 		my $attr = $g->get_vertex_attributes($name);
-		$debug and say "override: ", join " ",%$attr if $attr;
-		%$hash_ref = (%$hash_ref, %$attr) if $attr;
+		$attr ? %$attr : ();
+}
+sub override_from_edge {
+	my $edge = shift;
+		warn("undefined graph\n"), return () unless (ref $g) =~ /Graph/;
+		my $attr = $g->get_edge_attributes(@$edge);
+		$attr ? %$attr : ();
 }
 							
-sub chain {
-	my $name = shift;
-	$tn{$name} ? $tn{$name}->n : $name;
-}
-sub add_entry_h {
-	my $h = shift;
-	$debug2 and say "add_entry_h";
-	croak "is not a hash ref: $h" unless (ref $h) =~ /HASH/;
-	override($h,$h->{name});
-	my %hsh = %$h;
-	my($dir, $type, $id, $chain, $post_input,$pre_output) = 
-		@hsh{qw(dir type id chain post_input pre_output)};
-	if ($dir eq 'inputs'){
-		$inputs{$type}{$id} //= [];	
-		push @{ $inputs{$type}{$id} }, $chain;
-		$post_input{$chain} = $post_input if $post_input;
-	}
-	elsif ($dir eq 'outputs'){
-		$outputs{$type}{$id} //= [];	
-		push @{ $outputs{$type}{$id} }, $chain;
-		$pre_output{$chain} = $pre_output if $pre_output;
-	}
-	else {croak "illegal dir: $dir" }
-
-	
-}
-sub soundcard_output {
- 	$Audio::Nama::jack_running 
-		? [qw(jack_client system)]
-		: ['device', $Audio::Nama::alsa_playback_device]
-}
-
 sub write_chains {
-
-	# generate Setup.ecs from %inputs and %outputs
-	# by pushing lines onto @inputs and @outputs
-	# and placing intermediate processing in %post_input and %pre_output
 
 	$debug2 and print "&write_chains\n";
 
-	# we assume that %inputs and %outputs will have the
-	# same lowest-level keys, i.e. 'loop' and 'loop'
-	#
-	# @buses is not the right name...
-	
-	my @buses = grep { $_ !~ /file|device|jack/ } keys %inputs;
-	
-	### Setting devices as inputs 
-
-		# these inputs are generated by rec_setup
-	
-	for my $dev (keys %{ $inputs{device} } ){
-
-		$debug and print "dev: $dev\n";
-		my @chain_ids = @{ $inputs{device}->{$dev} };
-		#print "found ids: @chain_ids\n";
-
-		# we treat $dev as a sound card
-		# if $dev appears in config file %devices listing
-		
-		if ( $devices{$dev} ){
-			push  @input_chains, 
-			join " ", "-a:" . (join ",", @chain_ids),
-			$devices{$dev}->{input_format} 
-				? "-f:" .  $devices{$dev}->{input_format}
-				: q(),
-				"-i:" .  $devices{$dev}->{ecasound_id}, 
-		} else { print <<WARN;
-chains @chain_ids: device $dev not found in .namarc.  Skipping.
-
-WARN
-		}
-
-	}
-
-
-	#####  Setting jack_multi inputs
-
-	for my $client (keys %{ $inputs{jack_multi} } ){
-
-		my @chain_ids = @{ $inputs{jack_multi}->{$client} };
-		#my $format;
-		#$chain_ids[0] =~ /(\d+)/;
-		#my $n = $1;
-		push  @input_chains, 
-		"-a:" . join(",",@chain_ids) . " -i:$client";
-	}
-
-	#####  Setting jack clients as inputs
- 
-	for my $client (keys %{ $inputs{jack_client} } ){
-
-		my @chain_ids = @{ $inputs{jack_client}->{$client} };
-		my $format;
-
-		if ( $client eq 'system' ){ # we use the full soundcard width
-
-			$format = signal_format(
-				$devices{jack}->{signal_format},
-
-				# the number of channels
-				jack_client($client,q(output)) # client's output is our input
-			);
-
-		} else { # we use track width
-
-			$chain_ids[0] =~ /(\d+)/;
- 			my $n = $1;
- 			$debug and print "found chain id: $n\n";
-			$format = signal_format(
-						$devices{jack}->{signal_format},	
-						$ti{$n}->width
-			);
-		}
-		push  @input_chains, 
-			"-a:"
-			. join(",",@chain_ids)
-			. " -f:$format -i:jack,$client";
-	}
-		
-	##### Setting files as inputs (used by mon_setup)
-
-	for my $full_path (keys %{ $inputs{file} } ) {
-		
-		$debug and print "monitor input file: $full_path\n";
-		my @chain_ids = @{ $inputs{file}->{$full_path} };
-
-		my @chain_ids_no_modifiers = ();
-
-		map {
-			my ($chain) = /(\d+)/;
-			my $track = $ti{$chain} || $tn{$_}; # XXX special case
-			if ( $track->playat_output 
-					or $track->select_output
-					or $track->modifiers ){
-
-				#	single chain fragment
-
-				my @modifiers;
-				push @modifiers, $ti{$chain}->playat_output
-					if $ti{$chain}->playat_output;
-				push @modifiers, $ti{$chain}->select_output
-					if $ti{$chain}->select_output;
-				push @modifiers, split " ", $ti{$chain}->modifiers
-					if $ti{$chain}->modifiers;
-
-				push @input_chains, join ( " ",
-						"-a:$_",
-						"-i:".join(q[,],@modifiers,$full_path));
-			} 
-			else {
-
-				# multiple chain fragment
-				
-				push @chain_ids_no_modifiers, $_
-			}
-     	} @chain_ids;
-		if ( @chain_ids_no_modifiers ){ 
-
-			push @input_chains, join ( " ",
-						"-a:".join(q[,],@chain_ids_no_modifiers),
-						"-i:".$full_path);
-		} 
-
- 	}
-
-	### Setting loops as inputs 
-
-	for my $loop ( keys %{ $inputs{loop} }){
-		push  @input_chains, 
-		join " ", 
-			"-a:" . (join ",", @{ $inputs{loop}->{$loop} }),
-			"-i:$loop";
-	}
-	#####  Setting devices as outputs
-	#
-	for my $dev ( keys %{ $outputs{device} }){
-			my $format = $devices{$dev}->{output_format};
-			push @output_chains, join " ",
-				"-a:" . (join "," , @{ $outputs{device}->{$dev} }),
-				($format ? "-f:$format" : q() ),
-				"-o:". $devices{$dev}->{ecasound_id}; }
-
-	#####  Setting jack_multi outputs 
-
-	for my $client (keys %{ $outputs{jack_multi} } ){
-
-		my @chain_ids = @{ $outputs{jack_multi}->{$client} };
-		my $format;
-		# extract track number to determine channel count
-		$chain_ids[0] =~ /(\d+)/; 
-		my $n = $1;
-		$format = signal_format(
-			$devices{jack}->{signal_format},	
-			$ti{$n}->width
-			);
-		push  @output_chains, 
-		"-a:" . join(",",@chain_ids) 
-				. " -f:$format" 
-				. " -o:$client";
-	}
-
-
-	#####  Setting jack clients as outputs
- 
-	for my $client (keys %{ $outputs{jack_client} } ){
-
-		my @chain_ids = @{ $outputs{jack_client}->{$client} };
-		my $format;
-
-		if ( $client eq 'system' ){ # we use the full soundcard width
-
-			$format = signal_format(
-				$devices{jack}->{signal_format},
-
-				# the number of channels
-				jack_client($client,q(input)) # client's input is our output
-			);
-
-		} else { # we use track width
-
-			$chain_ids[0] =~ /(\d+)/;
- 			my $n = $1;
- 			$debug and print "found chain id: $n\n";
-			$format = signal_format(
-						$devices{jack}->{signal_format},	
-						$ti{$n}->width
-	 		);
-		}
-		push  @output_chains, 
-			"-a:"
-			. join(",",@chain_ids)
-			. " -f:$format -o:jack,$client";
-	}
-		
-	### Setting loops as outputs 
-
-	for my $loop ( keys %{ $outputs{loop} }){
-		push  @output_chains, 
-		join " ", 
-			"-a:" . (join ",", @{ $outputs{loop}->{$loop} }),
-			"-o:$loop";
-	}
-	##### Setting files as outputs (used by rec_file and mix)
-
-	for my $full_path ( keys %{ $outputs{file} } ){
-		$debug and print "record output file: $full_path\n";
-		my $chain_ids = join ",",@{ $outputs{file}->{$full_path} };
-		
-
-		# in this case  we can be sure that $chain_ids is just one id
-		push @output_chains, join ( " ",
-			 "-a:".$chain_ids,
-			 (grep{/-f:/} split ' ', $pre_output{$chain_ids}), 
-			 "-o:".$full_path,
-		 );
-			 
-			 
-	}
-
 	## write general options
 	
-	my $ecs_file = "# ecasound chainsetup file\n\n";
-	$ecs_file   .= "# general\n\n";
 	my $globals = $ecasound_globals_default;
 
 	# use realtime globals if they exist and we are
@@ -2193,24 +1812,30 @@ WARN
 	$globals = $ecasound_globals_realtime
 		if $ecasound_globals_realtime 
 			and grep{ ! /Mixdown/} really_recording();
-			# and exists latency-sensitive monitor output # we should also add
+			# we assume there exists latency-sensitive monitor output 
+			# when recording
 			
-	$ecs_file   .= $globals;
-	$ecs_file   .= "\n\n";
-	$ecs_file   .= "# audio inputs\n\n";
-	$ecs_file   .= join "\n", sort @input_chains;
-	$ecs_file   .= "\n\n# post-input processing\n\n";
-	$ecs_file   .= join "\n", sort map{ "-a:$_ $post_input{$_}"} keys %post_input;
-	$ecs_file   .= "\n\n# pre-output processing\n\n";
-	$ecs_file   .= join "\n", sort map{ "-a:$_ $pre_output{$_}"} keys %pre_output;
-	$ecs_file   .= "\n\n# audio outputs";
-	$ecs_file   .= join "\n", sort @output_chains, "\n";
-	
+	my $ecs_file = join "\n\n", 
+					"# ecasound chainsetup file",
+					"# general",
+					$globals, 
+					"# audio inputs",
+					join("\n", @input_chains), "";
+	$ecs_file .= join "\n\n", 
+					"# post-input processing",
+					join("\n", @post_input), "" if @post_input;				
+	$ecs_file .= join "\n\n", 
+					"# pre-output processing",
+					join("\n", @pre_output), "" if @pre_output;
+	$ecs_file .= join "\n\n", 
+					"# audio outputs",
+					join("\n", @output_chains), "";
 	$debug and print "ECS:\n",$ecs_file;
 	my $sf = join_path(&project_dir, $chain_setup_file);
 	open my $setup, ">$sf";
 	print $setup $ecs_file;
 	close $setup;
+	$chain_setup = $ecs_file;
 
 }
 
@@ -2237,11 +1862,11 @@ sub arm {
 	# - automix	
 	
 	$debug2 and print "&arm\n";
-	exit_preview();
+	exit_preview_mode();
 	#adjust_latency();
 	if( generate_setup() ){ connect_transport() };
 }
-sub preview {
+sub set_preview_mode {
 
 	# set preview mode, releasing doodle mode if necessary
 	
@@ -2253,10 +1878,9 @@ sub preview {
 
 	# make an announcement if we were in rec-enabled mode
 
-	release_doodle_mode() if $preview eq 'doodle';
+	$main->set(rw => $old_group_rw) if $old_group_rw;
 
 	$preview = "preview";
-	$rec_file->set(status => 0);
 
 	print "Setting preview mode.\n";
 	print "Using both REC and MON inputs.\n";
@@ -2264,16 +1888,11 @@ sub preview {
 	print "Type 'arm' to enable recording.\n\n";
 	# reconfigure_engine() will generate setup and start transport
 }
-sub doodle {
-
-	# set doodle mode
+sub set_doodle_mode {
 
 	$debug2 and print "&doodle\n";
 	return if engine_running() and really_recording();
 	$preview = "doodle";
-	$rec_file->set(status => 0);
-	$mon_setup->set(status => 0);
-	$unique_inputs_only = 1;
 
 	# save rw setting of user tracks (not including null group)
 	# and set those tracks to REC
@@ -2282,10 +1901,6 @@ sub doodle {
 	$main->set(rw => 'REC');
 	$tn{Mixdown}->set(rw => 'OFF');
 	
-	# allow only unique inputs
-	
-	exclude_duplicate_inputs();
-
 	# reconfigure_engine will generate setup and start transport
 	
 	print "Setting doodle mode.\n";
@@ -2294,13 +1909,18 @@ sub doodle {
 }
 sub reconfigure_engine {
 	$debug2 and print "&reconfigure_engine\n";
-	# sometimes we want to skip for debugging
-	
+	# skip if command line option is set
 	return if $opts{R};
-	return 0 if $disable_auto_reconfigure;
+
+	return if $disable_auto_reconfigure;
 
 	# we don't want to disturb recording/mixing
 	return 1 if really_recording() and engine_running();
+		# why the return value? TODO delete it
+
+	rememoize(); # check if someone has snuck in some files
+	
+	find_duplicate_inputs(); # we will warn the user later
 
 	# only act if change in configuration
 
@@ -2313,13 +1933,13 @@ sub reconfigure_engine {
 	}
 	$debug and print ("setup change\n");
 
-	# restore playback position unless 
-	
-	#  - doodle mode
-	#  - change in global version
-    #  - change in project
-    #  - user or Mixdown track is REC enabled
-	
+# 	# restore playback position unless 
+# 	
+# 	#  - doodle mode
+# 	#  - change in global version
+#     #  - change in project
+#     #  - user or Mixdown track is REC enabled
+# 	
 # 	my $old_pos;
 # 
 # 	my $will_record = ! $preview 
@@ -2357,75 +1977,39 @@ sub reconfigure_engine {
 }
 
 		
-sub exit_preview { # exit preview and doodle modes
+sub exit_preview_mode { # exit preview and doodle modes
 
-		$debug2 and print "&exit_preview\n";
+		$debug2 and print "&exit_preview_mode\n";
 		return unless $preview;
 		stop_transport() if engine_running();
 		$debug and print "Exiting preview/doodle mode\n";
 		$preview = 0;
-		release_doodle_mode();	
-
-		$rec_file->set(status => 1);
+		$main->set(rw => $old_group_rw) if $old_group_rw;
 
 }
 
-sub release_doodle_mode {
+sub find_duplicate_inputs { # in Main bus only
 
-		$debug2 and print "&release_doodle_mode\n";
-		# restore preview group REC/MON/OFF setting
-		$main->set(rw => $old_group_rw);		
-
-		# enable playback from disk
-		$mon_setup->set(status => 1);
-
-		enable_excluded_inputs();
-
-		# enable all rec inputs
-		$unique_inputs_only = 0;
+	%duplicate_inputs = ();
+	%already_used = ();
+	$debug2 and print "&find_duplicate_inputs\n";
+	map{	my $source = $_->source;
+			$duplicate_inputs{$_->name}++ if $already_used{$source} ;
+		 	$already_used{$source} //= $_->name;
+	} 
+	grep { $_->rw eq 'REC' }
+	map{ $tn{$_} }
+	$main->tracks(); # track names;
 }
-sub enable_excluded_inputs {
 
-	$debug2 and print "&enable_excluded_inputs\n";
-	return unless %old_rw;
-
-	map { $tn{$_}->set(rw => $old_rw{$_}) } $main->tracks
-		if $main->tracks;
-
-	$main->set(rw => $old_group_rw);
-	%old_rw = ();
-
-}
-sub exclude_duplicate_inputs {
-
-	$debug2 and print "&exclude_duplicate_inputs\n";
-	print ("already excluded duplicate inputs\n"), return if %old_rw;
-	
-	my @user = $main->tracks(); # track names
-	map { $old_rw{$_} = $tn{$_}->rw } @user;
-	%excluded = ();
-	my %already_used;
-	map{ my $source = $tn{$_}->source;
-		 if( $already_used{$source}  ){
-			$excluded{$_} = $tn{$_}->rw;
-		 }
-		 $already_used{$source}++
-	} grep { $tn{$_}->rec_status eq 'REC' } @user;
-	if ( keys %excluded ){
-#			print "Multiple tracks share same inputs.\n";
-#			print "Excluding the following tracks: ", 
-#				join(" ", keys %excluded), "\n";
-		map{ $tn{$_}->set(rw => 'OFF') } keys %excluded;
-	}
-}
 
 sub adjust_latency {
 
 	$debug2 and print "&adjust_latency\n";
 	map { $copp{$_->latency}[0] = 0  if $_->latency() } 
 		Audio::Nama::Track::all();
-	preview();
-	exit_preview();
+	set_preview_mode();
+	exit_preview_mode();
 	my $cop_status = eval_iam('cop-status');
 	$debug and print $cop_status;
 	my $chain_re  = qr/Chain "(\d+)":\s+(.*?)(?=Chain|$)/s;
@@ -2474,6 +2058,8 @@ sub connect_transport {
 	$ui->length_display(-text => colonize($length));
 	# eval_iam("cs-set-length $length") unless @record;
 	$ui->clock_config(-text => colonize(0));
+	disconnect_jack_ports();
+	connect_jack_ports();
 	transport_status() unless $no_transport_status;
 	$ui->flash_ready();
 	#print eval_iam("fs");
@@ -2481,11 +2067,82 @@ sub connect_transport {
 	
 }
 
+
+sub connect_jack_ports {
+
+	# use a heuristic to map port names to track channels
+		
+	# If track is mono, all to one input
+	# If track is stereo, map as follows:
+	# 
+	# L or l: 1
+	# R or r: 2
+	# 
+	# # if first entry ends with zero we use this mapping
+	# 0: 1 
+	# 1: 2
+	# 
+	# # otherwise we use this mapping
+	# 1: 1
+	# 2: 2
+	# 
+	# If track is more than stereo, use linenumber % channel_count
+	# 
+	# 1st: 1
+	# 2nd: 2
+	# 3rd: 3
+	# ...
+
+	my $dis = shift;
+	my $offset;
+	my %map_RL = (L => 1, R => 2);
+	map{  my $track = $_; 
+ 		  my $name = $track->name;
+ 		  my $dest = "ecasound:$name\_in_";
+ 		  my $file = join_path(project_root(), $track->name.'.ports');
+		  my $line_number = 0;
+		  if( $track->rec_status eq 'REC' and -e $file){ 
+			for (io($file)->slurp){   
+					# $_ is the source port name
+					chomp;
+					# skip silently if port doesn't exist
+					return unless $jack{$_};	
+		  			my $cmd = q(jack_).$dis.qq(connect "$_" $dest);
+					# define offset once based on first port line
+					# ends in zero: 1 
+					# ends in one:  0
+					/(\d)$/ and $offset //= ! $1;
+					#$debug and say "offset: $offset";
+					if( $track->width == 1){ $cmd .= "1" }
+					elsif( $track->width == 2){
+						my($suffix) = /([LlRr]|\d+)$/;
+						#say "suffix: $suffix";
+						$cmd .= ($suffix =~ /\d/) 
+							? ($suffix + $offset)
+							: $map_RL{uc $suffix};
+					} else { $cmd .= ($line_number % $track->width + 1) }
+					$line_number++;
+					$debug and say $cmd;
+					system $cmd;
+			} ;
+		  }
+ 	 } grep{ $_->source_type eq 'jack_port' and $_->rec_status eq 'REC' 
+	 } Audio::Nama::Track::all();
+}
+
+sub disconnect_jack_ports { connect_jack_ports('dis') }
+
 sub transport_status {
+	
+	map{ 
+		say("Warning: $_: input ",$tn{$_}->source,
+		" is already used by track ",$already_used{$tn{$_}->source},".")
+		if $duplicate_inputs{$_};
+	} $main->tracks;
+
 
 	# assume transport is stopped
 	# print looping status, setup length, current position
-	
 	my $start  = Audio::Nama::Mark::loop_start();
 	my $end    = Audio::Nama::Mark::loop_end();
 	#print "start: $start, end: $end, loop_enable: $loop_enable\n";
@@ -3359,7 +3016,7 @@ sub prepare_static_effects_data{
 }
 sub new_plugins {
 	my $effects_cache = join_path(&project_root, $effects_cache_file);
-	my $path = $ENV{LADSPA_PATH} || q(/usr/lib/ladspa);
+	my $path = ladspa_path();
 	
 	my @filenames;
 	for my $dir ( split ':', $path){
@@ -3569,10 +3226,12 @@ sub integrate_cop_hints {
 		$effects[ $effect_i{ $code } ] = $hashref;
 	}
 }
+sub ladspa_path {
+	$ENV{LADSPA_PATH} || q(/usr/lib/ladspa);
+}
 sub get_ladspa_hints{
 	$debug2 and print "&get_ladspa_hints\n";
-	$ENV{LADSPA_PATH} or local $ENV{LADSPA_PATH}='/usr/lib/ladspa';
-	my @dirs =  split ':', $ENV{LADSPA_PATH};
+	my @dirs =  split ':', ladspa_path();
 	my $data = '';
 	my %seen = ();
 	my @plugins;
@@ -3771,14 +3430,7 @@ sub save_state {
 	$debug and print "saving palette\n";
 	$ui->save_palette;
 
-	# save %effect_chain, common to all projects
-	
- 	serialize (
- 		file => join_path(project_root(), $effect_chain_file),
-		format => 'yaml',
- 		vars => [ qw( %effect_chain ) ],
- 		class => 'Audio::Nama');
-	
+	save_effect_chains();
 
 	# do nothing more if only Master and Mixdown
 	
@@ -3789,9 +3441,10 @@ sub save_state {
 
 	my $file = shift; # mysettings
 
-	# remove nulls in %cops 
+	# remove null keys in %cops and %copp
 	
 	delete $cops{''};
+	delete $copp{''};
 
 	$file = $file || $state_store_file;
 	$file = join_path(&project_dir, $file) unless $file =~ m(/); 
@@ -3816,7 +3469,7 @@ map { my $t = $_;
 
 @bus_data = (); # 
 map{ push @bus_data, $_->hashref } 
-	grep{ $_->name !~ /Main_Bus|Null_Bus/} Audio::Nama::Bus::all();
+	grep{ $_->name !~ /Main|Null/} Audio::Nama::Bus::all();
 
 # prepare marks data for storage (new Mark objects)
 
@@ -3859,6 +3512,26 @@ $debug and print "serializing\n";
 
 
 }
+
+
+sub save_effect_chains { # if they exist
+	if (keys %effect_chain){
+		serialize (
+			file => join_path(project_root(), $effect_chain_file),
+			format => 'yaml',
+			vars => [ qw( %effect_chain ) ],
+			class => 'Audio::Nama');
+	}
+}
+sub restore_effect_chains {
+
+	# but don't overwrite them if already present
+
+	assign_var(join_path(project_root(), $effect_chain_file), qw(%effect_chain))
+		unless keys %effect_chain; 
+}
+
+	
 sub assign_var {
 	my ($source, @vars) = @_;
 	assign_vars(
@@ -3878,6 +3551,9 @@ sub restore_state {
 	
 	my $yaml = io($file)->all;
 
+	# remove empty key hash lines # YAML::Tiny bug
+	$yaml = join $/, grep{ ! /^\s*:/ } split $/, $yaml;
+
 	# rewrite obsolete null hash/array substitution
 	$yaml =~ s/~NULL_HASH/{}/g;
 	$yaml =~ s/~NULL_ARRAY/[]/g;
@@ -3890,9 +3566,7 @@ sub restore_state {
 
 	assign_var($yaml, @persistent_vars );
 
-	# restore effect chains
-
-	assign_var(join_path(project_root(), $effect_chain_file), qw(%effect_chain));
+	restore_effect_chains();
 
 	##  print yaml_out \@groups_data; 
 	# %cops: correct 'owns' null (from YAML) to empty array []
@@ -4129,7 +3803,8 @@ sub show_chain_setup {
 sub pager {
 	$debug2 and print "&pager\n";
 	my @output = @_;
-	my ($screen_lines, $columns) = split " ", qx(stty size);
+#	my ($screen_lines, $columns) = split " ", qx(stty size);
+	my ($screen_lines, $columns) = $term->get_screen_size();
 	my $line_count = 0;
 	map{ $line_count += $_ =~ tr(\n)(\n) } @output;
 	if ( $use_pager and $line_count > $screen_lines - 2) { 
@@ -4199,9 +3874,7 @@ sub process_line {
 		$term->addhistory($user_input) 
 			unless $user_input eq $previous_text_command;
 		$previous_text_command = $user_input;
-		enable_excluded_inputs() if $preview eq 'doodle';
 		command_process( $user_input );
-		exclude_duplicate_inputs() if $preview eq 'doodle';
 		reconfigure_engine();
 		revise_prompt();
 	}
@@ -4240,9 +3913,9 @@ sub command_process {
 			@tracks = grep{ $tn{$_} or ! /\D/ and $ti{$_} }
 				split " ", $bunchy;
 			$debug and print "multitracks: @tracks\n";
-		} elsif ( @tracks = @{$bunch{$bunchy}}) {
+		} elsif ( $bunch{$bunchy} and @tracks = @{$bunch{$bunchy}}  ) {
 			$debug and print "bunch tracks: @tracks\n";
- 		}
+ 		} else { say "$bunchy: no matching bunch identifier found" }
 		for my $t(@tracks) {
 			command_process("$t; $do");
 		}
@@ -4338,10 +4011,33 @@ sub keyword {
         return undef;
 } };
 
+
+{ my $fake_jack_lsp = q(system:capture_1
+   alsa_pcm:capture_1
+        properties: output,physical,terminal,
+system:capture_2
+   alsa_pcm:capture_2
+        properties: output,physical,terminal,
+system:playback_1
+   alsa_pcm:playback_1
+        properties: input,physical,terminal,
+system:playback_2
+   alsa_pcm:playback_2
+        properties: input,physical,terminal,
+Horgand:out_1
+        properties: output,terminal,
+Horgand:out_2
+        properties: output,terminal,
+);
+
 sub jack_update {
 	# cache current JACK status
-	$jack_running = jack_running();
-	$jack_lsp = qx(jack_lsp -Ap 2> /dev/null); 
+	if    ( $opts{A} ){ $jack_running = 0  }
+	elsif ( $opts{J} ){ $jack_running = 1  }
+	else  { $jack_running = jack_running() }
+	$jack_lsp = $opts{J} ? $fake_jack_lsp : qx(jack_lsp -Ap 2> /dev/null); 
+	%jack = %{jack_ports()} if $jack_running;
+}
 }
 sub jack_client {
 
@@ -4358,7 +4054,11 @@ sub jack_client {
 	($name, $port) = $name =~ /^([^:]+):?(.*)/;
 
 	# currently we ignore port
-	
+
+	$jack{$name}{$direction};
+}
+
+sub jack_ports {
 	$jack_running or return;
 	my $j = $jack_lsp; 
 	#return if $j =~ /JACK server not running/;
@@ -4368,26 +4068,31 @@ sub jack_client {
 	$j =~ s/\n\s+/ /sg;
 
 	# system:capture_1 alsa_pcm:capture_1 properties: output,physical,terminal,
-
-	%jack = ();
+	my %jack = ();
 
 	map{ 
 		my ($direction) = /properties: (input|output)/;
 		s/properties:.+//;
-		my @ports = /([^:]+:.+)/g;
+		my @ports = /
+			\s* 			# zero or more spaces
+			([^:]+:[^:]+?) # non-colon string, colon, non-greey non-colon string
+			(?=[-+.\w]+:|\s+$) # zero-width port name or spaces to end-of-string
+		/gx;
 		map { 
 				s/ $//; # remove trailing space
 				$jack{ $_ }{ $direction }++;
 				my ($client, $port) = /(.+?):(.+)/;
 				$jack{ $client }{ $direction }++;
+				my ($port_prefix) = /:(.+?)\d+$/;
+				$jack{ $client }{ $direction.'_prefix' } = $port_prefix;
 
 		 } @ports;
 
 	} split "\n",$j;
 	#print yaml_out \%jack;
-	
-	$jack{$name}{$direction};
+	\%jack
 }
+	
 
 sub automix {
 
@@ -4418,7 +4123,7 @@ sub automix {
 	eval_iam('start'); # don't use heartbeat
 	sleep 2; # time for engine to stabilize
 	while( eval_iam('engine-status') ne 'finished'){ 
-		print q(.); sleep 2; update_clock_display()}; 
+		print q(.); sleep 1; update_clock_display()}; 
 	print " Done\n";
 
 	# parse cop status
@@ -4497,8 +4202,16 @@ sub add_mastering_tracks {
 		);
 		$ui->track_gui( $track->n );
 
- } @mastering_track_names;
+ 	} grep{ $_ ne 'Boost' } @mastering_track_names;
+	my $track = Audio::Nama::SlaveTrack->new(
+		name => 'Boost', 
+		rw => 'MON',
+		group => 'Mastering', 
+		target => 'Master',
+	);
+	$ui->track_gui( $track->n );
 
+	
 }
 
 sub add_mastering_effects {
@@ -4599,25 +4312,15 @@ sub effect_code {
 	else { warn "effect code not found: $input\n";}
 	$code;
 }
-
-sub status_snapshot {
-
-	# hashref output for detecting if we need to reconfigure
-	# engine
-	
-	my %snapshot = ( project 		=> 	$project_name,
-					 #global_version =>  $main->version,
-					 mastering_mode => $mastering_mode,
-					 preview        => $preview,
-					 main_out 		=> $main_out,
-					 cache_rec		=> {%cooked_record_pending},# copy
-					 #global_rw      =>  $main->rw,
-					 tracks			=> [],
-					
-	);
-	my @relevant_fields = qw(
+	# status_snapshot() 
+	#
+	# hashref output for detecting if we need to reconfigure engine
+	# compared as YAML strings
+	#
+{
+	my @sense_reconfigure = qw(
+		name
 		width
-		offset 
 		group 
 		playat
 		region_start	
@@ -4627,20 +4330,24 @@ sub status_snapshot {
 		source_type
 		send_id
 		send_type
-		project
-		target
 		rec_defeat
-		inserts );
-	map { 
-		my %track = %$_; # deref object
-		my %tr = map{ $_, $track{$_}} @relevant_fields;
-		push @{ $snapshot{tracks}}, {
-			%tr, 
-			rec_status => $_->rec_status,
-		 	current_version => $_->current_version,
-			}
-	}  Audio::Nama::Track::all();
+		inserts
+		rec_status
+		current_version
+ );
+sub status_snapshot {
+
+	
+	my %snapshot = ( project 		=> 	$project_name,
+					 mastering_mode => $mastering_mode,
+					 preview        => $preview,
+					 main_out 		=> $main_out,
+					 jack_running	=> $jack_running,
+					 tracks			=> [], );
+	map { push @{$snapshot{tracks}}, $_->snapshot(\@sense_reconfigure) }
+	Audio::Nama::Track::all();
 	\%snapshot;
+}
 }
 sub set_region {
 	my ($beg, $end) = @_;
@@ -4685,11 +4392,8 @@ sub add_sub_bus {
 	}
 	Audio::Nama::SubBus->new( 
 		name => $name, 
-		bus_type => 'sub',
-		groups => [$name],
-		rules => [qw(rec_file)],
-		destination_type => $type // 'track',
-		destination_id	 => $id // $name,
+		send_type => $type // 'track',
+		send_id	 => $id // $name,
 		)
 	or carp("can't create bus!\n"), return;
 	Audio::Nama::Group->new( name => $name, rw => 'REC');
@@ -4699,8 +4403,6 @@ sub add_sub_bus {
 						source_id 	=> $name,
 						rec_defeat 	=> 1,
 						);
-	
-	
 }
 	
 sub add_send_bus {
@@ -4708,7 +4410,7 @@ sub add_send_bus {
 	my ($name, $dest_id, $bus_type) = @_;
 	my $dest_type = dest_type( $dest_id );
 
-	# dest_type: soundcard | jack_client | loop
+	# dest_type: soundcard | jack_client | loop | jack_port | jack_multi
 	
 	print "name: $name: dest_type: $dest_type dest_id: $dest_id\n";
 
@@ -4718,31 +4420,21 @@ sub add_send_bus {
 	} else {
 	my @args = (
 		name => $name, 
-		bus_type => $bus_type,
-		groups => [$name],
-		rules => $bus_type eq 'cooked' 
-			?  [qw(send_bus_out )]
-			:  [qw(rec_setup mon_setup send_bus_out)],
-		destination_type => $dest_type,
-		destination_id	 => $dest_id,
+		send_type => $dest_type,
+		send_id	 => $dest_id,
 	);
 
-	my $bus = $bus_type eq 'cooked'
-		?  Audio::Nama::SendBusCooked->new( @args ) 
-		:  Audio::Nama::SendBusRaw->new( @args );
+	my $class = $bus_type eq 'cooked' ? 'Audio::Nama::SendBusCooked' : 'Audio::Nama::SendBusRaw';
+	my $bus = $class->new( @args );
 
-	$bus or carp("can't create bus!\n"), return;
 	Audio::Nama::Group->new( name => $name, rw => 'REC');
-	}
+	$bus or carp("can't create bus!\n"), return;
 
+	}
 	map{ Audio::Nama::SlaveTrack->new(	name => "$name\_$_", # BusName_TrackName
 							rw => 'MON',
 							target => $_,
 							group  => $name,
-							source_type => undef,
-							source_id => undef,
-							send_type => $dest_type, 
-							send_id => $dest_id,
 						)
    } $main->tracks;
 		
@@ -4856,7 +4548,6 @@ sub cleanup_exit {
 	$term->rl_deprep_terminal();
 	CORE::exit; 
 }
-	
 sub cache_track {
 	print($this_track->name, ": track caching requires MON status.\n\n"), 
 		return unless $this_track->rec_status eq 'MON';
@@ -4866,20 +4557,19 @@ sub cache_track {
 	my $orig = $this_track; 
 	my $orig_version = $this_track->monitor_version;
 	my $cooked = $this_track->name . '_cooked';
-	my $temp_track = Audio::Nama::CacheRecTrack->new(
+	Audio::Nama::CacheRecTrack->new(
 		width => 2,
 		name => $cooked,
-		group => 'Cooked',
+		group => 'Temp',
 		target => $this_track->name,
 	);
 	$g->add_path( 'wav_in',$orig->name, $cooked, 'wav_out');
 	add_paths_for_sub_buses();  # we will prune unneeded ones
-	my $temp_tracks = Audio::Nama::Graph::expand_graph($g); # array ref
-	push @$temp_tracks, $temp_track;
+	Audio::Nama::Graph::expand_graph($g); # array ref
 	Audio::Nama::Graph::add_inserts($g);
-	process_routing_graph();
-	maybe_write_chains() or say("nothing to do"), return;
-	map{ $_->remove } @$temp_tracks;
+	process_routing_graph(); 
+	write_chains();
+	remove_temporary_tracks();
 	connect_transport('no_transport_status')
 		or say ("Couldn't connect engine! Skipping."), return;
 	say $/,$orig->name,": length ". d2($length). " seconds";
@@ -4907,6 +4597,141 @@ sub cache_track {
 		post_rec_configure();
 	} else { say "track cache operation failed!"; }
 }
+sub do_script {
+	say "hello script";
+	my $name = shift;
+	my $file;
+	if( $name =~ m!/!){ $file = $name }
+	else {
+		$file = join_path(project_dir(),$name);
+		if(-e $file){}
+		else{ $file = join_path(project_root(),$name) }
+	}
+	-e $file or say("$file: file not found. Skipping"), return;
+	my @lines = split "\n",io($file)->all;
+	my $old_opt_r = $opts{R};
+	$opts{R} = 1; # turn off auto reconfigure
+	for my $input (@lines) { process_line($input)};
+	$opts{R} = $old_opt_r;
+}
+sub destroy_current_wav {
+	my $old_group_status = $main->rw;
+	$main->set(rw => 'MON');
+	$this_track->current_version or
+		say($this_track->name, 
+			": No current version (track set to OFF?) Skipping."), return;
+	my $wav = $this_track->full_path;
+	my $reply = $term->readline("delete WAV file $wav? [n] ");
+	#my $reply = chr($term->read_key()); 
+	if ( $reply =~ /y/i ){
+		print "Unlinking.\n";
+		unlink $wav or warn "couldn't unlink $wav: $!\n";
+		rememoize();
+	}
+	$term->remove_history($term->where_history);
+	$main->set(rw => $old_group_status);
+	1;
+}
+
+sub some_user_tracks {
+	my $which = shift;
+	my @user_tracks = Audio::Nama::Track::all();
+	splice @user_tracks, 0, 2; # drop Master and Mixdown tracks
+	return unless @user_tracks;
+	my @selected_user_tracks = grep { $_->rec_status eq $which } @user_tracks;
+	return unless @selected_user_tracks;
+	map{ $_->n } @selected_user_tracks;
+}
+sub user_rec_tracks { some_user_tracks('REC') }
+sub user_mon_tracks { some_user_tracks('MON') }
+
+sub add_insert_cooked {
+	my ($send_id, $return_id) = @_;
+
+	my $old_this_track = $this_track;
+	my $t = $Audio::Nama::this_track;
+	my $name = $t->name;
+	#$t->remove_insert;
+	my $i = {
+		insert_type => 'cooked',
+		send_type 	=> Audio::Nama::dest_type($send_id),
+		send_id	  	=> $send_id,
+		return_type 	=> Audio::Nama::dest_type($return_id),
+		return_id	=> $return_id,
+		wetness		=> 100,
+	};
+	# default to return from same JACK client or adjacent soundcard channels
+	if (! $i->{return_id}){
+		$i->{return_type} = $i->{send_type};
+		$i->{return_id} =  $i->{send_id} if $i->{return_type} eq 'jack_client';
+		$i->{return_id} =  $i->{send_id} + 2 if $i->{return_type} eq 'soundcard';
+	}
+	# default to return via same system (soundcard or JACK)
+
+	
+	$t->set(inserts => $i); 1;
+
+	# we slave the wet track to the original track so that
+	# we know the external output (if any) will be identical
+	
+	my $wet = Audio::Nama::SlaveTrack->new( 
+				name => "$name\_wet",
+				target => $name,
+				group => 'Insert',
+				rw => 'REC',
+				hide => 1,
+			);
+	# in the graph we will override the input with the insert's return source
+
+	# we slave the dry track to the original track so that
+	# we know the external output (if any) will be identical
+	
+	my $dry = Audio::Nama::SlaveTrack->new( 
+				name => "$name\_dry", 
+				target => $name,
+				group => 'Insert',
+				hide => 1,
+				rw => 'REC');
+
+	# the input fields will be ignored, since the track will get input
+	# via the loop device track_insert
+	
+	$i->{dry_vol} = $dry->vol;
+	$i->{wet_vol} = $wet->vol;
+	
+	$i->{tracks} = [ map{ $_->name } ($wet, $dry) ];
+	$this_track = $old_this_track;
+}
+
+sub ecasound_get_info {
+	my ($path, $command) = @_;
+	eval_iam('cs-disconnect') if eval_iam('cs-connected');
+	eval_iam('cs-add gl');
+	eval_iam('c-add g');
+	eval_iam('ai-add ' . $path);
+	eval_iam('ao-add null');
+	eval_iam('cs-connect');
+	eval_iam('engine-launch');
+	eval_iam('ai-select '. $path);
+	my $result = eval_iam($command);
+	eval_iam('cs-disconnect');
+	eval_iam('cs-remove gl');
+	$result;
+}
+sub get_length { 
+	my $path = shift;
+	my $length = ecasound_get_info($path, 'ai-get-length');
+	sprintf("%.4f", $length);
+}
+sub get_format {
+	my $path = shift;
+	ecasound_get_info($path, 'ai-get-format');
+}
+sub freq { [split ',', $_[0] ]->[2] }  # e.g. s16_le,2,44100
+
+sub channels { [split ',', $_[0] ]->[1] }
+	
+
 ### end
 
 
@@ -4951,7 +4776,7 @@ sub init_gui {
 	
 	$canvas = $ew->Scrolled('Canvas')->pack;
 	$canvas->configure(
-		scrollregion =>[2,2,10000,2000],
+		scrollregion =>[2,2,10000,10000],
 		-width => 1200,
 		-height => 700,	
 		);
@@ -4978,7 +4803,17 @@ sub init_gui {
 	# $oid_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
 	$clock_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
 	#$group_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
-	$track_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
+ 	my $track_canvas = $mw->Scrolled('Canvas')->pack(-side => 'bottom', -fill => 'both');
+ 	$track_canvas->configure(
+ 		-scrollregion =>[2,2,400,9600],
+ 		-width => 400,
+ 		-height => 400,	
+ 		);
+	$track_frame = $track_canvas->Frame; # ->pack(-fill => 'both');
+	#$track_frame = $mw->Frame;
+ 	my $id2 = $track_canvas->createWindow(0,0,
+		-window => $track_frame, 
+		-anchor => 'nw');
  	#$group_label = $group_frame->Menubutton(-text => "GROUP",
  #										-tearoff => 0,
  #										-width => 13)->pack(-side => 'left');
@@ -5690,11 +5525,15 @@ sub track_gui {
 }
 
 sub remove_track_gui {
-	load_project( name => $project_name );
-# 	@_ = discard_object( @_ );
-# 	my $n = shift;
-# 	my $m;
-# 	map {print ++$m, ref $_, $/; (ref $_) =~ /Tk/ and $_->destroy  } @{ $track_widget_remove{$n} };
+ 	@_ = discard_object( @_ );
+ 	my $n = shift;
+	#say "&remove_track_gui";
+	#say "track $n";
+	return unless $track_widget_remove{$n};
+	#say "exists";
+	my $m = 0;
+ 	map {$_->destroy  } @{ $track_widget_remove{$n} };
+	delete $track_widget_remove{$n};
 }
 
 sub paint_mute_buttons {
@@ -6544,15 +6383,17 @@ IAM
 		@output = map{ helptopic $_ } @help_topic;
 	} elsif ( $name =~ /^(\d+)$/ and $1 < 20  ){
 		@output = helptopic($name)
-	} elsif ( $commands{$name} ){
-		@output = helpline($name)
 	} else {
 		my %helped = (); 
 		my @help = ();
+		if ( $commands{$name} ){
+			push @help, helpline($name);
+			$helped{$name}++
+		}
 		map{  
 			my $cmd = $_ ;
-			if ($cmd =~ /$name/){
-				push( @help, helpline($cmd));
+			if ($cmd =~ /$name/ ){
+				push @help, helpline($cmd) unless $helped{$cmd}; 
 				$helped{$cmd}++ ;
 			}
 			if ( ! $helped{$cmd} and
@@ -6986,7 +6827,7 @@ link_track:
 import_audio:
   type: track
   short: import
-  what: import a WAV file to the current track, resampling if necessary
+  what: import a sound file (wav, ogg, mp3, etc.) to the current track, resampling if necessary.
   parameters: <s_wav_file_path> [i_frequency]
 set_track:
   short: set
@@ -7015,12 +6856,17 @@ source:
   type: track
   what: set track source
   short: src r
-  parameters: <i_soundcard_channel> | <s_jack_client_name> 
+  parameters: <i_soundcard_channel> | <s_jack_client_name> | 'jack' (opens ports ecasound:trackname_in_N, connects ports listed in trackname.ports if present in project_root dir)
 send:
   type: track
-  what: set auxilary track destination
+  what: set aux send
   short: out aux m
   parameters: <i_soundcard_channel> (3 or above) | <s_jack_client_name>
+remove_send:
+  type: track
+  short: nosend rms
+  what: remove aux send
+  parameters: none  what: set auxilary track destination
 stereo:
   type: track
   what: record two channels for current track
@@ -7299,7 +7145,7 @@ remove_effect:
 add_insert_cooked:
   type: effect 
   short: ainc
-  what: add a post-fader send/return to a track
+  what: add an external post-fader send/return to a track
   parameters: <s_send_id> [<s_return_id>]
 set_insert_wetness:
   type: effect 
@@ -7475,6 +7321,15 @@ uncache_track:
   type: effect
   short: uncache unc
   what: set uncached track version, restoring effects (if current version is cached)
+  parameters: none
+do_script:
+  type: general
+  short: do
+  what: execute Nama commands from a file in project_dir or project_root
+  parameters: <s_filename>
+scan:
+  type: general
+  what: re-read project's .wav directory
   parameters: none
 ...
 
@@ -7978,6 +7833,7 @@ op_id: /[A-Z]+/
 parameter: /\d+/
 last: ('last' | '$' ) 
 dd: /\d+/
+jack_port: /\w[-+:. \w]+/
 name: /\w[\w:,]*\/?/
 name2: /[\w\-+:]+/
 name3: /\S+/
@@ -8139,7 +7995,9 @@ master_off: _master_off end { Audio::Nama::master_off(); 1 }
 exit: _exit end {   Audio::Nama::save_state($Audio::Nama::state_store_file); 
 					Audio::Nama::cleanup_exit();
                     1}	
-source: _source name { print "source with argument$/"; $Audio::Nama::this_track->set_source( $item{name} ); 1 }
+source: _source 'jack' end { $Audio::Nama::this_track->set_source('jack'); 1 }
+source: _source dd end { $Audio::Nama::this_track->set_source( $item{dd} ); 1 }
+source: _source jack_port end { $Audio::Nama::this_track->set_source( $item{jack_port} ); 1 }
 source: _source end { 
 	my $source = $Audio::Nama::this_track->source;
 	my $object = $Audio::Nama::this_track->input_object;
@@ -8152,6 +8010,10 @@ source: _source end {
 }
 send: _send name { $Audio::Nama::this_track->set_send($item{name}); 1}
 send: _send end { $Audio::Nama::this_track->set_send(); 1}
+remove_send: _remove_send end {
+					$Audio::Nama::this_track->set(send_type => undef);
+					$Audio::Nama::this_track->set(send_id => undef); 1
+}
 stereo: _stereo { 
 	$Audio::Nama::this_track->set(width => 2); 
 	print $Audio::Nama::this_track->name, ": setting to stereo\n";
@@ -8336,25 +8198,11 @@ preset_register: _preset_register end {
 	Audio::Nama::pager( Audio::Nama::eval_iam("preset-register")); 1}
 ctrl_register: _ctrl_register end { 
 	Audio::Nama::pager( Audio::Nama::eval_iam("ctrl-register")); 1}
-preview: _preview { Audio::Nama::preview(); 1}
-doodle: _doodle { Audio::Nama::doodle(); 1 }
+preview: _preview { Audio::Nama::set_preview_mode(); 1}
+doodle: _doodle { Audio::Nama::set_doodle_mode(); 1 }
 normalize: _normalize { $Audio::Nama::this_track->normalize; 1}
 fixdc: _fixdc { $Audio::Nama::this_track->fixdc; 1}
-destroy_current_wav: _destroy_current_wav { 
-	my $old_group_status = $Audio::Nama::main->rw;
-	$Audio::Nama::main->set(rw => 'MON');
-	my $wav = $Audio::Nama::this_track->full_path;
-	print "delete WAV file $wav? [n] ";
-	my $reply = chr($Audio::Nama::term->read_key());
-	if ( $reply =~ /y/i ){
-		print "Unlinking.\n";
-		unlink $wav or warn "couldn't unlink $wav: $!\n";
-		Audio::Nama::rememoize();
-	}
-	$Audio::Nama::main->set(rw => $old_group_status);
-	$Audio::Nama::this_track = $Audio::Nama::tn{Master};
-	1;
-}
+destroy_current_wav: _destroy_current_wav { Audio::Nama::destroy_current_wav(); 1 }
 memoize: _memoize { 
 	package Audio::Nama::Wav;
 	$Audio::Nama::memoize = 1;
@@ -8369,7 +8217,7 @@ import_audio: _import_audio path frequency end {
 	$Audio::Nama::this_track->ingest( $item{path}, $item{frequency}); 1;
 }
 import_audio: _import_audio path end {
-	$Audio::Nama::this_track->ingest( $item{path}, 'auto'); 1;
+	$Audio::Nama::this_track->ingest( $item{path}); 1;
 }
 frequency: value
 list_history: _list_history end {
@@ -8417,21 +8265,8 @@ list_buses: _list_buses end { Audio::Nama::pager(map{ $_->dump } Audio::Nama::Bu
 add_insert_cooked: _add_insert_cooked send_id return_id(?) end {
 	my $return_id = "@{$item{'return_id(?)'}}";
 	my $send_id = $item{send_id};
-	my $t = $Audio::Nama::this_track;
-	my $i = {
-		insert_type => 'cooked',
-		send_type 	=> Audio::Nama::dest_type($send_id),
-		send_id	  	=> $send_id,
-		return_type 	=> Audio::Nama::dest_type($return_id),
-		return_id	=> $return_id,
-		wetness		=> 100,
-	};
-	if (! $i->{return_id}){
-		$i->{return_type} = $i->{send_type};
-		$i->{return_id} =  $i->{send_id} if $i->{return_type} eq 'jack_client';
-		$i->{return_id} =  $i->{send_id} + 2 if $i->{return_type} eq 'soundcard';
-	}
-	$t->set(inserts => $i); 1;
+	Audio::Nama::add_insert_cooked($send_id, $return_id);
+	1;
 }
 send_id: name
 return_id: name
@@ -8494,6 +8329,8 @@ overwrite_effect_chain: _overwrite_effect_chain name end {
 	Audio::Nama::push_effect_chain() if $Audio::Nama::this_track->fancy_ops;
 	Audio::Nama::add_effect_chain($name); 1
 }
+do_script: _do_script name2 end { Audio::Nama::do_script($item{name2});1}
+scan: _scan end { print "scanning ", Audio::Nama::this_wav_dir(), "\n"; Audio::Nama::rememoize() }
 
 
 command: testq
@@ -8534,6 +8371,7 @@ command: off
 command: rec_defeat
 command: source
 command: send
+command: remove_send
 command: stereo
 command: mono
 command: set_version
@@ -8626,6 +8464,8 @@ command: list_effect_chains
 command: bypass_effects
 command: replace_effects
 command: uncache_track
+command: do_script
+command: scan
 _testq: /testq\b/
 _help: /help\b/ | /h\b/
 _help_effect: /help_effect\b/ | /hfx\b/ | /he\b/
@@ -8664,6 +8504,7 @@ _off: /off\b/ | /z\b/
 _rec_defeat: /rec_defeat\b/ | /rd\b/
 _source: /source\b/ | /src\b/ | /r\b/
 _send: /send\b/ | /out\b/ | /aux\b/ | /m\b/
+_remove_send: /remove_send\b/ | /nosend\b/ | /rms\b/
 _stereo: /stereo\b/
 _mono: /mono\b/
 _set_version: /set_version\b/ | /version\b/ | /n\b/ | /ver\b/
@@ -8692,7 +8533,7 @@ _nomodifiers: /nomodifiers\b/ | /nomods\b/ | /nomod\b/
 _normalize: /normalize\b/ | /norm\b/ | /ecanormalize\b/
 _fixdc: /fixdc\b/ | /ecafixdc\b/
 _autofix_tracks: /autofix_tracks\b/ | /autofix\b/
-_remove_track: /remove_track\b/ | /HASH(0x9f8b630)\b/
+_remove_track: /remove_track\b/
 _cache_track: /cache_track\b/ | /cache\b/ | /ct\b/
 _group_rec: /group_rec\b/ | /grec\b/ | /R\b/
 _group_mon: /group_mon\b/ | /gmon\b/ | /M\b/
@@ -8745,7 +8586,7 @@ _add_send_bus_cooked: /add_send_bus_cooked\b/ | /asbc\b/
 _add_send_bus_raw: /add_send_bus_raw\b/ | /asbr\b/
 _add_sub_bus: /add_sub_bus\b/ | /asub\b/
 _update_send_bus: /update_send_bus\b/ | /usb\b/
-_remove_bus: /remove_bus\b/ | /HASH(0x9f9a218)\b/
+_remove_bus: /remove_bus\b/
 _list_buses: /list_buses\b/ | /lbs\b/
 _set_bus: /set_bus\b/ | /sbs\b/
 _new_effect_chain: /new_effect_chain\b/ | /nec\b/
@@ -8756,6 +8597,8 @@ _list_effect_chains: /list_effect_chains\b/ | /lec\b/
 _bypass_effects: /bypass_effects\b/ | /bypass\b/ | /bye\b/
 _replace_effects: /replace_effects\b/ | /replace\b/ | /rep\b/
 _uncache_track: /uncache_track\b/ | /uncache\b/ | /unc\b/
+_do_script: /do_script\b/ | /do\b/
+_scan: /scan\b/
 );
 
 
@@ -9176,16 +9019,16 @@ devices:
     ecasound_id: null
     output_format: ~
 
-# ALSA device assignments and formats
+# ALSA soundcard device assignments and formats
 
-capture_device: consumer          # for ALSA/OSS
-alsa_playback_device: consumer        # for ALSA/OSS
-mixer_out_format: cd-stereo      # for ALSA/OSS
+alsa_capture_device: consumer       # for ALSA/OSS
+alsa_playback_device: consumer      # for ALSA/OSS
+mixer_out_format: cd-stereo     	# for ALSA/OSS
 
 # audio file formats
 
-mix_to_disk_format: s16_le,N,frequency
-raw_to_disk_format: s16_le,N,frequency
+mix_to_disk_format: s16_le,N,frequency,i
+raw_to_disk_format: s16_le,N,frequency,i
 
 # globals for our chain setups
 
@@ -9318,13 +9161,13 @@ Start Nama in GUI mode
 
 Start Nama in text mode
 
-=item B<--config, -f> F<config_file>
+=item B<--config, -f>
 
-Use F<config_file> instead of the default configuration file F<~/.namarc>
+Specify configuration file (default: ~/.namarc)
 
-=item B<--project-root, -d> F<project_root>
+=item B<--project-root, -d>
 
-use F<project_root> as Nama's top-level directory
+Specify project root directory
 
 =item B<--create-project, -c>
 
@@ -9336,8 +9179,7 @@ Use Ecasound's Net-ECI interface
 
 =item B<--libecasoundc, -l>
 
-Use Ecasound's libecasoundc interface (default, if
-Audio::Ecasound is installed)
+Use Ecasound's libecasoundc interface
 
 =item B<--save-alsa, -a>
 
@@ -9349,7 +9191,7 @@ This help display
 
 =back
 
-=head2 Debugging options:
+Debugging options:
 
 =over 12
 
@@ -9371,12 +9213,27 @@ Regenerate the effects data cache
 
 =item B<--no-reconfigure-engine, -R>
 
-Don't automatically configure engine (manually use 'generate' and 'connect' commands)
+Don't automatically configure engine
 
 =item B<--debugging-output, -D>
 
 Emit debugging information
 
+=item B<--fake-jack, -J>
+
+Simulate JACK environment
+
+=item B<--fake-alsa, -A>
+
+Simulate ALSA environment
+
+=item B<--no-ecasound, -E>
+
+Don't spawn Ecasound process
+
+=item B<--execute-command, -X>
+
+Supply a command to execute
 
 =back
 
@@ -9483,6 +9340,19 @@ Each track has a descriptive name (i.e. vocal) and an
 integer track-number assigned when the track is created.
 The following paragraphs describes track fields and
 their settings.
+
+=head2 WIDTH
+
+Specifying 'mono' means one-channel input and recording the
+raw signal as a mono WAV file. The mono signal is duplicated
+to a stereo signal with pan in the default mixer
+configuration.
+
+Specifying 'stereo' means two-channel input with recording
+as a stereo WAV file.
+
+Specifying N channels ('set width N') means N-channel input
+with recording as an N-channel WAV file.
 
 =head2 VERSION NUMBER
 
@@ -9687,6 +9557,14 @@ The B<Boost> track applies gain and a limiter.
 
 These effects and their default parameters are defined
 in the configuration file F<.namarc>.
+
+=head2 Mixdown
+
+The C<mixdown> command configures Nama for mixdown. 
+The Mixdown track is set to REC (equivalent to C<Mixdown rec>) and the audio
+monitoring output is turned off (equivalent to C<main_off>).
+
+Mixdown proceeds after you enter the C<start> command.
 
 =head2 Preview and Doodle Modes
 
@@ -9967,7 +9845,7 @@ C<link_track intro Mixdown song_intro creates a track 'intro' using all .WAV ver
 
 =back
 
-=head4 B<import_audio> (import) - Import a WAV file to the current track, resampling if necessary
+=head4 B<import_audio> (import) - Import a sound file (wav, ogg, mp3, etc.) to the current track, resampling if necessary.
 
 =over 8
 
@@ -10019,15 +9897,23 @@ C<rec_defeat>
 
 =over 8
 
-C<source> <i_soundcard_channel> | <s_jack_client_name>
+C<source> <i_soundcard_channel> | <s_jack_client_name> | 'jack' (opens ports ecasound:trackname_in_N, connects ports listed in trackname.ports if present in project_root dir)
 
 =back
 
-=head4 B<send> (out aux m) - Set auxilary track destination
+=head4 B<send> (out aux m) - Set aux send
 
 =over 8
 
 C<send> <i_soundcard_channel> (3 or above) | <s_jack_client_name>
+
+=back
+
+=head4 B<remove_send> (nosend rms) - Remove aux send
+
+=over 8
+
+C<remove_send> none  what: set auxilary track destination
 
 =back
 
@@ -10267,7 +10153,7 @@ C<autofix_tracks>
 
 =back
 
-=head4 B<remove_track> (HASH(0x9f9c630)) - 
+=head4 B<remove_track> - Remove effects, parameters and GUI for current track
 
 =over 8
 
@@ -10529,7 +10415,7 @@ C<remove_effect> <s_effect_id1> [ <s_effect_id2>...]
 
 =back
 
-=head4 B<add_insert_cooked> (ainc) - Add a post-fader send/return to a track
+=head4 B<add_insert_cooked> (ainc) - Add an external post-fader send/return to a track
 
 =over 8
 
@@ -10759,11 +10645,11 @@ C<usb Some_bus>
 
 =back
 
-=head4 B<remove_bus> (HASH(0x9fab218)) - 
+=head4 B<remove_bus> - Remove a bus
 
 =over 8
 
-C<remove_bus> 
+C<remove_bus> <s_bus_name>
 
 =back
 
@@ -10849,29 +10735,44 @@ C<uncache_track>
 
 =back
 
+=head2 General commands
+
+=head4 B<do_script> (do) - Execute Nama commands from a file in project_dir or project_root
+
+=over 8
+
+C<do_script> <s_filename>
+
+=back
+
+=head4 B<scan> - Re-read project's .wav directory
+
+=over 8
+
+C<scan> 
+
+=back
+
 
 
 =head1 DIAGNOSTICS
 
-Nama has excellent diagnostic functions. In most situations, 
-the GUI display or the output of the C<show_tracks>
-command (executed automatically on any change in setup)
-shows what to expect the next time the engine is started.
+In most situations, the GUI display and the output of the
+C<show_tracks> command (executed automatically on any change
+in setup) show what to expect the next time the engine is
+started.
 
-Advanced users or those already experienced with Ecasound
-can use the C<chains> command to inspect the current chain
-setup and determine if Ecasound is properly configured for
-the task at hand.  (It is much easier to read these setups
-than to write them!)
+Additionally, Nama has a number of diagnostic functions that
+can help resolve problems without resorting to the debugging
+flag (and wading through its prolific output.) The C<chains>
+command displays the current chain setup to determine if
+Ecasound is properly configured for the task at hand. (It
+is much easier to read these setups than to write them!)
 
-Other commands are available to help programmers and support
-the occasional troubleshooting episode. C<showio> displays
-the data structure used to generate the chain setup. C<dump>
-displays data for the current track.  In correspondence, you
-may be asked to include the F<State.yml> file created by the
-C<save> command, which shows the state of all important
-program objects and variables.  You can inspect this same
-information using the C<dumpall> command.
+The C<dump> command displays data for the current track.
+The C<dumpall> command shows all state that would be saved.
+This is the same output that is written to the F<State.yml>
+file when you issue the C<save> command.
 
 =head1 BUGS AND LIMITATIONS
 

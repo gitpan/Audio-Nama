@@ -1,8 +1,9 @@
 package Audio::Nama::Object;
+use Modern::Perl;
 use Carp;
 use Audio::Nama::Assign qw(yaml_out); 
 
-#use strict; # Enable during dev and testing
+no strict; # Enable during dev and testing
 BEGIN {
 	require 5.004;
 	$Audio::Nama::Object::VERSION = '1.04';
@@ -30,6 +31,15 @@ sub new {
 	my $class = shift;
 	bless { @_ }, $class;
 }
+
+sub is_legal_key { 
+	my ($class, $key) = @_;
+	$class = ref $class if ref $class;  # support objects
+	return 1 if ${"$class\::_is_field"}{$key};
+	my ($parent_class) = @{"$class\::ISA"};
+	return unless $parent_class and $parent_class !~ /Object::Tiny/;
+	is_legal_key($parent_class,$key);
+}
 sub set {
 	my $self = shift;
 	my $class = ref $self;
@@ -37,11 +47,19 @@ sub set {
  	croak "odd number of arguments ",join "\n--\n" ,@_ if @_ % 2;
 	my %new_vals = @_;
 	map{ 
-		$self->{$_} = $new_vals{$_} 
-			if ${"$class\::_is_field"}{$_}
-			or croak "illegal key: $_ for object of type ", ref $self;
+		$self->{$_} = $new_vals{$_} ;
+			my $key = $_;
+			is_legal_key(ref $self, $key) or croak "illegal key: $_ for object of type ", ref $self;
 	} keys %new_vals;
 }
+# sub ancestors {
+# 	my $class = ref $_[0];
+# 	$class, parents( @{"$class\::ISA"} );
+# }
+# 
+# sub parents {
+# 	my @ISA = @_;
+# 	map{ 
 sub dumpp  {
 	my $self = shift;
 	my $class = ref $self;

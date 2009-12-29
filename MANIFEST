@@ -13,6 +13,7 @@ lib/Audio/Nama.pm
 lib/Audio/Nama/Assign.pm
 lib/Audio/Nama/Bus.pm
 lib/Audio/Nama/Graph.pm
+lib/Audio/Nama/Group.pm
 lib/Audio/Nama/Mark.pm
 lib/Audio/Nama/Object.pm
 lib/Audio/Nama/Track.pm
@@ -28,4 +29,5 @@ t/02_assign.t
 t/03_wav.t
 t/04_object.t
 t/11_mark.t
+t/12_nama.t
 t/13_io.t

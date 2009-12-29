@@ -24,8 +24,6 @@ $apple->set( color => 'red' );
 
 is( $apple->color, 'red', "mutator" ); 
 
-diag( $apple->dump );
-
 1;
 
 __END__

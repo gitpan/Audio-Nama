@@ -1,6 +1,18 @@
 # ---------- Track -----------
 package Audio::Nama::Track;
+
+# Objects belonging to Track and its subclasses
+# have a 'class' field that is set when the 
+# object is created, and used when restoring
+# the object from a serialized state.
+#
+# So do not re-bless a Track object into
+# a different subclass! 
+
 use Modern::Perl;
+use Carp;
+use File::Copy qw(copy);
+use Memoize qw(memoize unmemoize);
 no warnings qw(uninitialized redefine);
 our $VERSION = 1.0;
 our ($debug);
@@ -9,18 +21,10 @@ local $debug = 0;
 #our @EXPORT_OK = qw(track);
 use Audio::Nama::Assign qw(join_path);
 use Audio::Nama::Wav;
-use Carp;
 use IO::All;
 use vars qw($n %by_name @by_index %track_names %by_index @all);
 our @ISA = 'Audio::Nama::Wav';
-
-initialize();
-
-# attributes offset, loop, delay for entire setup
-# attribute  modifiers
-# new attribute will be 
 use Audio::Nama::Object qw(
-
 					class 			
 					n   			
 					name
@@ -32,7 +36,7 @@ use Audio::Nama::Object qw(
 					vol				
 					pan				
 					latency			
-					offset
+					offset			
 					old_vol_level	
 					old_pan_level
 					playat			
@@ -52,12 +56,18 @@ use Audio::Nama::Object qw(
 					effect_chain_stack 
 					cache_map		
 
-
 );
+
 # Note that ->vol return the effect_id 
 # ->old_volume_level is the level saved before muting
 # ->old_pan_level is the level saved before pan full right/left
 # commands
+
+initialize();
+
+### class subroutines
+
+
 
 sub initialize {
 	$n = 0; 	# incrementing numeric key
@@ -73,14 +83,23 @@ sub idx { # return first free track index
 		return $n if not $by_index{$n}
 	}
 }
-	
+sub all { @all }
+
+{ my %non_user = map{ $_, 1} qw( Master Mixdown Eq Low Mid High Boost );
+sub user {
+	grep{ ! $non_user{$_} } map{$_->name} @all
+}
+}
 
 sub new {
-	# returns a reference to an object that is indexed by
-	# name and by an assigned index
+	# returns a reference to an object 
 	#
-	# The indexing is bypassed and an object returned 
-	# if an index n is supplied as  a parameter
+	# tracks are indexed by:
+	# (1) name and 
+	# (2) by an assigned index that is used as chain_id
+	#     the index may be supplied as a parameter
+	#
+	# 
 
 	my $class = shift;
 	my %vals = @_;
@@ -88,14 +107,14 @@ sub new {
     croak "undeclared field: @undeclared" if @undeclared;
 	if (my $track = $by_name{$vals{name}}){
 		#if ($track->hide) { $track->set(hide => 0); } 
-		#print("track name already in use: $vals{name}\n"); 
-		return $track;
+		print("track name already in use: $vals{name}\n"); 
+		return ; # $track;
 	}
 	print("reserved track name: $vals{name}\n"), return
 	 if  ! $Audio::Nama::mastering_mode 
 		and grep{$vals{name} eq $_} @Audio::Nama::mastering_track_names ; 
 
-	my $n = $vals{n} ? $vals{n} : idx(); 
+	my $n = $vals{n} || idx(); 
 	my $object = bless { 
 
 
@@ -149,6 +168,8 @@ sub new {
 }
 
 
+### object methods
+
 sub dir {
 	my $self = shift;
 	 $self->project  
@@ -170,7 +191,6 @@ sub group_last {
 	$group->last;
 }
 
-# seems to be missing.. and needed for track-based version numbering
 sub last {
 	my $track = shift;
 	my @versions;
@@ -223,6 +243,13 @@ sub monitor_version {
 	$track->last;
 }
 
+
+sub maybe_monitor { # ordinary sub, not object method
+	my $monitor_version = shift;
+	return 'MON' if $monitor_version and ! ($Audio::Nama::preview eq 'doodle');
+	return 'OFF';
+}
+
 sub rec_status {
 #	$Audio::Nama::debug2 and print "&rec_status\n";
 	my $track = shift;
@@ -243,6 +270,8 @@ sub rec_status {
 	if ( $group->rw eq 'OFF'
 		or $track->rw eq 'OFF'
 		# or $track->hide 
+		or $Audio::Nama::preview eq 'doodle' and $track->rw eq 'REC' and 
+			$Audio::Nama::duplicate_inputs{$track->name}
 	){ 	return			  'OFF' }
 
 	# having reached here, we know $group->rw and $track->rw are REC or MON
@@ -257,6 +286,7 @@ sub rec_status {
 					?  return 'REC'
 					:  return maybe_monitor($monitor_version)
 			}
+			when('jack_port'){ return 'REC' }
 			when('soundcard'){ return 'REC' }
 			when('track'){ return 'REC' } # maybe $track->rw ??
 			default { croak $track->name. ": missing source type" }
@@ -270,105 +300,48 @@ sub rec_status {
 
 	}
 }
-
 sub rec_status_display {
 	my $track = shift;
 	my $status = $track->rec_status;
 	$track->rec_defeat ? "[$status]" : $status;
 }
 
-sub maybe_monitor { # ordinary sub, not object method
-	my $monitor_version = shift;
-	return 'MON' if $monitor_version and ! ($Audio::Nama::preview eq 'doodle');
-	return 'OFF';
-}
 
-# the following methods handle effects
-sub remove_effect { # doesn't touch %cops or %copp data structures 
+sub region_start_time {
 	my $track = shift;
-	my @ids = @_;
-	$track->set(ops => [ grep { my $existing = $_; 
-									! grep { $existing eq $_
-									} @ids }  
-							@{$track->ops} ]);
+	Audio::Nama::Mark::mark_time( $track->region_start )
 }
-
-# the following methods are for channel routing
-
-sub mono_to_stereo { 
+sub region_end_time {
 	my $track = shift;
-	my $cmd = "file " .  $track->full_path;
-	if ( 	$track->width == 2 and $track->rec_status eq 'REC'
-		    or  -e $track->full_path
-				and qx(which file)
-				and qx($cmd) =~ /stereo/i ){ 
-		return q(); 
-	} elsif ( $track->width == 1 and $track->rec_status eq 'REC'
-				or  -e $track->full_path
-				and qx(which file)
-				and qx($cmd) =~ /mono/i ){ 
-		return " -chcopy:1,2 " 
-	} else { # do nothing for higher channel counts
-	} # carp "Track ".$track->name.": Unexpected channel count\n"; 
-}
-
-sub rec_route {
-	no warnings qw(uninitialized);
-	my $track = shift;
-	
-	# applies to soundcard input via ALSA
-	
-	return unless $track->source_type eq 'soundcard'
-		and ! $Audio::Nama::jack_running;
-
-	# no need to route a signal at channel 1
-	return if ! $track->source_id or $track->source_id == 1; 
-	
-	my $route = "-chmove:" . $track->source_id . ",1"; 
-	if ( $track->width == 2){
-		$route .= " -chmove:" . ($track->source_id + 1) . ",2";
+	return if $track->rec_status ne 'MON';
+	if ( $track->region_end eq 'END' ){
+		return Audio::Nama::get_length($track->full_path);
+	} else {
+		Audio::Nama::Mark::mark_time( $track->region_end )
 	}
-	return $route;
-	
 }
-sub route {
+sub playat_time {
+	my $track = shift;
+	Audio::Nama::Mark::mark_time( $track->playat )
+}
 
-	# routes signals 1,2,3,...$width to $dest + 0, $dest + 1, $dest + 2,... 
-	
-	my ($width, $dest) = @_;
-	return undef if $dest == 1 or $dest == 0;
-	# print "route: width: $width, destination: $dest\n\n";
-	my $offset = $dest - 1;
-	my $map ;
-	for my $c ( map{$width - $_ + 1} 1..$width ) {
-		$map .= " -chmove:$c," . ( $c + $offset);
-		#$map .= " -eac:0,"  . $c;
+sub fancy_ops { # returns list 
+	my $track = shift;
+	grep{ $_ ne $track->vol and $_ ne $track->pan } @{ $track->ops }
+}
+		
+sub snapshot {
+	my $track = shift;
+	my $fields = shift;
+	my %snap; 
+	my $i = 0;
+	for(@$fields){
+		$snap{$_} = $track->$_;
+		#say "key: $_, val: ",$track->$_;
 	}
-	$map;
+	\%snap;
 }
 
-# channel shifting for multi rule 
-#
-sub pre_send {
-	#$debug2 and print "&pre_send\n";
-	my $track = shift;
-
-	# we channel shift only to soundcard channel numbers higher than 3,
-	# not when the send is to a jack client
-	 
-	return q() if $track->send_type eq 'jack_client'  or ! $track->aux_output;           
-	route(2,$track->aux_output); # stereo signal
-}
-
-sub remove {
-	my $track = shift;
-#	$Audio::Nama::ui->remove_track_gui($track->n); TODO
-	my $n = $track->n;
-	map{ Audio::Nama::remove_effect($_) } @{ $track->ops };
-	delete $by_index{$track->n};
-	delete $by_name{$track->name};
-	@all = grep{ $_->n != $n} @all;
-}
 
 # for graph-style routing
 
@@ -380,8 +353,8 @@ sub input_path { # signal path, not file path
 	
 	if($track->rec_status eq 'REC'){
 
-		if ($track->source_type =~ /soundcard|jack_client/){
-			( $track->source_type . '_in' , $track->name)
+		if ($track->source_type =~ /soundcard|jack_client|jack_port/){
+			( Audio::Nama::input_node($track->source_type) , $track->name)
 		} 
 
 	} elsif($track->rec_status eq 'MON' and $Audio::Nama::preview ne 'doodle'){
@@ -393,21 +366,45 @@ sub input_path { # signal path, not file path
 	}
 }
 
-# The following two subroutines are not object methods.
 
-sub all { @all }
+### remove and destroy
 
-{ my %non_user = map{ $_, 1} qw( Master Mixdown Eq Low Mid High Boost );
-sub user {
-	grep{ ! $non_user{$_} } map{$_->name} @all
+sub remove_effect { # doesn't touch %cops or %copp data structures 
+	my $track = shift;
+	my @ids = @_;
+	$track->set(ops => [ grep { my $existing = $_; 
+									! grep { $existing eq $_
+									} @ids }  
+							@{$track->ops} ]);
 }
+sub remove_insert {
+	my $track = shift;
+	if ( my $i = $track->inserts){
+		map{ $Audio::Nama::tn{$_}->remove } @{ $i->{tracks} };
+		$track->set(inserts => {});
+	}
 }
+
+# remove track object and all effects
+
+sub remove {
+	my $track = shift;
+	my $n = $track->n;
+	$Audio::Nama::ui->remove_track_gui($n); 
+ 	$Audio::Nama::this_track = $Audio::Nama::ti{Audio::Nama::Track::idx() - 1};
+ 	map{ Audio::Nama::remove_effect($_) } @{ $track->ops };
+ 	delete $by_index{$n};
+ 	delete $by_name{$track->name};
+ 	@all = grep{ $_->n != $n} @all;
+}
+
+	
 	
 
-### Commands and their support functions
+### object methods for text-based commands 
 
-# The conditional-laced code allows user to use 'source'
-# and 'send' commands in JACK and ALSA modes.
+# Reasonable behavior whether 'source' and 'send' commands 
+# are issued in JACK or ALSA mode.
 
 sub soundcard_channel { $_[0] // 1 }
 sub set_io {
@@ -427,12 +424,17 @@ sub set_io {
 	given ( Audio::Nama::dest_type( $id ) ){
 		when ('jack_client'){
 			if ( $Audio::Nama::jack_running ){
+				my $client_direction = $direction eq 'source' ? 'output' : 'input';
+	
 				$track->set($type_field => 'jack_client',
 							$id_field   => $id);
 				my $name = $track->name;
-				print <<CLIENT if ! Audio::Nama::jack_client($id, 'output');
-$name: $direction port for JACK client "$id" not found. 
-CLIENT
+				my $width = Audio::Nama::jack_client($id, $client_direction);
+				$width or say 
+					qq($name: $direction port for JACK client "$id" not found.);
+				$width ne $track->width and say 
+					$track->name, ": track set to ", Audio::Nama::width($track->width),
+					qq(, but JACK source "$id" is ), Audio::Nama::width($width), '.';
 				return $track->source_id;
 			} else {
 		say "JACK server not running! Cannot set JACK client as track source.";
@@ -453,61 +455,6 @@ CLIENT
 	}
 } 
 
-# the following subroutines support IO objects
-
-sub soundcard_input {
-	my $track = shift;
-	if ($Audio::Nama::jack_running) {
-		my $start = $track->source_id;
-		my $end   = $start + $track->width - 1;
-		['jack_multi' , join q(,),q(jack_multi),
-			map{"system:capture_$_"} $start..$end]
-	} else { ['device' , $Audio::Nama::capture_device] }
-}
-sub soundcard_output {
- 	$Audio::Nama::jack_running 
-		? [qw(jack_client system)]  
-		: ['device', $Audio::Nama::alsa_playback_device] 
-}
-sub source_input {
-	my $track = shift;
-	given ( $track->source_type ){
-		when ( 'soundcard'  ){ return $track->soundcard_input }
-		when ( 'jack_client'){
-			if ( $Audio::Nama::jack_running ){ return ['jack_client', $track->source_id] }
-			else { 	say($track->name. ": cannot set source ".$track->source_id
-				.". JACK not running."); return [undef, undef] }
-		}
-		when ( 'loop'){ return ['loop',$track->source_id ] } 
-	}
-}
-
-sub send_output {
-	my $track = shift;
-	given ($track->send_type){
-		when ( 'soundcard' ){ 
-			if ($Audio::Nama::jack_running) {
-				my $start = $track->send_id; # Assume channel will be 3 or greater
-				my $end   = $start + 1; # Assume stereo
-				return ['jack_multi', join q(,),q(jack_multi),
-					map{"system:playback_$_"} $start..$end]
-			} else {return [ 'device', $Audio::Nama::alsa_playback_device] }
-		}
-		when ('jack_client') { 
-			if ($Audio::Nama::jack_running){return [ 'jack_client', $track->send_id] }
-			else { carp $track->name . 
-					q(: auxilary send to JACK client specified,) .
-					q( but jackd is not running.  Skipping.);
-					return [qw(undef  undef)];
-			}
-		}
-		when ('loop') { return [ 'loop', $track->send_id ] }
-			
-		carp $track->name, ": missing or illegal send_type: ", 
-			$track->send_type, $/;
-	}
- };
-
 sub source { # command for setting, showing track source
 	my ($track, $id) = @_;
 	$track->set_io( 'source', $id);
@@ -520,13 +467,23 @@ sub set_source { # called from parser
 	my $track = shift;
 	my $source = shift;
 
+	#say "set source";
+	#say "track: ",$track->name;
+	#say "source: $source";
+
 # Special handling for 'null', used for non-input (i.e. metronome) tracks
 
 	if ($source eq 'null'){
 		$track->set(group => 'null');
 		return
 	}
-
+	if( $source eq 'jack'){
+ 		$track->set(source_type => 'jack_port',
+ 					source_id => $track->name);
+ 		say $track->name, ": JACK input port is ",$track->source_id,"_in",
+ 		". Make connections manually or set up a ports list.";
+ 		return;
+	} 
 	my $old_source = $track->source;
 	my $new_source = $track->source($source);
 	my $object = $track->input_object;
@@ -565,20 +522,6 @@ sub set_send { # wrapper
 	}
 }
 
-# input channel number, may not be used in current setup
-
-
-sub input {   	
-	my $track = shift;
-	$track->ch_r ? $track->ch_r : 1
-}
-
-# send channel number, may not be used in current setup
-
-sub aux_output { 
-	my $track = shift;
-	$track->send_id > 2 ? $track->send_id : undef 
-}
 
 sub object_as_text {
 	my ($track, $direction) = @_; # $direction: source | send
@@ -662,6 +605,9 @@ sub set_off {
 	print $track->name, ": set to OFF\n";
 }
 
+
+# Operations performed by track objects
+
 sub normalize {
 	my $track = shift;
 	if ($track->rec_status ne 'MON'){
@@ -724,139 +670,45 @@ sub unmute {
 
 sub ingest  { # i believe 'import' has a magical meaning
 	my $track = shift;
-	my ($path, $frequency) = @_;
+	my ($path, $frequency) = @_; 
+	#say "path: $path";
 	my $version  = ${ $track->versions }[-1] + 1;
 	if ( ! -r $path ){
 		print "$path: non-existent or unreadable file. No action.\n";
 		return;
-	} else {
-		my $type = qx(file $path);
-		my $channels;
-		if ($type =~ /mono/i){
-			$channels = 1;
-		} elsif ($type =~ /stereo/i){
-			$channels = 2;
-		} else {
-			print "$path: unknown channel count. Assuming mono. \n";
-			$channels = 1;
-		}
-	my $format = Audio::Nama::signal_format($Audio::Nama::raw_to_disk_format, $channels);
-	my $cmd = qq(ecasound -f:$format -i:resample-hq,$frequency,$path -o:).
-		join_path(Audio::Nama::this_wav_dir(),$track->name."_$version.wav\n");
-		print $cmd;
-		system $cmd or print "error: $!\n";
+	}
+	my ($depth,$width,$freq) = split ',', Audio::Nama::get_format($path);
+	say "format: ", Audio::Nama::get_format($path);
+	$frequency ||= $freq;
+	if ( ! $frequency ){
+		say "Cannot detect sample rate of $path. Skipping.";
+		say "Use 'import_audio <path> <frequency>' if possible.";
+		return 
+	}
+	my $desired_frequency = Audio::Nama::freq( $Audio::Nama::raw_to_disk_format );
+	my $destination = join_path(Audio::Nama::this_wav_dir(),$track->name."_$version.wav");
+	#say "destination: $destination";
+	if ( $frequency == $desired_frequency and $path =~ /.wav$/i){
+		say "copying $path to $destination";
+		copy($path, $destination) or die "copy failed: $!";
+	} else {	
+		my $format = Audio::Nama::signal_format($Audio::Nama::raw_to_disk_format, $width);
+		say "importing $path as $destination, converting to $format";
+		my $cmd = qq(ecasound -f:$format -i:resample-hq,$frequency,$path -o:$destination);
+		#say $cmd;
+		system($cmd) == 0 or say("Ecasound exited with error: ", $?>>8), return;
 	} 
-	Audio::Nama::rememoize();
+	Audio::Nama::rememoize() if $Audio::Nama::opts{R}; # usually handled by reconfigure_engine() 
 }
 
-sub playat_output {
-	my $track = shift;
-	if ( $track->playat ){
-		"playat" , $track->playat
-	}
-}
+sub port_name { $_[0]->target || $_[0]->name } 
 
-sub select_output {
-	my $track = shift;
-	if ( $track->region_start and $track->region_end){
-		my $end = $track->region_ending;
-		my $start = $track->region_start;
-		my $length = $end - $start;
-		"select", $start, $length
-	}
-}
-
-sub remove_insert {
-	my $track = shift;
-	if ( my $i = $track->inserts){
-		map{ $Audio::Nama::tn{$_}->remove } @{ $i->{tracks} };
-		$track->set(inserts => {});
-	}
-}
-
-sub region_start {
-	my $track = shift;
-	Audio::Nama::Mark::mark_time( $track->{region_start} )
-}
-sub region_ending {
-	my $track = shift;
-	if ( $track->{region_end} eq 'END' ){
-		return get_length($track->full_path);
-	} else {
-		Audio::Nama::Mark::mark_time( $track->{region_end} )
-	}
-}
-sub playat {
-	my $track = shift;
-	Audio::Nama::Mark::mark_time( $track->{playat} )
-}
-
-# subroutine, not object method
-
-sub get_length { 
-	
-	#$debug2 and print "&get_length\n";
-	my $path = shift;
-	package Audio::Nama;
-	eval_iam('cs-disconnect') if eval_iam('cs-connected');
-	eval_iam('cs-add gl');
-	eval_iam('c-add g');
-	eval_iam('ai-add ' . $path);
-	eval_iam('ao-add null');
-	eval_iam('cs-connect');
-	eval_iam('engine-launch');
-	eval_iam('ai-select '. $path);
-	my $length = eval_iam('ai-get-length');
-	eval_iam('cs-disconnect');
-	eval_iam('cs-remove gl');
-	sprintf("%.4f", $length);
-}
-sub fancy_ops { # returns list 
-	my $track = shift;
-	grep{ $_ ne $track->vol and $_ ne $track->pan } @{ $track->ops }
-}
-	
-# subclass
+# subclasses
 
 package Audio::Nama::SimpleTrack; # used for Master track
 use Modern::Perl;
 no warnings qw(uninitialized redefine);
 our @ISA = 'Audio::Nama::Track';
-use Audio::Nama::Object qw(
-
-					class 			
-					n   			
-					name
-					group 			
-					rw				
-					active			
-					width			
-					ops 			
-					vol				
-					pan				
-					latency			
-					offset
-					old_vol_level	
-					old_pan_level
-					playat			
-					region_start	
-					region_end
-					modifiers		
-					looping			
-					hide			
-					source_id		
-					source_type		
-					send_id			
-					send_type
-					target			
-					project			
-					rec_defeat		
-					inserts			
-					effect_chain_stack 
-					cache_map		
-
-
-						);
 
 sub rec_status{
 
@@ -866,50 +718,10 @@ sub rec_status{
 	'OFF';
 
 }
-sub ch_r {
-	no warnings;
-	my $track = shift;
-	return '';
-}
 package Audio::Nama::MasteringTrack; # used for mastering chains 
 use Modern::Perl;
 no warnings qw(uninitialized redefine);
 our @ISA = 'Audio::Nama::SimpleTrack';
-use Audio::Nama::Object qw( 
-
-					class 			
-					n   			
-					name
-					group 			
-					rw				
-					active			
-					width			
-					ops 			
-					vol				
-					pan				
-					latency			
-					offset
-					old_vol_level	
-					old_pan_level
-					playat			
-					region_start	
-					region_end
-					modifiers		
-					looping			
-					hide			
-					source_id		
-					source_type		
-					send_id			
-					send_type
-					target			
-					project			
-					rec_defeat		
-					inserts			
-					effect_chain_stack 
-					cache_map		
-
-						
-						);
 
 sub rec_status{
 	my $track = shift;
@@ -922,92 +734,20 @@ package Audio::Nama::SlaveTrack; # for instrument monitor bus
 use Modern::Perl;
 no warnings qw(uninitialized redefine);
 our @ISA = 'Audio::Nama::Track';
-use Audio::Nama::Object qw( 
-
-					class 			
-					n   			
-					name
-					group 			
-					rw				
-					active			
-					width			
-					ops 			
-					vol				
-					pan				
-					latency			
-					offset
-					old_vol_level	
-					old_pan_level
-					playat			
-					region_start	
-					region_end
-					modifiers		
-					looping			
-					hide			
-					source_id		
-					source_type		
-					send_id			
-					send_type
-					target			
-					project			
-					rec_defeat		
-					inserts			
-					effect_chain_stack 
-					cache_map		
-
-						
-);
 sub width { $Audio::Nama::tn{$_[0]->target}->width }
 sub rec_status { $Audio::Nama::tn{$_[0]->target}->rec_status }
-sub mono_to_stereo { $Audio::Nama::tn{$_[0]->target}->mono_to_stereo }
-sub rec_route { $Audio::Nama::tn{$_[0]->target}->rec_route }
-sub source_input { $Audio::Nama::tn{$_[0]->target}->source_input} 
-sub soundcard_input { $Audio::Nama::tn{$_[0]->target}->soundcard_input} 
 sub full_path { $Audio::Nama::tn{$_[0]->target}->full_path} 
 sub monitor_version { $Audio::Nama::tn{$_[0]->target}->monitor_version} 
-sub inserts { $Audio::Nama::tn{$_[0]->target}->inserts} 
+#sub inserts { $Audio::Nama::tn{$_[0]->target}->inserts} 
 sub source_type { $Audio::Nama::tn{$_[0]->target}->source_type}
 sub source_id { $Audio::Nama::tn{$_[0]->target}->source_id}
 sub source_status { $Audio::Nama::tn{$_[0]->target}->source_status }
+sub send_type { $Audio::Nama::tn{$_[0]->target}->send_type}
+sub send_id { $Audio::Nama::tn{$_[0]->target}->send_id}
 sub dir { $Audio::Nama::tn{$_[0]->target}->dir }
 
 package Audio::Nama::CacheRecTrack; # for graph generation
 our @ISA = qw(Audio::Nama::SlaveTrack Audio::Nama::Wav);
-use Audio::Nama::Object qw( 
-
-					class 			
-					n   			
-					name
-					group 			
-					rw				
-					active			
-					width			
-					ops 			
-					vol				
-					pan				
-					latency			
-					offset
-					old_vol_level	
-					old_pan_level
-					playat			
-					region_start	
-					region_end
-					modifiers		
-					looping			
-					hide			
-					source_id		
-					source_type		
-					send_id			
-					send_type
-					target			
-					project			
-					rec_defeat		
-					inserts			
-					effect_chain_stack 
-					cache_map		
-
-
-);
 sub current_version {
 	my $track = shift;
 	my $target = $Audio::Nama::tn{$track->target};
@@ -1022,106 +762,7 @@ sub current_wav {
 }
 sub full_path { my $track = shift; Audio::Nama::join_path( $track->dir, $track->current_wav) }
 
-# ---------- Group -----------
-
-package Audio::Nama::Group;
-use Modern::Perl;
-no warnings qw(uninitialized redefine);
-our $VERSION = 1.0;
-#use Exporter qw(import);
-#our @EXPORT_OK =qw(group);
-use Carp;
-use vars qw(%by_name);
-our @ISA;
-initialize();
-
-use Audio::Nama::Object qw( 	name
-					rw
-					version 
-					n	
-					);
-
-sub initialize {
-	%by_name = ();
-}
-
-sub new {
-
-	# returns a reference to an object that is indexed by
-	# name and by an assigned index
-	#
-	
-	my $class = shift;
-	my %vals = @_;
-	croak "undeclared field: @_" if grep{ ! $_is_field{$_} } keys %vals;
-	croak "name missing" unless $vals{name};
-	#(carp "group name already in use: $vals{name}\n"), 
-		return ($by_name{$vals{name}}) if $by_name{$vals{name}};
-	my $object = bless { 	
-		rw   	=> 'REC', 
-		@_ 			}, $class;
-	$by_name{ $object->name } = $object;
-	$object;
-}
-
-
-sub tracks { # returns list of track names in group 
-
-	my $group = shift;
-	my @all = Audio::Nama::Track::all;
-	# map {print "type: ", ref $_, $/} Audio::Nama::Track::all; 
-	map{ $_->name } grep{ $_->group eq $group->name } Audio::Nama::Track::all();
-}
-
-sub last {
-	$debug and say "group: @_";
-	my $group = shift;
-	my $max = 0;
-	map{ 
-		my $track = $_;
-		my $last;
-		$last = $track->last || 0;
-		#print "track: ", $track->name, ", last: $last\n";
-
-		$max = $last if $last > $max;
-
-	}	map { $Audio::Nama::Track::by_name{$_} } $group->tracks;
-	$max;
-}
-
-
-sub all { values %by_name }
-
-sub remove {
-	my $group = shift;
-	delete $by_name{$group->name};
-}
-		
-# ---------- Op -----------
-
-package Audio::Nama::Op;
-use Modern::Perl;
-no warnings qw(uninitialized redefine);
-our $VERSION = 0.5;
-our @ISA;
-use Audio::Nama::Object qw(	op_id 
-					chain_id 
-					effect_id
-					parameters
-					subcontrollers
-					parent
-					parent_parameter_target
-					
-					);
-
-
 1;
-
-# We will treat operators and controllers both as Op
-# objects. Subclassing so controller has special
-# add_op  and remove_op functions. 
-# 
-
 __END__
 
 
