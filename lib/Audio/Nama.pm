@@ -17,7 +17,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.01;
+$VERSION = 1.02;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -25,7 +25,7 @@ use autodie qw(:default);
 use Carp;
 use Cwd;
 use File::Find::Rule;
-use Audio::Nama::File::Spec::Link;
+use File::Spec::Link;
 use File::Path;
 use File::Spec;
 use File::Temp;
