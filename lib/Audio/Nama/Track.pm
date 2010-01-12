@@ -379,11 +379,12 @@ sub remove_effect { # doesn't touch %cops or %copp data structures
 }
 sub remove_insert {
 	my $track = shift;
-	if ( my $i = $track->inserts){
-		map{ $Audio::Nama::tn{$_}->remove } @{ $i->{tracks} };
-		$track->set(inserts => {});
-	}
+	return unless $track->has_insert;
+	my $i = $track->inserts;
+	map{ $Audio::Nama::tn{$_}->remove } @{ $i->{tracks} };
+	$track->set(inserts => {});
 }
+sub has_insert  { my $i = $_[0]->inserts; exists $i->{tracks} and @{ $i->{tracks} } }
 
 # remove track object and all effects
 
@@ -429,7 +430,7 @@ sub set_io {
 				$track->set($type_field => 'jack_client',
 							$id_field   => $id);
 				my $name = $track->name;
-				my $width = Audio::Nama::jack_client($id, $client_direction);
+				my $width = scalar @{ Audio::Nama::jack_client($id, $client_direction) };
 				$width or say 
 					qq($name: $direction port for JACK client "$id" not found.);
 				$width ne $track->width and say 
@@ -668,9 +669,10 @@ sub unmute {
 	$track->set(old_vol_level => 0);
 }
 
-sub ingest  { # i believe 'import' has a magical meaning
+sub import_audio  { 
 	my $track = shift;
 	my ($path, $frequency) = @_; 
+	$path = expand_tilde($path);
 	#say "path: $path";
 	my $version  = ${ $track->versions }[-1] + 1;
 	if ( ! -r $path ){
@@ -764,5 +766,3 @@ sub full_path { my $track = shift; Audio::Nama::join_path( $track->dir, $track->
 
 1;
 __END__
-
-

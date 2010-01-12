@@ -2,11 +2,20 @@
 # 
 # IO objects for writing Ecasound chain setup file
 #
-# Three ways we set object values:
+# Object values can come from three sources:
 # 
-# 1. Using the constructor new()
-# 2. Defining a method (generally clobbers constructor values)
-# 3. AUTOLOAD calling undefined methods on the associated track
+# 1. As arguments to the constructor new() while walking the
+#    routing graph:
+#      + assigned by dispatch: chain_id, loop_id, track, etc.
+#      + override by graph node (higher priority)
+#      + override by graph edge (highest priority)
+# 2. (sub)class methods called as $object->method_name
+#      + defined as _method_name (access via AUTOLOAD, overrideable by constructor)
+#      + defined as method_name  (not overrideable)
+# 3. AUTOLOAD
+#      + any other method calls are passed to the the associated track
+#      + illegal track method call generate an exception
+
 package Audio::Nama::IO;
 use Modern::Perl; use Carp;
 our $VERSION = 1.0;
@@ -48,6 +57,11 @@ sub new {
 	my $class = shift;
 	my %vals = @_;
 	my @args = map{$_."_", $vals{$_}} keys %vals; # add underscore to key 
+
+	# note that we won't check for illegal fields
+	# so we can pass any value and allow AUTOLOAD to 
+	# check the hash for it.
+	
 	bless {@args}, $class
 }
 
@@ -65,7 +79,7 @@ sub format {
 }
 #sub _direction { # allow override
 sub direction { 
-	(ref $_[0]) =~ /::from/ ? 'input' : 'output' 
+	(ref $_[0]) =~ /::from/ ? 'input' : 'output'  
 }
 sub io_prefix { substr $_[0]->direction, 0, 1 } # 'i' or 'o'
 
@@ -89,7 +103,7 @@ sub AUTOLOAD {
 sub DESTROY {}
 
 
-# The following are track-related routines that belong here
+# The following track-related routines belong here
 # because they are only used in generating chain setups.
 # They are accessed via AUTOLOAD, querying the track object
 # associated with a particular IO object
@@ -97,13 +111,13 @@ sub DESTROY {}
 # If there is no track for an object, the object must
 # provide any needed data
 
-sub mono_to_stereo { 
+sub _mono_to_stereo { 
 	my $self = shift;
 	my $file = $self->full_path;
 	if ( 	$self->width == 2 and $self->rec_status eq 'REC'
 		    or  -e $file and Audio::Nama::channels(Audio::Nama::get_format($file)) == 2){ 
 		return q(); 
-	} elsif ( ($self->width == 1 or ! $self->width) and $self->rec_status eq 'REC'
+	} elsif ( (! $self->width or $self->width == 1) and $self->rec_status eq 'REC'
 				or  -e $file and Audio::Nama::channels(Audio::Nama::get_format($file)) == 1){ 
 		return "-chcopy:1,2" 
 	} else {} # do nothing for higher channel counts
@@ -196,10 +210,14 @@ sub soundcard_output_device_string {
 }
 sub jack_multi_route {
 	my ($client, $direction, $start, $width)  = @_;
+	# can we route to these channels?
 	my $end   = $start + $width - 1;
-	$direction .= '_prefix'; # key
+	my $max = scalar @{$Audio::Nama::jack{$client}{$direction}};
+	die qq(JACK client "$client", direction: $direction
+channel ($end) is out of bounds. $max channels maximum.\n) 
+		if $end > $max;
 	join q(,),q(jack_multi),
-	map{"$client\:$Audio::Nama::jack{$client}{$direction}$_"} $start..$end
+	@{$Audio::Nama::jack{$client}{$direction}}[$start-1..$end-1];
 }
 
 ### subclass definitions
@@ -270,13 +288,13 @@ sub device_id {
 		? $io->source_id
 		: $io->send_id;
 	my $channel = 1;
-	# confusing, but the direction is with respect to the client
-	my $direction = $io->direction eq 'input' ? 'output' : 'input';
+	# we want the direction with respect to the client, i.e.  # reversed
+	my $client_direction = $io->direction eq 'input' ? 'output' : 'input';
 	if( Audio::Nama::dest_type($client) eq 'soundcard'){
 		$channel = $client;
 		$client = Audio::Nama::IO::soundcard_input_device_string(); # system, okay for output
 	}
-	Audio::Nama::IO::jack_multi_route($client,$direction,$channel,$io->width )
+	Audio::Nama::IO::jack_multi_route($client,$client_direction,$channel,$io->width )
 }
 # don't need to specify format, since we take all channels
 
@@ -324,7 +342,7 @@ sub route {
 	# routes signals (1..$width) to ($dest..$dest+$width-1 )
 	
 	my ($width, $dest) = @_;
-	return undef if $dest == 1 or ! $dest;
+	return '' if ! $dest or $dest == 1;
 	# print "route: width: $width, destination: $dest\n\n";
 	my $offset = $dest - 1;
 	my $route ;
@@ -340,4 +358,3 @@ use Modern::Perl; our @ISA = 'Audio::Nama::IO';
 
 1;
 __END__
-

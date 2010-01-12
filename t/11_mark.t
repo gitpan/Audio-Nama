@@ -20,5 +20,3 @@ map{ $sum += $_ } @face;
 is ($sum, 25, "Array assignment");
 is( $dict{fruit}, 'melon', "Hash assignment");
 is ($serialized, $expected, "Serialization round trip");
-
-

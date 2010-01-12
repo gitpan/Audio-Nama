@@ -98,7 +98,7 @@ __END__
 
 =head1 NAME
 
-Audio::Nama::Object - Class builder
+::Object - Class builder
 
 =head1 SYNOPSIS
 
@@ -116,4 +116,3 @@ Audio::Nama::Object - Class builder
   $object->set( bar => 2);
   
   print "bar is " . $object->bar . "\n";
-

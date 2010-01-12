@@ -38,7 +38,6 @@ our (
 	@effects_static_vars,	# the list of which variables to store and retrieve
 	@effects_dynamic_vars,		# same for all chain operators
 	@config_vars,    # contained in config file
-	@status_vars,    # we will dump them for diagnostic use
 	%abbreviations, # for replacements in config files
 
 	$ecasound_globals_realtime,     # .namarc field
@@ -48,7 +47,7 @@ our (
 
 
 	$default,		# the internal default configuration file, as string
-	$default_palette_yml, # not horriffic is about all I can say
+	$default_palette_yml, # default GUI colors
 					
 	$raw_to_disk_format,
 	$mix_to_disk_format,
@@ -68,8 +67,6 @@ our (
 
 	$initial_user_mode, # preview, doodle, 0, undef TODO
 	
-	$yw,			# yaml writer object
-	$yr,			# yaml reader object
 	%state_c_ops, 	# intermediate copy for storage/retrieval
 	$effects_cache_file, # where we keep info on Ecasound
 					# and LADSPA effects, presets, etc.
@@ -95,6 +92,7 @@ our (
 					 #this_wav_dir = 
 	$state_store_file,	# filename for storing @persistent_vars
 	$effect_chain_file, # for storing effect chains
+	$effect_profile_file, # for storing effect templates
 	$chain_setup_file, # Ecasound uses this 
 
 	$tk_input_channels,# this many radiobuttons appear
@@ -156,6 +154,7 @@ our (
  	$jack_system,   # jack soundcard device
 	$jack_running,  # jackd status (pid)
 	$jack_lsp,      # jack_lsp -Ap
+	$fake_jack_lsp, # for testing
 	%jack,			# jack clients data from jack_lsp
 
 	@input_chains,	# list of input chain segments 
@@ -300,38 +299,27 @@ our (
 	$sn_save_text,# text entry widget
 	$sn_save,	# button to save settings
 	$sn_recall,	# button to recall settings
-	$sn_dump,  # button to dump status
 
 	# new object core
 	
 	$main_bus, 
-	$main, # main_group
+	$main, # main group
 	$null_bus,
-    $null, # group
+    $null, # null group
 
 	%ti, # track by index (alias %Audio::Nama::Track::by_index)
 	%tn, # track by name  (alias %Audio::Nama::Track::by_name)
 
 	@tracks_data, # staging for saving
-	@bus_data,   # 
+	@bus_data,    # 
 	@groups_data, # 
-	@marks_data, # 
+	@marks_data,  # 
 
 	$alsa_playback_device,
 	$alsa_capture_device,
 
-	$main_out, # do I route audio output to soundcard?
+	$main_out, # boolean: route audio output to soundcard?
 
-	# rules
-	
-	$mon_setup,
-	$rec_file,
-	$rec_setup,
-	$aux_send,
-	$null_setup,
-
-	$send_bus_out,
-	
 	# mastering mode status
 
 	$mastering_mode,
@@ -380,6 +368,7 @@ our (
 	%cooked_record_pending, # an intermediate mixdown for tracks
 	$press_space_to_start_transport, #  in text mode
 	%effect_chain, # named effect sequences
+	%effect_profile, # effect chains for multiple tracks
 	$sock, 			# socket for Net-ECI mode
 	%versions,		# store active versions for use after engine run
 	@io, 			# accumulate IO objects for generating setup
@@ -481,6 +470,7 @@ push @ARGV, q(-E);
 
 diag("working directory: ",cwd);
 
+setup_grammar();
 process_options();
 
 prepare();
@@ -934,8 +924,8 @@ check_setup('Send bus - raw - JACK');
 
 sub gen_alsa { force_alsa(); command_process('gen')}
 sub gen_jack { force_jack(); command_process('gen')}
-sub force_alsa { $opts{A} = 1; $opts{J} = 0; jack_update(); }
-sub force_jack{ $opts{A} = 0; $opts{J} = 1; jack_update(); }
+sub force_alsa { $opts{A} = 1; $opts{J} = 0; $jack_running = 0; }
+sub force_jack{ $opts{A} = 0; $opts{J} = 1; $jack_running = 1; }
 sub setup_content {
 	my @lines = split "\n", shift;
 	my %setup;

@@ -8,19 +8,11 @@ use Carp;
 use YAML::Tiny;
 use IO::All;
 use Storable;
+use Devel::Cycle;
 
 require Exporter;
 
 our @ISA = qw(Exporter);
-
-# Items to export into callers namespace by default. Note: do not export
-# names by default without a very good reason. Use EXPORT_OK instead.
-# Do not simply export all your public functions/methods/constants.
-
-# This allows declaration	use Assign ':all';
-# If you do not need this, moving things directly into @EXPORT or @EXPORT_OK
-# will save memory.
-#
 our %EXPORT_TAGS = ( 'all' => [ qw(
 		
 		serialize
@@ -41,9 +33,7 @@ our %EXPORT_TAGS = ( 'all' => [ qw(
 
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
-our @EXPORT = qw(
-	
-);
+our @EXPORT = ();
 
 
 package Audio::Nama;
@@ -68,8 +58,7 @@ sub assign {
 		$debug and print "I found an object of class $class...\n";
 	} 
 	$class = $h{class};
- 	$class .= "\:\:" unless $class =~ /\:\:$/;; # backslashes protect
-												#from preprocessor
+ 	$class .= "::" unless $class =~ /::$/;  # SKIP_PREPROC
 	my @vars = @{ $h{vars} };
 	my $ref = $h{data};
 	my $type = ref $ref;
@@ -193,7 +182,7 @@ sub assign_vars {
 	} elsif ( ref $source ) {
 		$debug and print "found a reference\n";
 		$ref = $source;
-	} else { carp "$source: unidentified data source\n"; }
+	} else { carp "$source: missing data source\n"; }
 
 	assign(data => $ref, 
 			vars => \@vars, 
@@ -209,7 +198,7 @@ sub serialize {
 	my $class = $h{class};
 	my $file  = $h{file};
 	my $format = $h{format};
- 	$class .= "\:\:" unless $class =~ /\:\:$/;; # backslashes protect from preprocessor!
+ 	$class .= "::" unless $class =~ /::$/; # SKIP_PREPROC
 	$debug and print "file: $file, class: $class\nvariables...@vars\n";
 	my %state;
 	map{ my ($sigil, $identifier) = /(.)([\w:]+)/; 
@@ -251,6 +240,7 @@ sub serialize {
 			#$pl > io($file);
 		} elsif ($h{format} eq 'yaml'){
 			$file .= '.yml' unless $file =~ /\.yml$/;
+			find_cycle(\%state);
 			my $yaml = yaml_out(\%state);
 			$yaml > io($file);
 			$debug and print $yaml;
@@ -352,4 +342,3 @@ sub remove_spaces {
         $entry;                                                                 
 }                                                                               
 1;
-

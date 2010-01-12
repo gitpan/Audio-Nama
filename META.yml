@@ -15,6 +15,7 @@ no_index:
     - t
 requires:
   AnyEvent: 0
+  Data::Section: 0
   Event: 0
   File::Copy::Link: 0
   File::Find::Rule: 0
@@ -31,4 +32,4 @@ requires:
   YAML::Tiny: 0
   autodie: 0
   perl: 5.10.0
-version: 1.02
+version: 1.03
