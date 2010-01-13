@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.03;
+$VERSION = 1.04;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -139,18 +139,19 @@ our (
 	%iam_cmd,		# for identifying IAM commands in user input
 	@nama_commands,# array of commands my functions provide
 	%nama_commands,# as hash as well
-	$project_root,	# each project will get a directory here
-	                # and one .nama directory, also with 
-	
-					#
-					# $ENV{HOME}/.namarc
-					# $ENV{HOME}/nama/paul_brocante
-					# $ENV{HOME}/nama/paul_brocante/.wav/vocal_1.wav
-					# $ENV{HOME}/nama/paul_brocante/Store.yml
-					# $ENV{HOME}/nama/.effects_cache
-					# $ENV{HOME}/nama/paul_brocante/.namarc 
+	$project_root,	
 
-					 #this_wav_dir = 
+					# Nama directory structure and files
+
+					# ~/.namarc						# config file
+					# ~/nama/untitled				# project directory
+					# ~/nama/untitled/.wav			# wav directory
+					# ~/nama/untitled/State.yml		# project state
+					# ~/nama/untitled/Setup.ecs		# Ecasound chain setup
+					# ~/nama/.effects_cache			# static effects data
+					# ~/nama/effect_chains			# Nama effect presets
+					# ~/nama/effect_profiles		# Nama effect profiles
+
 	$state_store_file,	# filename for storing @persistent_vars
 	$effect_chain_file, # for storing effect chains
 	$effect_profile_file, # for storing effect templates
@@ -3115,7 +3116,10 @@ sub cop_add {
 
 	# set values if present
 	
-	$copp{$cop_id} = $p{values} if $p{values};
+	# ugly! The passed values ref may be used for multiple
+	# instances, so we copy it here [ @$values ]
+	
+	$copp{$cop_id} = [ @{$p{values}} ] if $p{values};
 
 	$cop_id++; # return value then increment
 }
@@ -4584,8 +4588,6 @@ sub master_on {
 
 	# create mastering tracks if needed
 	
-	# (no group membership needed)
-
 	if ( ! $tn{Eq} ){  
 	
 		my $old_track = $this_track;
@@ -4914,6 +4916,8 @@ sub new_effect_profile {
 	map { new_effect_chain($tn{$_}, private_effect_chain($profile, $_)); 
 	} @tracks;
 	$effect_profile{$profile}{tracks} = [ @tracks ];
+	save_effect_chains();
+	save_effect_profiles();
 }
 sub delete_effect_profile { 
 	$debug2 and say "&delete_effect_profile";
@@ -4981,7 +4985,8 @@ sub new_effect_chain {
 					ops 	=> \@ops,
 					type 	=> { map{$_ => $cops{$_}{type} 	} @ops},
 					params	=> { map{$_ => $copp{$_} 		} @ops},
-	}
+	};
+	save_effect_chains();
 }
 
 sub add_effect_chain {
@@ -4991,7 +4996,7 @@ sub add_effect_chain {
 		if ! $effect_chain{$name};
 	say $track->name, qq(: adding effect chain "$name") unless $name =~ /^_/;
 	my $before = $track->vol;
-	map {   $magical_cop_id = $_ unless $cops{$_}; # try to reuse cop_id
+	map {  $magical_cop_id = $_ unless $cops{$_}; # try to reuse cop_id
 		if ($before){
 			Audio::Nama::Text::t_insert_effect(
 				$before, 
@@ -5044,7 +5049,9 @@ sub cache_track {
 		target => $track->name,
 	);
 	$g->add_path( 'wav_in',$orig->name, $cooked, 'wav_out');
-	Audio::Nama::Graph::expand_graph($g); # array ref
+	map{ $_->apply() } grep{ (ref $_) =~ /Sub/ } Audio::Nama::Bus::all();
+	prune_graph();
+	Audio::Nama::Graph::expand_graph($g); 
 	Audio::Nama::Graph::add_inserts($g);
 	process_routing_graph(); 
 	write_chains();
