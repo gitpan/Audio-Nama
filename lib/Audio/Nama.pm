@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.04;
+$VERSION = 1.05;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -560,6 +560,7 @@ jack_update(); # to be polled by Event
 $memoize = 1;
 
 @mastering_track_names = qw(Eq Low Mid High Boost);
+$mastering_mode = 0;
 
 init_memoize() if $memoize;
 
@@ -4656,11 +4657,11 @@ sub add_mastering_effects {
 }
 
 sub unhide_mastering_tracks {
-	map{ $tn{$_}->set(hide => 0)} @mastering_track_names;
+	command_process("for Mastering; set hide 0");
 }
 
 sub hide_mastering_tracks {
-	map{ $tn{$_}->set(hide => 1)} @mastering_track_names;
+	command_process("for Mastering; set hide 1");
  }
 		
 # vol/pan requirements of mastering tracks
@@ -4950,31 +4951,8 @@ sub list_effect_profiles {
 		list_effect_chains("_$name:");
 	}
 }
-sub uncache { 
-	my $track = shift;
-	# skip unless MON;
-	my $cache_map = $track->cache_map;
-	my $version = $track->monitor_version;
-	if(is_cached($track)){
-		# blast away any existing effects, TODO: warn or abort	
-		say $track->name, ": removing effects (except vol/pan)" if $track->fancy_ops;
-		map{ remove_effect($_)} $track->fancy_ops;
-		$track->set(active => $cache_map->{$version}{original});
-		print $track->name, ": setting uncached version ", $track->active, $/;
-		add_effect_chain($track, $cache_map->{$version}{effect_chain});
-	} 
-	else { print $track->name, ": version $version is not cached\n"}
-}
-sub is_cached {
-	my $track = shift;
-	my $cache_map = $track->cache_map;
-	$cache_map->{$track->monitor_version}
-}
-	
 
-sub restore_effects { 
-	my $track = shift;
-	is_cached($track) ? uncache($track) : pop_effect_chain($track)}
+sub restore_effects { pop_effect_chain($_[0])}
 
 sub new_effect_chain {
 	my ($track, $name, @ops) = @_;
@@ -5034,7 +5012,7 @@ sub cleanup_exit {
 	CORE::exit; 
 }
 sub cache_track {
-	my $track = my $orig = $this_track; 
+	my $track = shift;
 	print($track->name, ": track caching requires MON status.\n\n"), 
 		return unless $track->rec_status eq 'MON';
 	print($track->name, ": no effects to cache!  Skipping.\n\n"), 
@@ -5048,7 +5026,7 @@ sub cache_track {
 		group => 'Temp',
 		target => $track->name,
 	);
-	$g->add_path( 'wav_in',$orig->name, $cooked, 'wav_out');
+	$g->add_path( 'wav_in',$track->name, $cooked, 'wav_out');
 	map{ $_->apply() } grep{ (ref $_) =~ /Sub/ } Audio::Nama::Bus::all();
 	prune_graph();
 	Audio::Nama::Graph::expand_graph($g); 
@@ -5058,14 +5036,13 @@ sub cache_track {
 	remove_temporary_tracks();
 	connect_transport('no_transport_status')
 		or say ("Couldn't connect engine! Aborting."), return;
-	say $/,$orig->name,": length ". d2($length). " seconds";
+	say $/,$track->name,": length ". d2($length). " seconds";
 	say "Starting cache operation. Please wait.";
 	eval_iam("cs-set-length $length");
 	eval_iam("start");
 	sleep 2; # time for transport to stabilize
 	while( eval_iam('engine-status') ne 'finished'){ 
 	print q(.); sleep 2; update_clock_display() } ; print " Done\n";
-	$track = $orig;
 	my $name = $track->name;
 	my @files = grep{/$name/} new_files_were_recorded();
 	if (@files ){ 
@@ -5087,11 +5064,31 @@ sub cache_track {
 		}
 		#say "cache map",yaml_out($track->cache_map);
 		say qq(Saving effects for cached track "$name".
-'replace' will restore effects and set version $orig_version\n);
+'uncache' will restore effects and set version $orig_version\n);
 		post_rec_configure();
 	} else { say "track cache operation failed!"; }
-	$this_track = $orig; # unneeded? 
 }
+sub uncache_track { 
+	my $track = shift;
+	# skip unless MON;
+	my $cache_map = $track->cache_map;
+	my $version = $track->monitor_version;
+	if(is_cached($track)){
+		# blast away any existing effects, TODO: warn or abort	
+		say $track->name, ": removing effects (except vol/pan)" if $track->fancy_ops;
+		map{ remove_effect($_)} $track->fancy_ops;
+		$track->set(active => $cache_map->{$version}{original});
+		print $track->name, ": setting uncached version ", $track->active, $/;
+		add_effect_chain($track, $cache_map->{$version}{effect_chain});
+	} 
+	else { print $track->name, ": version $version is not cached\n"}
+}
+sub is_cached {
+	my $track = shift;
+	my $cache_map = $track->cache_map;
+	$cache_map->{$track->monitor_version}
+}
+	
 sub do_script {
 	say "hello script";
 	my $name = shift;
@@ -5156,12 +5153,12 @@ sub add_insert_cooked {
 		wetness		=> 100,
 	};
 	# default to return from same JACK client or adjacent soundcard channels
+	# default to return via same system (soundcard or JACK)
 	if (! $i->{return_id}){
 		$i->{return_type} = $i->{send_type};
 		$i->{return_id} =  $i->{send_id} if $i->{return_type} eq 'jack_client';
 		$i->{return_id} =  $i->{send_id} + 2 if $i->{return_type} eq 'soundcard';
 	}
-	# default to return via same system (soundcard or JACK)
 
 	
 	$t->set(inserts => $i); 1;
@@ -5194,7 +5191,7 @@ sub add_insert_cooked {
 	$i->{dry_vol} = $dry->vol;
 	$i->{wet_vol} = $wet->vol;
 	
-	$i->{tracks} = [ map{ $_->name } ($wet, $dry) ];
+	$i->{tracks} = [ $wet->name, $dry->name ];
 	$this_track = $old_this_track;
 }
 
@@ -8304,8 +8301,8 @@ remove_insert: _remove_insert end {
 	$Audio::Nama::this_track->remove_insert;
 	1;
 }
-cache_track: _cache_track end { Audio::Nama::cache_track(); 1 }
-uncache_track: _uncache_track end { Audio::Nama::uncache(); 1 }
+cache_track: _cache_track end { Audio::Nama::cache_track($Audio::Nama::this_track); 1 }
+uncache_track: _uncache_track end { Audio::Nama::uncache_track($Audio::Nama::this_track); 1 }
 new_effect_chain: _new_effect_chain name op_id(s?) end {
 	Audio::Nama::new_effect_chain($Audio::Nama::this_track, $item{name}, @{ $item{'op_id(s?)'} });
 	1;
