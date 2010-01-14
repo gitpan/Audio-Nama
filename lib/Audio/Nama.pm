@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.05;
+$VERSION = 1.051;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -1351,6 +1351,7 @@ sub eval_iam_neteci {
 				(.+)  # rest of string
 				/sx;  # s-flag: . matches newline
 
+$debug and say "iam: $cmd";
 $debug and say "return value: $return_value
 length: $length
 type: $type
@@ -1379,6 +1380,10 @@ sub eval_iam_libecasoundc{
 	$e->errmsg('');
 	"@result";
 	#$errmsg ? undef : "@result";
+}
+sub initialize_ecasound_engine {
+	eval_iam('cs-disconnect') if eval_iam('cs-connected');
+	eval_iam('cs-remove') if eval_iam('cs-selected');
 }
 sub colonize { # convert seconds to hours:minutes:seconds 
 	my $sec = shift || 0;
@@ -1493,9 +1498,10 @@ Loading project "untitled".
 	} 
 	# we used to check each project dir for customized .namarc
 	# read_config( global_config() ); 
+	
+	initialize_ecasound_engine(); 
 	initialize_buses();	
 	initialize_project_data();
-
 	remove_small_wavs(); 
 	rememoize();
 
@@ -1511,11 +1517,14 @@ Loading project "untitled".
 			rw => 'MON',); # no dir, we won't record tracks
 
 
-		 Audio::Nama::Track->new( 
+		my $mixdown = Audio::Nama::Track->new( 
 			group => 'Mixdown', 
 			name => 'Mixdown', 
 			width => 2,
 			rw => 'MON'); 
+
+		remove_effect($mixdown->vol);
+		remove_effect($mixdown->pan);
 	}
 
 
@@ -3171,8 +3180,8 @@ sub effect_update {
 	
  	$debug and print join " ", @_, "\n";	
 
-	my $old_chain = eval_iam('c-selected');
-	eval_iam("c-select $chain");
+	my $old_chain = eval_iam('c-selected') if eval_iam('cs-selected');
+	ecasound_select_chain($chain);
 
 	# update Ecasound's copy of the parameter
 	if( is_controller($id)){
@@ -3192,7 +3201,7 @@ sub effect_update {
 		eval_iam("copp-select $param");
 		eval_iam("copp-set $val");
 	}
-	eval_iam("c-select $old_chain");
+	ecasound_select_chain($old_chain);
 }
 
 sub is_controller { my $id = shift; $cops{$id}{belongs_to} }
@@ -4085,6 +4094,14 @@ sub restore_state {
 		map { $_->{source_type} =~ s/jack_manual/jack_port/ } @tracks_data;
 	}
 
+	# make sure Master has reasonable output settings
+	
+	map{ if ( ! $_->{send_type}){
+				$_->{send_type} = 'soundcard',
+				$_->{send_id} = 1
+			}
+		} grep{$_->{name} eq 'Master'} @tracks_data;
+
 	#  destroy and recreate all groups
 
 	Audio::Nama::Group::initialize();	
@@ -4363,14 +4380,12 @@ sub command_process {
 			} elsif ($tn{$cmd}) { 
 				$debug and print qq(Selecting track "$cmd"\n);
 				$this_track = $tn{$cmd};
-				my $c = q(c-select ) . $this_track->n; 
-				eval_iam( $c ) if eval_iam( 'cs-connected' );
+				ecasound_select_chain( $this_track->n );
 				$predicate !~ /^\s*$/ and $parser->command($predicate);
 			} elsif ($cmd =~ /^\d+$/ and $ti{$cmd}) { 
 				$debug and print qq(Selecting track ), $ti{$cmd}->name, $/;
 				$this_track = $ti{$cmd};
-				my $c = q(c-select ) . $this_track->n; 
-				eval_iam( $c );
+				ecasound_select_chain( $this_track->n );
 				$predicate !~ /^\s*$/ and $parser->command($predicate);
 			} elsif ($iam_cmd{$cmd}){
 				$debug and print "Found Iam command\n";
@@ -4388,6 +4403,11 @@ sub command_process {
 	}
 	
 	$ui->refresh; # in case we have a graphic environment
+}
+sub ecasound_select_chain {
+	my $n = shift;
+	my $cmd = "c-select $n";
+	eval_iam($cmd) if eval_iam( 'cs-connected' ) =~ /$chain_setup_file/;
 }
 sub is_bunch {
 	my $name = shift;
@@ -5011,29 +5031,69 @@ sub cleanup_exit {
 	$term->rl_deprep_terminal();
 	CORE::exit; 
 }
-sub cache_track {
+
+
+{ my ($orig_version, $cooked);
+sub cache_track { # launch subparts if conditions are met
 	my $track = shift;
-	print($track->name, ": track caching requires MON status.\n\n"), 
-		return unless $track->rec_status eq 'MON';
-	print($track->name, ": no effects to cache!  Skipping.\n\n"), 
-		return unless $track->fancy_ops or $track->has_insert;
+	say $track->name, ": preparing to cache.";
+	
+	# abort warning if necessary when sub-bus mix track
+	if( $Audio::Nama::Bus::by_name{$track->name} ){ 
+		$track->rec_status ne 'OFF' or say(
+			"mix track ",$track->name, ": status is OFF. Aborting."), return;
+
+	# abort warning if necessary when normal track
+	} else { 
+		$track->rec_status eq 'MON' or say(
+			$track->name, ": track caching requires MON status. Aborting."), return;
+	}
+	say($track->name, ": no effects to cache!  Skipping."), return 
+		unless 	$track->fancy_ops 
+				or $track->has_insert
+				or $Audio::Nama::Bus::by_name{$track->name};
+
+	prepare_to_cache($track);
+	complete_caching($track);
+}
+
+sub prepare_to_cache {
+	my $track = shift;
+	my $debug = 1;
  	initialize_chain_setup_vars();
-	my $orig_version = $track->monitor_version;
-	my $cooked = $track->name . '_cooked';
+	$orig_version = $track->monitor_version;
+	$cooked = $track->name . '_cooked';
 	Audio::Nama::CacheRecTrack->new(
 		width => 2,
 		name => $cooked,
 		group => 'Temp',
 		target => $track->name,
 	);
-	$g->add_path( 'wav_in',$track->name, $cooked, 'wav_out');
+	# output path
+	$g->add_path($track->name, $cooked, 'wav_out');
+
+	# input path when $track->rec_status MON
+	$g->add_path('wav_in',$track->name) if $track->rec_status eq 'MON';
+
+	$debug and say "The graph is:\n$g";
+
+	# input paths: sub buses (significant when
+	# $track->rec_status is REC and track is a sub-bus mix track)
 	map{ $_->apply() } grep{ (ref $_) =~ /Sub/ } Audio::Nama::Bus::all();
+
+	$debug and say "The graph1 is:\n$g";
 	prune_graph();
+	$debug and say "The graph2 is:\n$g";
 	Audio::Nama::Graph::expand_graph($g); 
+	$debug and say "The graph3 is:\n$g";
 	Audio::Nama::Graph::add_inserts($g);
+	$debug and say "The graph4 is:\n$g";
 	process_routing_graph(); 
 	write_chains();
 	remove_temporary_tracks();
+}
+sub complete_caching {
+	my $track = shift;
 	connect_transport('no_transport_status')
 		or say ("Couldn't connect engine! Aborting."), return;
 	say $/,$track->name,": length ". d2($length). " seconds";
@@ -5058,7 +5118,6 @@ sub cache_track {
 			say "removing insert... ";
 			say "if you want it again you will need to replace it yourself";
 			say "this is what it was";
-			delete ${ $track->inserts }{tracks};
 			say yaml_out( $track->inserts );
 			$track->remove_insert;
 		}
@@ -5067,6 +5126,7 @@ sub cache_track {
 'uncache' will restore effects and set version $orig_version\n);
 		post_rec_configure();
 	} else { say "track cache operation failed!"; }
+}
 }
 sub uncache_track { 
 	my $track = shift;
@@ -7339,7 +7399,7 @@ remove_send:
   type: track
   short: nosend rms
   what: remove aux send
-  parameters: none  what: set auxilary track destination
+  parameters: none
 stereo:
   type: track
   what: record two channels for current track
@@ -7816,12 +7876,12 @@ list_effect_profiles:
 cache_track:
   type: track
   short: cache ct
-  what: store the effects-processed track signal as a new version
+  what: store an effects-processed track signal as a new version
   parameters: none
 uncache_track:
   type: effect
   short: uncache unc
-  what: select the uncached track version, restoring effects
+  what: select the uncached track version; restores effects (but not inserts)
   parameters: none
 do_script:
   type: general
@@ -10134,7 +10194,7 @@ C<send> <i_soundcard_channel> (3 or above) | <s_jack_client_name>
 
 =over 8
 
-C<remove_send> none  what: set auxilary track destination
+C<remove_send> 
 
 =back
 
@@ -10994,7 +11054,7 @@ C<list_effect_profiles>
 
 =head2 Track commands
 
-=head4 B<cache_track> (cache ct) - Store the effects-processed track signal as a new version
+=head4 B<cache_track> (cache ct) - Store an effects-processed track signal as a new version
 
 =over 8
 
@@ -11004,7 +11064,7 @@ C<cache_track>
 
 =head2 Effect commands
 
-=head4 B<uncache_track> (uncache unc) - Select the uncached track version, restoring effects
+=head4 B<uncache_track> (uncache unc) - Select the uncached track version; restores effects (but not inserts)
 
 =over 8
 

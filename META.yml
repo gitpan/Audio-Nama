@@ -32,4 +32,4 @@ requires:
   YAML::Tiny: 0
   autodie: 0
   perl: 5.10.0
-version: 1.05
+version: 1.051
