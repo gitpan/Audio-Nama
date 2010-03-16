@@ -57,6 +57,7 @@ our (
 
 	# .namarc mastering fields
     $mastering_effects, # apply on entering mastering mode
+	$volume_control_operator,
 	$eq, 
 	$low_pass,
 	$mid_pass,
@@ -96,7 +97,8 @@ our (
 	$effect_profile_file, # for storing effect templates
 	$chain_setup_file, # Ecasound uses this 
 
-	$tk_input_channels,# this many radiobuttons appear
+	$soundcard_channels,# channel selection range 
+	$tk_input_channels,# alias for above
 	                # on the menubutton
 	%cfg,        # 'config' information as hash
 	%devices, 		# alias to data in %cfg
@@ -110,6 +112,7 @@ our (
 	$old_this_track, # when we need to save/restore current track
 	$this_op,      # currently selected effect # future
 	$this_mark,    # current mark  # for future
+	$this_bus, 		# current bus
 
 	@format_fields, # data for replies to text commands
 
@@ -313,6 +316,8 @@ our (
 
 	@tracks_data, # staging for saving
 	@bus_data,    # 
+	@system_buses, # 
+	%is_system_bus, # 
 	@groups_data, # 
 	@marks_data,  # 
 
@@ -375,6 +380,10 @@ our (
 	@io, 			# accumulate IO objects for generating setup
 	$track_snapshots, # to save recalculating for each IO object
 	$chain_setup,	# current chain setup
+	%mute_level,	# 0 for ea as vol control, -127 for eadb
+	%fade_out_level, # 0 for ea, -40 for eadb
+	$fade_resolution, # steps per second
+	%unity_level,	# 100 for ea, 0 for eadb
 );
  
  
@@ -391,11 +400,13 @@ our (
 						$mixer_out_format
 						$alsa_playback_device
 						$alsa_capture_device	
+						$soundcard_channels
 						$project_root 	
 						$use_group_numbering
 						$press_space_to_start_transport
 						$execute_on_project_load
 						$initial_user_mode
+						$volume_control_operator
 						$mastering_effects
 						$eq 
 						$low_pass
@@ -541,6 +552,8 @@ is( $this_track->source_type, 'soundcard', "set soundcard input");
 is( $this_track->source_id,  2, "set input channel");
 
 command_process('send 5');
+
+# track sax, source 2, send 5
 
 is( $this_track->send_type, 'soundcard', 'set soundcard output');
 is( $this_track->send_id, 5, 'set soundcard output');

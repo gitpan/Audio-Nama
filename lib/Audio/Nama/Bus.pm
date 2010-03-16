@@ -1,36 +1,63 @@
 
 # ------------  Bus --------------------
+#
+# The base class Audio::Nama::Bus is now used for grouping tracks
+# serving the role of Audio::Nama::Group, which is now a 
+# parent class.
 
 package Audio::Nama::Bus;
-use Modern::Perl; use Carp; our @ISA;
+use Modern::Perl; use Carp; our @ISA = qw( Audio::Nama::Object Audio::Nama::Group );
 our $VERSION = 1.0;
 our ($debug, %by_name); 
+*debug = \$Audio::Nama::debug;
+
 use Audio::Nama::Object qw(
 					name
+					rw
+					version 
+					n	
+
 					destinations
 					send_type
 					send_id
 					class
-);
+
+					);
 sub initialize { %by_name = () };
 sub new {
 	my $class = shift;
 	my %vals = @_;
 	my @undeclared = grep{ ! $_is_field{$_} } keys %vals;
     croak "undeclared field: @undeclared" if @undeclared;
-	if (! $vals{name} or $by_name{$vals{name}}){
-		carp($vals{name},": missing or duplicate bus name. Skipping.\n");
+	if (! $vals{name}){
+		say "missing bus name"; 
+		return
+	}
+	if ( $by_name{$vals{name}} ){ 
+		say "$vals{name}: bus name already exists. Skipping.";
 		return;
 	}
 	my $bus = bless { 
 		class => $class, # for serialization, may be overridden
-		@_ }, $vals{class} // $class; # for restore
+		rw   	=> 'REC', # for group control
+		@_ }, $class;
 	$by_name{$bus->name} = $bus;
 }
 sub group { $_[0]->name }
-sub all { values %by_name };
 
 sub remove { say $_[0]->name, " is system bus. No can remove." }
+
+## class methods
+
+# sub buses, and Main
+sub all { grep{ ! $Audio::Nama::is_system_bus{$_->name} } values %by_name };
+
+sub overall_last { 
+	my $max = 0;
+	map{ my $last = $_->last; $max = $last if $last > $max  } all();
+	$max;
+}
+	
 
 ### subclasses
 
@@ -57,13 +84,10 @@ sub remove {
 	my $bus = shift;
 
 	# all tracks returned to Main group
-	map{$Audio::Nama::tn{$_}->set(group => 'Main') } $Audio::Nama::Group::by_name{$bus->name}->tracks;
+	map{$Audio::Nama::tn{$_}->set(group => 'Main') } $Audio::Nama::Bus::by_name{$bus->name}->tracks;
 
 	# remove bus mix track
 	$Audio::Nama::tn{$bus->name}->remove;
-
-	# delete group
-	$Audio::Nama::Group::by_name{$bus->name}->remove;
 
 	# remove bus
 	delete $Audio::Nama::Bus::by_name{$bus->name};
@@ -85,10 +109,7 @@ sub remove {
 	my $bus = shift;
 
 	# delete all (slave) tracks
-	map{$Audio::Nama::tn{$_}->remove } $Audio::Nama::Group::by_name{$bus->name}->tracks;
-
-	# delete group
-	$Audio::Nama::Group::by_name{$bus->name}->remove;
+	map{$Audio::Nama::tn{$_}->remove } $Audio::Nama::Bus::by_name{$bus->name}->tracks;
 
 	# remove bus
 	delete $Audio::Nama::Bus::by_name{$bus->name};

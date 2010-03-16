@@ -156,7 +156,7 @@ sub new {
 	Audio::Nama::add_pan_control($n);
 	Audio::Nama::add_volume_control($n);
 
-	#my $group = $Audio::Nama::Group::by_name{ $object->group }; 
+	#my $group = $Audio::Nama::Bus::by_name{ $object->group }; 
 
 	# create group if necessary
 	#defined $group or $group = Audio::Nama::Group->new( name => $object->group );
@@ -188,7 +188,7 @@ sub full_path { my $track = shift; join_path($track->dir, $track->current_wav) }
 
 sub group_last {
 	my $track = shift;
-	my $group = $Audio::Nama::Group::by_name{$track->group}; 
+	my $group = $Audio::Nama::Bus::by_name{$track->group}; 
 	#print join " ", 'searching tracks:', $group->tracks, $/;
 	$group->last;
 }
@@ -224,7 +224,7 @@ sub full_wav_path {
 sub current_version {	
 	my $track = shift;
 	my $last = $Audio::Nama::use_group_numbering 
-					? $track->group_last
+					? Audio::Nama::Bus::overall_last()
 					: $track->last;
 	my $status = $track->rec_status;
 	#$debug and print "last: $last status: $status\n";
@@ -236,7 +236,7 @@ sub current_version {
 sub monitor_version {
 	my $track = shift;
 
-	my $group = $Audio::Nama::Group::by_name{$track->group};
+	my $group = $Audio::Nama::Bus::by_name{$track->group};
 	return $track->active if $track->active 
 				and grep {$track->active  == $_ } @{$track->versions} ;
 	return $group->version if $group->version 
@@ -262,7 +262,7 @@ sub rec_status {
 	#my $source_id = $track->source_id;
 	my $monitor_version = $track->monitor_version;
 
-	my $group = $Audio::Nama::Group::by_name{$track->group};
+	my $group = $Audio::Nama::Bus::by_name{$track->group};
 	$debug and say join " ", "group:",$group->name, $group->rw;
 	$debug and print "track: ", $track->name, ", source: ",
 		$track->source_id, ", monitor version: $monitor_version\n";
@@ -271,7 +271,6 @@ sub rec_status {
 
 	if ( $group->rw eq 'OFF'
 		or $track->rw eq 'OFF'
-		# or $track->hide 
 		or $Audio::Nama::preview eq 'doodle' and $track->rw eq 'REC' and 
 			$Audio::Nama::duplicate_inputs{$track->name}
 	){ 	return			  'OFF' }
@@ -280,8 +279,14 @@ sub rec_status {
 	# so the result will be REC or MON if conditions are met
 
 	# second, set REC status if possible
-	
-	elsif (	$track->rw eq 'REC' and $group->rw eq 'REC') {
+
+		# we allow a mix track to be REC, even if the 
+		# bus it belongs to is set to MON
+			
+	# for null tracks
+	elsif (	$track->rw eq 'REC' and ($group->rw eq 'REC'
+				or $Audio::Nama::Bus::by_name{$track->name}
+					and $track->rec_defeat) ){
 		given( $track->source_type){
 			when('jack_client'){
 				Audio::Nama::jack_client($track->source_id,'output')
@@ -289,9 +294,11 @@ sub rec_status {
 					:  return maybe_monitor($monitor_version)
 			}
 			when('jack_port'){ return 'REC' }
+			when('null'){ return 'REC' }
 			when('soundcard'){ return 'REC' }
 			when('track'){ return 'REC' } # maybe $track->rw ??
-			default { croak $track->name. ": missing source type" }
+			default { return 'OFF' }
+			#default { croak $track->name. ": missing source type" }
 			# fall back to MON
 			#default {  maybe_monitor($monitor_version)  }
 		}
@@ -305,7 +312,7 @@ sub rec_status {
 sub rec_status_display {
 	my $track = shift;
 	my $status = $track->rec_status;
-	$track->rec_defeat ? "[$status]" : $status;
+	($track->rw eq 'REC' and $track->rec_defeat) ? "[$status]" : $status;
 }
 
 
@@ -355,7 +362,7 @@ sub input_path { # signal path, not file path
 	
 	if($track->rec_status eq 'REC'){
 
-		if ($track->source_type =~ /soundcard|jack_client|jack_port/){
+		if ($track->source_type =~ /soundcard|jack_client|jack_port|null/){
 			( Audio::Nama::input_node($track->source_type) , $track->name)
 		} 
 
@@ -421,41 +428,51 @@ sub set_io {
 	# respond to a query (no argument)
 	if ( ! $id ){ return $track->$type_field ? $track->$id_field : undef }
 
-	
+	# set null values if we receive 'off' from track send/source widgets
+	if ( $id eq 'off'){ 
+		$track->set($type_field => undef);
+		$track->set($id_field => undef);
+		say $track->name, ": disabling $direction.";
+		return;
+	}
+	if( $id eq 'jack'){
+		my $port_name = $track->name . ($direction eq 'input' ? "_in" : "_out" );
+ 		$track->set($type_field => 'jack_port',
+ 					source_id => $port_name); 
+ 		say $track->name, ": JACK $direction port is $port_name. Make connections manually.";
+ 		return;
+	} 
 	# set values, returning new setting
-	
-	given ( Audio::Nama::dest_type( $id ) ){
+	my $type = Audio::Nama::dest_type( $id );
+	given ($type){
 		when ('jack_client'){
 			if ( $Audio::Nama::jack_running ){
 				my $client_direction = $direction eq 'source' ? 'output' : 'input';
 	
-				$track->set($type_field => 'jack_client',
-							$id_field   => $id);
 				my $name = $track->name;
 				my $width = scalar @{ Audio::Nama::jack_client($id, $client_direction) };
 				$width or say 
 					qq($name: $direction port for JACK client "$id" not found.);
+				$width or return;
 				$width ne $track->width and say 
 					$track->name, ": track set to ", Audio::Nama::width($track->width),
 					qq(, but JACK source "$id" is ), Audio::Nama::width($width), '.';
-				return $track->source_id;
 			} else {
 		say "JACK server not running! Cannot set JACK client as track source.";
-				return $track->source_id;
+				return
 			} 
 		}
-
-		when('soundcard'){ 
-			$track->set( $id_field => $id, 
-						 $type_field => 'soundcard');
-			return soundcard_channel( $id )
+		when('jack_ports_list'){
+			say("$id: file not found in ",project_root(),". Skipping."), return
+				unless -e join_path( project_root(), $id );
+			# check if ports file parses
+			# warn if ports do not exist
 		}
-		when('loop'){ 
-			$track->set( $id_field => $id, 
-						 $type_field => 'loop');
-			return $id;
-		}
+	#	when('soundcard'){ }
+	#	when('loop'){ }
 	}
+	$track->set($type_field => $type);
+	$track->set($id_field => $id);
 } 
 
 sub source { # command for setting, showing track source
@@ -469,27 +486,10 @@ sub send { # command for setting, showing track source
 sub set_source { # called from parser 
 	my $track = shift;
 	my $source = shift;
-
-	#say "set source";
-	#say "track: ",$track->name;
-	#say "source: $source";
-
-# Special handling for 'null', used for non-input (i.e. metronome) tracks
-
-	if ($source eq 'null'){
-		$track->set(group => 'null');
-		return
-	}
-	if( $source eq 'jack'){
- 		$track->set(source_type => 'jack_port',
- 					source_id => $track->name);
- 		say $track->name, ": JACK input port is ",$track->source_id,"_in",
- 		". Make connections manually or set up a ports list.";
- 		return;
-	} 
-	my $old_source = $track->source;
-	my $new_source = $track->source($source);
-	my $object = $track->input_object;
+	my $old_source = $track->input_object;
+	$track->set_io('source',$source);
+	my $new_source = $track->input_object;
+	my $object = $new_source;
 	if ( $old_source  eq $new_source ){
 		print $track->name, ": input unchanged, $object\n";
 	} else {
@@ -531,13 +531,15 @@ sub object_as_text {
 	my $type_field = $direction."_type";
 	my $id_field   = $direction."_id";
 	
-	my $output;
+	my $text;
 	given ($track->$type_field){
-		when('soundcard')  { $output = "soundcard channel "}
-		when('jack_client'){ $output = "JACK client "}
-		when('loop')       { $output = "loop device "}
+		when('soundcard')  		{ $text = "soundcard channel "}
+		when('jack_client')		{ $text = "JACK client "}
+		when('loop')       		{ $text = "loop device "}
+		when('jack_ports_list') { $text = "JACK ports list "}
+		when('track') 			{ $text = "bus "}
 	}
-	$output .= $track->$id_field
+	$text .= $track->$id_field
 }
 
 sub input_object { # for text display
@@ -550,34 +552,12 @@ sub output_object {   # text for user display
 	$track->object_as_text('send');
 
 }
-sub client_status {
-	my ($track_status, $client, $direction) = @_;
-	my $type = Audio::Nama::dest_type($client);
-	if ($type eq 'loop'){
-		my ($bus) =  $client =~ /loop,(\w+)/;
-		$track_status eq 'REC' ? $bus : undef;  
-	}
-	elsif ($track_status eq 'OFF') {"[$client]"}
-	elsif ($type eq 'jack_client'){ 
-		Audio::Nama::jack_client($client, $direction) 
-			? $client 
-			: "[$client]" 
-	} elsif ($type eq 'soundcard'){ 
-		$client 
-			?  ($track_status eq 'REC' 
-				?  $client 
-				: "[$client]")
-			: undef
-	} else { q() }
-}
 sub source_status {
 	my $track = shift;
-	return if (ref $track) =~ /MasteringTrack/;
-	client_status($track->rec_status, $track->source, 'output')
-}
-sub send_status {
-	my $track = shift;
-	client_status('REC', $track->send, 'input')
+	my $id = $track->source_id;
+	return unless $id;
+	$track->rec_status eq 'REC' ? $id : "[$id]"
+	
 }
 
 sub set_rec {
@@ -639,42 +619,52 @@ sub mute {
 	package Audio::Nama;
 	my $track = shift;
 	my $nofade = shift;
-	$track or $track = $Audio::Nama::this_track;
 	# do nothing if already muted
-	return if $track->old_vol_level();
-
-	# mute if non-zero volume
-	if ( $Audio::Nama::copp{$track->vol}[0]){   
+	return if defined $track->old_vol_level();
+	if ( $Audio::Nama::copp{$track->vol}[0] != $track->mute_level
+		and $Audio::Nama::copp{$track->vol}[0] != $track->fade_out_level){   
 		$track->set(old_vol_level => $Audio::Nama::copp{$track->vol}[0]);
-		if ( $nofade ){ 
-			effect_update_copp_set( $track->vol, 0, 0  );
-		} else { 
-			fadeout( $track->vol );
-		}
+		fadeout( $track->vol ) unless $nofade;
 	}
+	$track->set_vol($track->mute_level);
 }
 sub unmute {
 	package Audio::Nama;
 	my $track = shift;
 	my $nofade = shift;
-	$track or $track = $Audio::Nama::this_track;
-
 	# do nothing if we are not muted
-#	return if $Audio::Nama::copp{$track->vol}[0]; 
-	return if ! $track->old_vol_level;
-
-	if ( $nofade ){ 
-		effect_update_copp_set($track->vol, 0, $track->old_vol_level);
-	} else { 
-		fadein( $track->vol, $track->old_vol_level);
+	return if ! defined $track->old_vol_level;
+	if ( $nofade ){
+		$track->set_vol($track->old_vol_level);
+	} 
+	else { 
+		$track->set_vol($track->fade_out_level);
+		fadein($track->vol, $track->old_vol_level);
 	}
-	$track->set(old_vol_level => 0);
+	$track->set(old_vol_level => undef);
 }
 
+sub mute_level {
+	my $track = shift;
+	$Audio::Nama::mute_level{$track->vol_type}
+}
+sub fade_out_level {
+	my $track = shift;
+	$Audio::Nama::fade_out_level{$track->vol_type}
+}
+sub set_vol {
+	my $track = shift;
+	my $val = shift;
+	Audio::Nama::effect_update_copp_set($track->vol, 0, $val);
+}
+sub vol_type {
+	my $track = shift;
+	$Audio::Nama::cops{$track->vol}->{type}
+}
 sub import_audio  { 
 	my $track = shift;
 	my ($path, $frequency) = @_; 
-	$path = expand_tilde($path);
+	$path = Audio::Nama::expand_tilde($path);
 	#say "path: $path";
 	my $version  = ${ $track->versions }[-1] + 1;
 	if ( ! -r $path ){
@@ -731,6 +721,7 @@ sub rec_status{
 	my $track = shift;
 	$Audio::Nama::mastering_mode ? 'MON' :  'OFF';
 }
+sub source_status {}
 sub group_last {0}
 sub version {0}
 
@@ -757,7 +748,7 @@ sub current_version {
 	my $target = $Audio::Nama::tn{$track->target};
 		$target->last + 1
 # 	if ($target->rec_status eq 'MON'
-# 		or $target->rec_status eq 'REC' and $Audio::Nama::Group::by_name{$track->target}){
+# 		or $target->rec_status eq 'REC' and $Audio::Nama::Bus::by_name{$track->target}){
 # 	}
 }
 sub current_wav {
@@ -765,6 +756,21 @@ sub current_wav {
 		$Audio::Nama::tn{$track->target}->name . '_' . $track->current_version . '.wav'
 }
 sub full_path { my $track = shift; Audio::Nama::join_path( $track->dir, $track->current_wav) }
-
+package Audio::Nama::MixDownTrack; 
+our @ISA = qw(Audio::Nama::Track Audio::Nama::Wav);
+sub current_version {	
+	my $track = shift;
+	my $last = $track->last;
+	my $status = $track->rec_status;
+	#$debug and print "last: $last status: $status\n";
+	if 	($status eq 'REC'){ return ++$last}
+	elsif ( $status eq 'MON'){ return $track->monitor_version } 
+	else { return 0 }
+}
+sub rec_status {
+	my $track = shift;
+	return 'REC' if $track->rw eq 'REC';
+	Audio::Nama::Track::rec_status($track);
+}
 1;
 __END__
