@@ -17,10 +17,7 @@ no warnings qw(uninitialized redefine);
 our $VERSION = 1.0;
 our ($debug);
 local $debug = 0;
-#use Exporter qw(import);
-#our @EXPORT_OK = qw(track);
 use Audio::Nama::Assign qw(join_path);
-use Audio::Nama::Wav;
 use IO::All;
 use vars qw($n %by_name @by_index %track_names %by_index @all);
 our @ISA = 'Audio::Nama::Wav';
@@ -53,6 +50,8 @@ use Audio::Nama::Object qw(
 					project			
 					rec_defeat		
 					inserts			
+					prefader_insert
+					postfader_insert
 					effect_chain_stack 
 					cache_map		
 
@@ -296,7 +295,7 @@ sub rec_status {
 			when('jack_port'){ return 'REC' }
 			when('null'){ return 'REC' }
 			when('soundcard'){ return 'REC' }
-			when('track'){ return 'REC' } # maybe $track->rw ??
+			when('bus'){ return 'REC' } # maybe $track->rw ??
 			default { return 'OFF' }
 			#default { croak $track->name. ": missing source type" }
 			# fall back to MON
@@ -312,7 +311,7 @@ sub rec_status {
 sub rec_status_display {
 	my $track = shift;
 	my $status = $track->rec_status;
-	($track->rw eq 'REC' and $track->rec_defeat) ? "[$status]" : $status;
+	($track->rw eq 'REC' and $track->rec_defeat) ? "($status)" : $status;
 }
 
 
@@ -435,6 +434,13 @@ sub set_io {
 		say $track->name, ": disabling $direction.";
 		return;
 	}
+# 	if( $id =~ /\.ports$/){
+# 		my $port_name = $track->name . ($direction eq 'input' ? "_in" : "_out" );
+#  		$track->set($type_field => 'jack_port',
+#  					source_id => $port_name); 
+#  		say $track->name, ": JACK $direction port is $port_name. Make connections manually.";
+#  		return;
+# 	} 
 	if( $id eq 'jack'){
 		my $port_name = $track->name . ($direction eq 'input' ? "_in" : "_out" );
  		$track->set($type_field => 'jack_port',
@@ -537,7 +543,7 @@ sub object_as_text {
 		when('jack_client')		{ $text = "JACK client "}
 		when('loop')       		{ $text = "loop device "}
 		when('jack_ports_list') { $text = "JACK ports list "}
-		when('track') 			{ $text = "bus "}
+		when('bus') 			{ $text = "bus "}
 	}
 	$text .= $track->$id_field
 }
@@ -697,6 +703,13 @@ sub import_audio  {
 
 sub port_name { $_[0]->target || $_[0]->name } 
 
+sub bus_tree { # for solo function to work in sub buses
+	my $track = shift;
+	my $mix = $track->group;
+	return if $mix eq 'Main';
+	($mix, $Audio::Nama::tn{$mix}->bus_tree);
+}
+
 # subclasses
 
 package Audio::Nama::SimpleTrack; # used for Master track
@@ -742,7 +755,7 @@ sub send_id { $Audio::Nama::tn{$_[0]->target}->send_id}
 sub dir { $Audio::Nama::tn{$_[0]->target}->dir }
 
 package Audio::Nama::CacheRecTrack; # for graph generation
-our @ISA = qw(Audio::Nama::SlaveTrack Audio::Nama::Wav);
+our @ISA = qw(Audio::Nama::SlaveTrack);
 sub current_version {
 	my $track = shift;
 	my $target = $Audio::Nama::tn{$track->target};
@@ -757,7 +770,7 @@ sub current_wav {
 }
 sub full_path { my $track = shift; Audio::Nama::join_path( $track->dir, $track->current_wav) }
 package Audio::Nama::MixDownTrack; 
-our @ISA = qw(Audio::Nama::Track Audio::Nama::Wav);
+our @ISA = qw(Audio::Nama::Track);
 sub current_version {	
 	my $track = shift;
 	my $last = $track->last;

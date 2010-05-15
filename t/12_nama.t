@@ -51,6 +51,7 @@ our (
 					
 	$raw_to_disk_format,
 	$mix_to_disk_format,
+	$cache_to_disk_format,
 	$mixer_out_format,
 	$execute_on_project_load, # Nama text commands 
 	$use_group_numbering, # same version number for tracks recorded together
@@ -109,7 +110,8 @@ our (
 					# implemented
 	$this_track,	 # the currently active track -- 
 					 # used by Text UI only at present
-	$old_this_track, # when we need to save/restore current track
+	$this_track_name, # for save/restore 
+	$old_this_track, # when we need to remember previous setting
 	$this_op,      # currently selected effect # future
 	$this_mark,    # current mark  # for future
 	$this_bus, 		# current bus
@@ -315,11 +317,12 @@ our (
 	%tn, # track by name  (alias %Audio::Nama::Track::by_name)
 
 	@tracks_data, # staging for saving
+	@groups_data, # obsolete
+	@marks_data,  # for storage
+	@inserts_data, # for storage
 	@bus_data,    # 
 	@system_buses, # 
 	%is_system_bus, # 
-	@groups_data, # 
-	@marks_data,  # 
 
 	$alsa_playback_device,
 	$alsa_capture_device,
@@ -384,6 +387,8 @@ our (
 	%fade_out_level, # 0 for ea, -40 for eadb
 	$fade_resolution, # steps per second
 	%unity_level,	# 100 for ea, 0 for eadb
+	
+	@ops_with_controller, # for sync-ing effect parameters
 );
  
  
@@ -397,6 +402,7 @@ our (
 						$ecasound_tcp_port
 						$mix_to_disk_format
 						$raw_to_disk_format
+						$cache_to_disk_format
 						$mixer_out_format
 						$alsa_playback_device
 						$alsa_capture_device	
@@ -436,6 +442,7 @@ our (
 						@bus_data
 						@groups_data
 						@marks_data
+						@inserts_data
 						$loop_enable
 						@loop_endpoints
 						$length
@@ -444,6 +451,7 @@ our (
 						@command_history
 						$saved_version
 						$main_out
+						$this_track_name
 						);
 					 
 # used for effects_cache 
@@ -534,9 +542,9 @@ my $test_project = 'test';
 
 load_project(name => $test_project, create => 1);
 
-is( project_dir(), "./$test_project", "establish project directory");
+#diag(map{ $_->dump} values %Audio::Nama::Track::by_index );
 
-command_process('Master; mono'); # so older tests work
+is( project_dir(), "./$test_project", "establish project directory");
 
 force_alsa();
 
@@ -564,26 +572,16 @@ my $io = Audio::Nama::IO->new(track => 'sax');
 
 like( ref $io, qr/IO$/, 'IO base class object');
 
-$io = Audio::Nama::IO::from_soundcard_device->new(track => 'sax'); 
-
-is ($io->ecs_string, '-i:alsa,default', 'IO from_soundcard_device 1');
-is ($io->ecs_extra, '-chmove:2,1 -chcopy:1,2', 'IO from_soundcard_device 2');
-
-$io = Audio::Nama::IO::from_soundcard->new(track => 'sax'); 
-
-is ($io->ecs_string, '-i:alsa,default', 'IO from_soundcard 1');
-is ($io->ecs_extra, '-chmove:2,1 -chcopy:1,2', 'IO from_soundcard 2');
-
-
 $io = Audio::Nama::IO::to_soundcard_device->new(track => 'sax'); 
 
 is ($io->ecs_string, '-o:alsa,default', 'IO to_soundcard_device 1');
-like ($io->ecs_extra, qr/-chmove:2,6 -chmove:1,5/, 'IO to_soundcard_device 2');
+is ($io->ecs_extra,  ' -chmove:1,5', 'IO to_soundcard_device 2');
 
 $io = Audio::Nama::IO::to_soundcard->new(track => 'sax'); 
 
 is ($io->ecs_string, '-o:alsa,default', 'IO to_soundcard 1');
-like ($io->ecs_extra, qr/-chmove:2,6 -chmove:1,5/, 'IO to_soundcard 2');
+is ($io->ecs_extra, ' -chmove:1,5', 'IO to_soundcard 2');
+
 
 force_jack();
 
@@ -651,7 +649,7 @@ $expected_setup_lines = <<EXPECTED;
 
 # audio outputs
 
--a:1 -o:jack_multi,system:playback_1
+-a:1 -o:jack_multi,system:playback_1,system:playback_2
 -a:3 -o:loop,Master_in
 -a:R3 -f:s16_le,1,44100,i -o:test/.wav/sax_1.wav
 
@@ -671,7 +669,7 @@ $expected_setup_lines = <<EXPECTED;
 
 # audio outputs
 
--a:1 -o:jack_multi,system:playback_1
+-a:1 -o:jack_multi,system:playback_1,system:playback_2
 -a:3 -o:loop,Master_in
 EXPECTED
 
@@ -729,7 +727,7 @@ $expected_setup_lines = <<EXPECTED;
 
 # audio outputs
 
--a:1 -o:jack_multi,system:playback_5
+-a:1 -o:jack_multi,system:playback_5,system:playback_6
 -a:3 -o:loop,Master_in
 EXPECTED
 check_setup('JACK send-Master-to-alternate-channel setup' );
@@ -749,7 +747,7 @@ $expected_setup_lines = <<EXPECTED;
 
 -a:1 -o:loop,Master_out
 -a:3 -o:loop,Master_in
--a:J1 -o:jack_multi,system:playback_5
+-a:J1 -o:jack_multi,system:playback_5,system:playback_6
 -a:Mixdown -f:s16_le,2,44100,i -o:test/.wav/Mixdown_1.wav
 EXPECTED
 
@@ -893,13 +891,13 @@ gen_jack();
 check_setup('Send bus - soundcard - JACK');
 command_process('remove_bus Vo');
 command_process('sax mono');
-command_process('add_insert_cooked 5');
+command_process('add_insert post 5');
 $expected_setup_lines = <<EXPECTED;
 
 -a:1 -i:loop,Master_in
 -a:3 -i:jack_multi,system:capture_2
 -a:4 -i:jack_multi,system:capture_7,system:capture_8
--a:J3,5 -i:loop,sax_insert
+-a:J3,5 -i:loop,sax_insert_post
 
 # post-input processing
 
@@ -908,13 +906,13 @@ $expected_setup_lines = <<EXPECTED;
 # audio outputs
 
 -a:1 -o:jack_multi,system:playback_1,system:playback_2
--a:3 -o:loop,sax_insert
+-a:3 -o:loop,sax_insert_post
 -a:4,5 -o:loop,Master_in
 -a:J3 -o:jack_multi,system:playback_5,system:playback_6
 EXPECTED
 gen_jack();
 check_setup('Insert via soundcard - JACK');
-command_process('remove_insert');
+command_process('remove_insert'); 
 command_process('add_send_bus_raw Vo 5');
 $expected_setup_lines = <<EXPECTED;
 
