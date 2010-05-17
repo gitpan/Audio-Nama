@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.055;
+$VERSION = 1.056;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -895,14 +895,20 @@ group => <<GROUP,
    list_bunches,     lb       - list groups of tracks (bunches)
    remove_bunches,   rb       - remove bunch definitions
 
-   for                        - execute commands on several tracks 
-                                by name, or by specifying a group or bunch
-                                example: for strings; vol +10
-                                example: for drumkit congas; mute
-                                example: for 3 5; vol * 1.5
-                                example: for Main; version 5;; show
-                                 (commands following ';;' execute only once)
-                
+   for                   - execute commands on several tracks 
+                           by name, or by specifying a group or bunch
+                           example: for strings; vol +10
+                           example: for drumkit congas; mute
+                           example: for 3 5; vol * 1.5
+                           example: for Main; version 5;; show
+                            (operates on all tracks in bus Main,
+                            commands following ';;' execute only once)
+                           example: for bus; version 5
+                            (operates on tracks in current bus)
+                           example: for rec; off
+                            (operates on tracks in current bus set to 'rec')
+                           example: for OFF; off
+                            (operates on tracks in current bus w/status 'OFF')
 GROUP
 
 bus => <<BUS,
@@ -7510,6 +7516,10 @@ automix:
   type: mix
   what: Normalize track vol levels, then mixdown
   parameters: none
+autofade:
+  type: mix
+  what: output a track region, defined by marks, applying fade-in and fade-out
+  parameters: <s_mark1> <s_mark2> [<f_fade_in_time> [<f_fade_out_time>]] [<s_type>]
 master_on:
   type: mix
   short: mr
@@ -8329,6 +8339,14 @@ mixplay: _mixplay end { Audio::Nama::Text::mixplay(); 1}
 mixoff:  _mixoff  end { Audio::Nama::Text::mixoff(); 1}
 automix: _automix { Audio::Nama::automix(); 1 }
 autofix_tracks: _autofix_tracks { Audio::Nama::command_process("for mon; fixdc; normalize"); 1 }
+autofade: _autofade mark1 mark2 fade_in_length fade_out_length(?) type(?)
+	{ 
+}
+mark1: ident
+mark2: ident
+fade_in_length: value 
+fade_out_length: value 
+type: /[qhtlp]/
 master_on: _master_on end { Audio::Nama::master_on(); 1 }
 master_off: _master_off end { Audio::Nama::master_off(); 1 }
 exit: _exit end {   Audio::Nama::save_state($Audio::Nama::state_store_file); 
@@ -8731,6 +8749,7 @@ command: mixdown
 command: mixplay
 command: mixoff
 command: automix
+command: autofade
 command: master_on
 command: master_off
 command: main_off
@@ -8873,6 +8892,7 @@ _mixdown: /mixdown\b/ | /mxd\b/
 _mixplay: /mixplay\b/ | /mxp\b/
 _mixoff: /mixoff\b/ | /mxo\b/
 _automix: /automix\b/
+_autofade: /autofade\b/
 _master_on: /master_on\b/ | /mr\b/
 _master_off: /master_off\b/ | /mro\b/
 _main_off: /main_off\b/
@@ -10413,6 +10433,14 @@ C<mixoff>
 =over 8
 
 C<automix> 
+
+=back
+
+=head4 B<autofade> - Output a track region, defined by marks, applying fade-in and fade-out
+
+=over 8
+
+C<autofade> <s_mark1> <s_mark2> [<f_fade_in_time> [<f_fade_out_time>]] [<s_type>]
 
 =back
 
