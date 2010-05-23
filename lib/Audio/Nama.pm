@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.056;
+$VERSION = 1.057;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -65,6 +65,7 @@ use Audio::Nama::IO;
 use Audio::Nama::Graph;
 use Audio::Nama::Wav;
 use Audio::Nama::Insert;
+use Audio::Nama::Fade;
 
 ## Definitions ##
 
@@ -384,6 +385,7 @@ our (
 	@marks_data,  # for storage
 	@inserts_data, # for storage
 	@bus_data,    # 
+	@fade_data, #
 	@system_buses, # 
 	%is_system_bus, # 
 
@@ -452,6 +454,7 @@ our (
 	%unity_level,	# 100 for ea, 0 for eadb
 	
 	@ops_with_controller, # for sync-ing effect parameters
+	$default_fade_length, 
 );
  
 
@@ -505,6 +508,7 @@ our (
 						@bus_data
 						@groups_data
 						@marks_data
+						@fade_data
 						@inserts_data
 						$loop_enable
 						@loop_endpoints
@@ -584,6 +588,7 @@ $volume_control_operator = 'ea'; # don't break Stephanie's system
 %fade_out_level = (ea => 0, 	eadb => -40);
 %unity_level 	= (ea => 100, 	eadb => 0); 
 $fade_resolution = 200; # steps per second
+$default_fade_length = 0.5;
 
 @mastering_track_names = qw(Eq Low Mid High Boost);
 $mastering_mode = 0;
@@ -4035,7 +4040,13 @@ sub save_state {
 	$debug and print "copying marks data\n";
 	map { push @marks_data, $_->hashref } Audio::Nama::Mark::all();
 
-
+	# prepare fade data for storage
+	
+	@fade_data = ();
+	while (my $k = each %Audio::Nama::Fade::by_index ){ 
+		push @fade_data, $Audio::Nama::Fade::by_index{$k}->hashref;
+	}
+	
 
 	# save history
 
@@ -4353,8 +4364,17 @@ sub restore_state {
 		my %h = %$_; 
 		my $mark = Audio::Nama::Mark->new( %h ) ;
 	} @marks_data;
+
+
 	$ui->restore_time_marks();
 	$ui->paint_mute_buttons;
+
+	# track fades
+	
+	map{ 
+		my %h = %$_; 
+		my $fade = Audio::Nama::Fade->new( %h ) ;
+	} @fade_data;
 
 
 	# restore command history
@@ -4547,9 +4567,9 @@ sub set_current_bus {
 }
 sub eval_perl {
 	my $code = shift;
-	my ($result) = eval $code;
+	my (@result) = eval $code;
 	print( "Perl command failed: $@\n") if $@;
-	pager($result) unless $@;
+	pager(join "\n", @result) unless $@;
 	print "\n";
 }	
 
@@ -4690,7 +4710,7 @@ sub automix {
 	say("Cannot perform automix if inserts are present. Skipping."), return
 		if grep{$tn{$_}->prefader_insert || $tn{$_}->postfader_insert} @tracks;
 
-	use Smart::Comments '###';
+	#use Smart::Comments '###';
 	# add -ev to summed signal
 	my $ev = add_effect( { chain => $tn{Master}->n, type => 'ev' } );
 	### ev id: $ev
@@ -6952,6 +6972,10 @@ sub show_effects {
 			map{ push @lines,
 			 	"    ".($_+1).q(. ) . $pnames[$_]->{name} . ": ".  $copp{$op_id}->[$_] . "\n";
 		 	} (0..scalar @pnames - 1);
+			map{ push @lines,
+			 	"    ".($_+1).": ".  $copp{$op_id}->[$_] . "\n";
+		 	} (scalar @pnames .. (scalar @{$copp{$op_id}} - 1)  )
+				if scalar @{$copp{$op_id}} - scalar @pnames - 1; 
 			#push @lines, join("; ", @params) . "\n";
  
  	} @{ $this_track->ops };
@@ -7273,8 +7297,8 @@ sub t_insert_effect {
 		$offset++;
 	}
 
-	# remove later ops if engine is connected
-	# this will not change the $track->cops list 
+	# remove ops after insertion point if engine is connected
+	# note that this will _not_ change the $track->ops list 
 
 	my @ops = @{$track->ops}[$offset..$#{$track->ops}];
 	$debug and print "ops to remove and re-apply: @ops\n";
@@ -7287,14 +7311,20 @@ sub t_insert_effect {
 
 	$debug and print join " ",@{$track->ops}, $/; 
 
+	# the new op_id is added to the end of the $track->ops list
+	# so we need to move it to specified insertion point
+
 	my $op = pop @{$track->ops}; 
-	# acts directly on $track, because ->ops returns 
+
+	# the above acts directly on $track, because ->ops returns 
 	# a reference to the array
 
 	# insert the effect id 
 	splice 	@{$track->ops}, $offset, 0, $op;
+
 	$debug and print join " ",@{$track->ops}, $/; 
 
+	# replace the ops that had been removed
 	if ($connected ){  
 		map{ apply_op($_, $n) } @ops;
 	}
@@ -7305,6 +7335,7 @@ sub t_insert_effect {
 		Audio::Nama::unmute();
 		$ui->start_heartbeat;
 	}
+	$op
 }
 sub t_add_effect {
 	package Audio::Nama;
@@ -7516,10 +7547,6 @@ automix:
   type: mix
   what: Normalize track vol levels, then mixdown
   parameters: none
-autofade:
-  type: mix
-  what: output a track region, defined by marks, applying fade-in and fade-out
-  parameters: <s_mark1> <s_mark2> [<f_fade_in_time> [<f_fade_out_time>]] [<s_type>]
 master_on:
   type: mix
   short: mr
@@ -8111,6 +8138,21 @@ scan:
   type: general
   what: re-read project's .wav directory
   parameters: none
+add_fade:
+  type: effect
+  short: afd fade
+  what: add a fade-in or fade-out to current track
+  parameters: in|out marks/times (see examples)
+  example: fade in mark1 (fade in default 0.5s starting at mark1)!nfade out mark2 2 (fade out over 2s starting at mark2)!nfade out 2 mark2 (fade out over 2s ending at mark2)!nfade out mark1 mark2 (fade out from mark1 to mark2) 
+remove_fade:
+  type: effect 
+  short: rfd
+  what: remove a fade from the current track
+  parameters: <i_fade_index1> [<i_fade_index2>...]
+list_fade:
+  type: effect
+  short: lfd
+  what: list fades
 ...
 
 __[grammar]__
@@ -8339,14 +8381,6 @@ mixplay: _mixplay end { Audio::Nama::Text::mixplay(); 1}
 mixoff:  _mixoff  end { Audio::Nama::Text::mixoff(); 1}
 automix: _automix { Audio::Nama::automix(); 1 }
 autofix_tracks: _autofix_tracks { Audio::Nama::command_process("for mon; fixdc; normalize"); 1 }
-autofade: _autofade mark1 mark2 fade_in_length fade_out_length(?) type(?)
-	{ 
-}
-mark1: ident
-mark2: ident
-fade_in_length: value 
-fade_out_length: value 
-type: /[qhtlp]/
 master_on: _master_on end { Audio::Nama::master_on(); 1 }
 master_off: _master_off end { Audio::Nama::master_off(); 1 }
 exit: _exit end {   Audio::Nama::save_state($Audio::Nama::state_store_file); 
@@ -8726,6 +8760,43 @@ list_effect_profiles: _list_effect_profiles end {
 	Audio::Nama::list_effect_profiles(); 1 }
 do_script: _do_script shellish end { Audio::Nama::do_script($item{shellish});1}
 scan: _scan end { print "scanning ", Audio::Nama::this_wav_dir(), "\n"; Audio::Nama::rememoize() }
+add_fade: _add_fade in_or_out mark1 duration(?)
+	{ Audio::Nama::Fade->new(  type => $item{in_or_out},
+					mark1 => $item{mark1},
+					duration => $item{'duration(?)'}->[0] 
+								|| $Audio::Nama::default_fade_length, 
+					relation => 'fade_from_mark',
+					track => $Audio::Nama::this_track->name,
+	)}
+add_fade: _add_fade in_or_out duration(?) mark1 
+	{ Audio::Nama::Fade->new(  type => $item{in_or_out},
+					mark1 => $item{mark1},
+					duration => $item{'duration(?)'}->[0] 
+								|| $Audio::Nama::default_fade_length, 
+					track => $Audio::Nama::this_track->name,
+					relation => 'fade_to_mark',
+	)}
+add_fade: _add_fade in_or_out mark1 mark2
+	{ Audio::Nama::Fade->new(  type => $item{in_or_out},
+					mark1 => $item{mark1},
+					mark2 => $item{mark2},
+					track => $Audio::Nama::this_track->name,
+	)}
+in_or_out: 'in' | 'out'
+duration: value
+mark1: ident
+mark2: ident
+remove_fade: _remove_fade fade_index  { 
+	return unless $item{fade_index};
+	print "removing fade $item{fade_index} from track "
+		.$Audio::Nama::Fade::by_index{$item{fade_index}}->track ."\n"; 
+	Audio::Nama::Fade::remove($item{fade_index}) 
+}
+fade_index: dd 
+ { if ( $Audio::Nama::Fade::by_index{$item{dd}} ){ return $item{dd}}
+   else { print ("invalid fade number: $item{dd}\n"); return 0 }
+ }
+list_fade: _list_fade {  Audio::Nama::pager(join "\n",map{$_->dump} values %Audio::Nama::Fade::by_index) }
 
 command: help
 command: help_effect
@@ -8749,7 +8820,6 @@ command: mixdown
 command: mixplay
 command: mixoff
 command: automix
-command: autofade
 command: master_on
 command: master_off
 command: main_off
@@ -8870,6 +8940,9 @@ command: cache_track
 command: uncache_track
 command: do_script
 command: scan
+command: add_fade
+command: remove_fade
+command: list_fade
 _help: /help\b/ | /h\b/
 _help_effect: /help_effect\b/ | /hfx\b/ | /he\b/
 _find_effect: /find_effect\b/ | /ffx\b/ | /fe\b/
@@ -8892,7 +8965,6 @@ _mixdown: /mixdown\b/ | /mxd\b/
 _mixplay: /mixplay\b/ | /mxp\b/
 _mixoff: /mixoff\b/ | /mxo\b/
 _automix: /automix\b/
-_autofade: /autofade\b/
 _master_on: /master_on\b/ | /mr\b/
 _master_off: /master_off\b/ | /mro\b/
 _main_off: /main_off\b/
@@ -9013,6 +9085,9 @@ _cache_track: /cache_track\b/ | /cache\b/ | /ct\b/
 _uncache_track: /uncache_track\b/ | /uncache\b/ | /unc\b/
 _do_script: /do_script\b/ | /do\b/
 _scan: /scan\b/
+_add_fade: /add_fade\b/ | /afd\b/ | /fade\b/
+_remove_fade: /remove_fade\b/ | /rfd\b/
+_list_fade: /list_fade\b/ | /lfd\b/
 __[chain_op_hints_yml]__
 ---
 -
@@ -10436,14 +10511,6 @@ C<automix>
 
 =back
 
-=head4 B<autofade> - Output a track region, defined by marks, applying fade-in and fade-out
-
-=over 8
-
-C<autofade> <s_mark1> <s_mark2> [<f_fade_in_time> [<f_fade_out_time>]] [<s_type>]
-
-=back
-
 =head4 B<master_on> (mr) - Enter mastering mode. Add tracks Eq, Low, Mid, High and Boost if necessary
 
 =over 8
@@ -11513,6 +11580,42 @@ C<do_script> <s_filename>
 =over 8
 
 C<scan> 
+
+=back
+
+=head2 Effect commands
+
+=head4 B<add_fade> (afd fade) - Add a fade-in or fade-out to current track
+
+=over 8
+
+C<add_fade> in|out marks/times (see examples)
+
+C<fade in mark1 (fade in default 0.5s starting at mark1)>
+
+C<fade out mark2 2 (fade out over 2s starting at mark2)>
+
+C<fade out 2 mark2 (fade out over 2s ending at mark2)>
+
+C<fade out mark1 mark2 (fade out from mark1 to mark2)>
+
+
+
+=back
+
+=head4 B<remove_fade> (rfd) - Remove a fade from the current track
+
+=over 8
+
+C<remove_fade> <i_fade_index1> [<i_fade_index2>...]
+
+=back
+
+=head4 B<list_fade> (lfd) - List fades
+
+=over 8
+
+C<list_fade> 
 
 =back
 

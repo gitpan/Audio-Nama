@@ -32,6 +32,7 @@ use Audio::Nama::Object qw(
 					ops 			
 					vol				
 					pan				
+					fader			
 					latency			
 					offset			
 					old_vol_level	

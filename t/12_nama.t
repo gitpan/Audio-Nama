@@ -321,6 +321,7 @@ our (
 	@marks_data,  # for storage
 	@inserts_data, # for storage
 	@bus_data,    # 
+	@fade_data, #
 	@system_buses, # 
 	%is_system_bus, # 
 
@@ -389,6 +390,7 @@ our (
 	%unity_level,	# 100 for ea, 0 for eadb
 	
 	@ops_with_controller, # for sync-ing effect parameters
+	$default_fade_length, 
 );
  
  
@@ -442,6 +444,7 @@ our (
 						@bus_data
 						@groups_data
 						@marks_data
+						@fade_data
 						@inserts_data
 						$loop_enable
 						@loop_endpoints
