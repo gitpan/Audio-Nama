@@ -263,7 +263,7 @@ sub rec_status {
 	my $monitor_version = $track->monitor_version;
 
 	my $group = $Audio::Nama::Bus::by_name{$track->group};
-	$debug and say join " ", "group:",$group->name, $group->rw;
+	#$debug and say join " ", "bus:",$group->name, $group->rw;
 	$debug and print "track: ", $track->name, ", source: ",
 		$track->source_id, ", monitor version: $monitor_version\n";
 
@@ -336,7 +336,10 @@ sub playat_time {
 
 sub fancy_ops { # returns list 
 	my $track = shift;
-	grep{ $_ ne $track->vol and $_ ne $track->pan } @{ $track->ops }
+	grep{ 		$_ ne $track->vol 
+			and $_ ne $track->pan 
+			and (! $track->fader or $_ ne $track->fader) 
+	} @{ $track->ops }
 }
 		
 sub snapshot {

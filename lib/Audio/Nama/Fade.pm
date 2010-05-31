@@ -141,11 +141,11 @@ sub remove { # supply index
 	if ( ! @track_fades ){ 
 
 		# make sure the fader operator is _on_
-		Audio::Nama::effect_update_copp_set( $track->fader, 0, $on_level );
+		#Audio::Nama::effect_update_copp_set( $track->fader, 0, $on_level );
 
 		# remove fader entirely
-		# remove_effect($track->$fader);
-		# $Audio::Nama::tn{$fade->track}->set(fade => undef);
+		Audio::Nama::remove_effect($track->fader);
+		$Audio::Nama::tn{$fade->track}->set(fader => undef);
 	}
 	else { refresh_fade_controller($track) }
 }
