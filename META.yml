@@ -4,7 +4,7 @@ author:
   - 'Joel Roth, <joelz@pobox.com>'
 distribution_type: module
 generated_by: 'Module::Install version 0.79'
-license: gpl
+license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: 1.4
@@ -32,4 +32,6 @@ requires:
   YAML::Tiny: 0
   autodie: 0
   perl: 5.10.0
-version: 1.058
+resources:
+  license: http://dev.perl.org/licenses/
+version: 1.059
