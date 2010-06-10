@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.061;
+$VERSION = 1.062;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -6935,7 +6935,7 @@ sub show_versions {
 			"All versions: ". join(" ", 
 				map { $_ . ( $cache_map->{$_} and 'c') } @{$this_track->versions}
 			). $/
-		} 
+		} else {}
 }
 
 
