@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.062;
+$VERSION = 1.063;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -34,9 +34,9 @@ use autodie qw(:default);
 use Carp;
 use Cwd;
 use File::Find::Rule;
-use File::Spec::Link;
 use File::Path;
 use File::Spec;
+use File::Spec::Link;
 use File::Temp;
 use Getopt::Long;
 use IO::All;
@@ -202,8 +202,11 @@ our (
 	@mastering_effect_ids,        # effect ids for mastering mode
 
 	@effects,		# static effects information (parameters, hints, etc.)
-	%effect_i,		# an index , pn:amp -> effect number
-	%effect_j,      # an index , amp -> effect number
+	%effect_i,		# pn:preset_name -> effect number
+	                # el:ladspa_label -> effect number
+	
+	%effect_j,      # preset_name -> pn:preset_name
+	                # ladspa_label -> el:ladspa_label
 	@effects_help,  # one line per effect, for text search
 
 	@ladspa_sorted, # ld
@@ -1079,7 +1082,7 @@ sub prepare {
 
 	poll_jack() unless $opts{J} or $opts{A};
 
-	initialize_terminal();
+	initialize_terminal() unless $opts{T};
 
 	# set default project to "untitled"
 	
@@ -1276,6 +1279,7 @@ sub process_options {
 		fake-ecasound				E
 		debugging-output			D
 		execute-command=s			X
+		no-terminal					T
 );
 
 	map{$opts{$_} = ''} values %options;
@@ -1318,6 +1322,7 @@ Debugging options:
 --fake-alsa, -A                  Simulate ALSA environment
 --no-ecasound, -E                Don't spawn Ecasound process
 --execute-command, -X            Supply a command to execute
+--no-terminal, -T				 Don't initialize terminal
 
 HELP
 
@@ -1332,12 +1337,14 @@ HELP
 	if ( ! $opts{t} and can_load( modules => { Tk => undef } ) ){ 
 		$ui = Audio::Nama::Graphical->new;
 	} else {
+		say "Unable to load perl Tk module. Starting in console mode." if $opts{g};
 		$ui = Audio::Nama::Text->new;
 		can_load( modules =>{ Event => undef})
 			or die "Perl Module 'Event' not found. Please install it and try again. Stopping.";
 ;
 		import Event qw(loop unloop unloop_all);
 	}
+	
 	can_load( modules => {AnyEvent => undef})
 			or die "Perl Module 'AnyEvent' not found. Please install it and try again. Stopping.";
 
@@ -1404,17 +1411,18 @@ sub eval_iam_neteci {
 				(.+)  # rest of string
 				/sx;  # s-flag: . matches newline
 
-$debug and say "iam: $cmd";
-$debug and say "return value: $return_value
+$debug and say "ECI command: $cmd";
+$debug and say "Ecasound reply: ", substr($buf,0,256); # first 256 characters
+$debug and say qq(return value: $return_value
 length: $length
 type: $type
-reply: $reply";
+reply: $reply);
 
 	$return_value == 256 or die "illegal return value, stopped" ;
 	$reply =~ s/\s+$//; 
 
 	given($type){
-		when ('e'){ warn $reply }
+		when ('e'){ carp $reply }
 		default{ return $reply }
 	}
 
@@ -1428,15 +1436,12 @@ sub eval_iam_libecasoundc{
 	my (@result) = $e->eci($command);
 	$debug and print "result: @result\n" unless $command =~ /register/;
 	my $errmsg = $e->errmsg();
-	# $errmsg and carp("IAM WARN: ",$errmsg), 
-	# not needed ecasound prints error on STDOUT
-	$e->errmsg('');
+	if( $errmsg ){
+		$e->errmsg(''); 
+		# ecasound already prints error on STDOUT
+		# carp "ecasound reports an error:\n$errmsg\n"; 
+	}
 	"@result";
-	#$errmsg ? undef : "@result";
-}
-sub initialize_ecasound_engine {
-	eval_iam('cs-disconnect') if eval_iam('cs-connected');
-	eval_iam('cs-remove') if eval_iam('cs-selected');
 }
 sub colonize { # convert seconds to hours:minutes:seconds 
 	my $sec = shift || 0;
@@ -1450,46 +1455,70 @@ sub colonize { # convert seconds to hours:minutes:seconds
 }
 
 ## configuration file
+
 { # OPTIMIZATION
-my %proot; 
-sub project_root { $proot{$project_root} ||= 
-		File::Spec::Link->resolve_all(expand_tilde($project_root))}
+
+  # we allow for the (admitted rare) possibility that
+  # $project_root may change
+
+my %proot;
+sub project_root { 
+	$proot{$project_root} ||= resolve_path($project_root)
+}
 }
 
 sub config_file { $opts{f} ? $opts{f} : ".namarc" }
+
 { # OPTIMIZATION
 my %wdir; 
 sub this_wav_dir {
 	$project_name and
-	$wdir{$project_name} ||= File::Spec::Link->resolve_all(
+	$wdir{$project_name} ||= resolve_path(
 		join_path( project_root(), $project_name, q(.wav) )  
 	);
 }
 }
 
-sub project_dir  {$project_name and join_path( project_root(), $project_name) }
-
-sub expand_tilde { my $path = shift; $path =~ s/~/$ENV{HOME}/; $path }
+sub project_dir {$project_name and join_path( project_root(), $project_name) }
 
 
-sub global_config{
-print ("reading config file $opts{f}\n"), return io( $opts{f})->all if $opts{f} and -r $opts{f};
-my @search_path = (project_dir(), $ENV{HOME}, project_root() );
-my $c = 0;
-	map{ 
-#print $/,++$c,$/;
-			if (-d $_) {
-				my $config = join_path($_, config_file());
-				#print "config: $config\n";
-				if( -f $config ){ 
-					my $yml = io($config)->all ;
-					return $yml;
+sub global_config {
+
+	# return text of config file, in the following order
+	# or priority:
+	#
+	# 1. the file designated by the -f command line argument
+	# 2. .namarc in the current project directory, i.e. ~/nama/untitled/.namarc
+	# 3. .namarc in the home directory, i.e. ~/.namarc
+	# 4. .namarc in the project root directory, i.e. ~/nama/.namarc
+	if( $opts{f} ){
+		print ("reading config file $opts{f}\n");
+		return read_file($opts{f});
+	}
+	my @search_path = (project_dir(), $ENV{HOME}, project_root() );
+	my $c = 0;
+		map{ 
+				if (-d $_) {
+					my $config = join_path($_, config_file());
+					if( -f $config or -l $config){ 
+						say "Found config file: $config";
+						my $yml = read_file($config);
+						return $yml;
+					}
 				}
-			}
-		} ( @search_path) 
+			} ( @search_path) 
 }
 
+# sub global_config {
+# 	io( join_path($ENV{HOME}, config_file()))->all;
+# }
+
 sub read_config {
+
+	# read and process the configuration file
+	#
+	# use the embedded default file if none other is present
+	
 	$debug2 and print "&read_config\n";
 	
 	my $config = shift;
@@ -1501,6 +1530,7 @@ sub read_config {
 	walk_tree(\%cfg); # second pass completes substitutions
 	assign_var( \%cfg, @config_vars);
 	$project_root = $opts{d} if $opts{d};
+	$project_root = expand_tilde($project_root);
 
 }
 sub walk_tree {
@@ -1552,7 +1582,7 @@ Loading project "untitled".
 	# we used to check each project dir for customized .namarc
 	# read_config( global_config() ); 
 	
-	initialize_ecasound_engine(); 
+	teardown_engine(); # initialize_ecasound_engine; 
 	initialize_buses();	
 	initialize_project_data();
 	remove_small_wavs(); 
@@ -1650,6 +1680,9 @@ sub jack_running {
 						and ($pid) = /(\d+)/
 						and grep{ $pid == $_ } @pids 
 				} split "\n", qx(ps ax) ;
+}
+sub valid_engine_setup {
+	eval_iam("cs-selected") and eval_iam("cs-is-valid");
 }
 sub engine_running {
 	eval_iam("engine-status") eq "running"
@@ -2056,7 +2089,10 @@ sub add_paths_for_recording {
 		$g->add_path(input_node($_->source_type), $name, 'wav_out');
 
 		# set chain_id to R3 (if original track is 3) 
-		$g->set_vertex_attributes($name, { chain_id => 'R'.$_->n });
+		$g->set_vertex_attributes($name, { 
+			chain_id => 'R'.$_->n,
+			mono_to_stereo => '', # override 
+		});
 
 	} @tracks;
 }
@@ -2343,12 +2379,15 @@ sub load_ecs {
 		#say "setup file: $setup " . ( -e $setup ? "exists" : "");
 		return unless -e $setup;
 		#say "passed conditional";
-		eval_iam("cs-disconnect") if eval_iam("cs-connected");
-		eval_iam("cs-remove") if eval_iam("cs-selected");
+		teardown_engine();
 		eval_iam("cs-load $setup");
 		eval_iam("cs-select $setup"); # needed by Audio::Ecasound, but not Net-ECI !!
 		$debug and map{eval_iam($_)} qw(cs es fs st ctrl-status);
 		1;
+}
+sub teardown_engine {
+		eval_iam("cs-disconnect") if eval_iam("cs-connected");
+		eval_iam("cs-remove") if eval_iam("cs-selected");
 }
 
 sub arm {
@@ -2462,7 +2501,7 @@ sub reconfigure_engine {
 	print STDOUT Audio::Nama::Text::show_tracks(Audio::Nama::Track::all()) ;
 	if ( generate_setup() ){
 		#say "I generated a new setup";
-		print STDOUT Audio::Nama::Text::show_tracks_extra_info();
+		Audio::Nama::Text::show_status();
 		connect_transport();
 # 		eval_iam("setpos $old_pos") if $old_pos; # temp disable
 # 		start_transport() if $was_running and ! $will_record;
@@ -2532,7 +2571,7 @@ sub connect_transport {
 	$debug2 and print "&connect_transport\n";
 	my $no_transport_status = shift;
 	load_ecs() or say("No chain setup, engine not ready."), return;
-	eval_iam("cs-selected") and	eval_iam("cs-is-valid")
+	valid_engine_setup()
 		or say("Invalid chain setup, engine not ready."),return;
 	find_op_offsets(); 
 	eval_iam('cs-connect');
@@ -2655,12 +2694,12 @@ sub transport_status {
 				: " " ),
 				$/;
 	}
-	say "Engine is ready.";
-	print "setup length is ", d1($length), 
+	print "Setup length is:  ", d1($length), 
 		($length > 120	?  " (" . colonize($length). ")" : "" )
 		,$/;
-	print "now at ", colonize( eval_iam( "getpos" )), $/;
-	print "\nPress SPACE to start or stop engine.\n\n"
+	say "Now at ", colonize( eval_iam( "getpos" ));
+	say "Engine is ready.";
+	say "\nPress SPACE to start or stop engine.\n"
 		if $press_space_to_start_transport;
 	#$term->stuff_char(10); 
 }
@@ -2706,7 +2745,7 @@ sub transport_running { eval_iam('engine-status') eq 'running'  }
 
 sub disconnect_transport {
 	return if transport_running();
-		eval_iam("cs-disconnect") if eval_iam("cs-connected");
+	teardown_engine();
 }
 
 sub start_heartbeat {
@@ -2937,7 +2976,7 @@ sub add_effect {
 	$id = cop_add(\%p); 
 	%p = ( %p, cop_id => $id); # replace chainop id
 	$ui->add_effect_gui(\%p) unless $ti{$n}->hide;
-	if( eval_iam('cs-selected') and eval_iam('cs-is-valid') ){
+	if( valid_engine_setup() ){
 		my $er = engine_running();
 		$ti{$n}->mute if $er;
 		apply_op($id);
@@ -3043,9 +3082,13 @@ sub ecasound_effect_index {
 
 
 sub remove_op {
+	# remove chain operator from Ecasound engine
 
 	$debug2 and print "&remove_op\n";
+
+	# only if engine is configured
 	return unless eval_iam('cs-connected') and eval_iam('cs-is-valid');
+
 	my $id = shift;
 	my $n = $cops{$id}->{chain};
 	my $index;
@@ -3222,11 +3265,11 @@ sub effect_update {
 	# referred to by a Nama operator_id
 	
 	#$debug2 and print "&effect_update\n";
-	my $valid_setup = eval_iam("cs-selected") and eval_iam("cs-is-valid");
-	return unless $valid_setup;
-	my $es = eval_iam("engine-status");
-	$debug and print "engine is $es\n";
-	return if $es !~ /not started|stopped|running/;
+
+	return unless valid_engine_setup();
+	#my $es = eval_iam("engine-status");
+	#$debug and print "engine is $es\n";
+	#return if $es !~ /not started|stopped|running/;
 
 	my ($id, $param, $val) = @_;
 	$param++; # so the value at $p[0] is applied to parameter 1
@@ -3241,7 +3284,7 @@ sub effect_update {
 
  	$debug and print join " ", @_, "\n";	
 
-	my $old_chain = eval_iam('c-selected') if eval_iam('cs-selected');
+	my $old_chain = eval_iam('c-selected') if valid_engine_setup();
 	ecasound_select_chain($chain);
 
 	# update Ecasound's copy of the parameter
@@ -5230,8 +5273,8 @@ sub list_effect_chains {
 sub cleanup_exit {
  	remove_small_wavs();
  	kill 15, ecasound_pid() if $sock;  	
-	$term->rl_deprep_terminal();
-	CORE::exit; 
+	$term->rl_deprep_terminal() unless $opts{T};
+	exit; 
 }
 
 
@@ -5381,9 +5424,11 @@ sub is_cached {
 }
 	
 sub do_script {
-	say "hello script";
+
 	my $name = shift;
 	my $file;
+	# look in project_dir() and project_root()
+	# if filename provided does not contain slash
 	if( $name =~ m!/!){ $file = $name }
 	else {
 		$file = join_path(project_dir(),$name);
@@ -5391,7 +5436,7 @@ sub do_script {
 		else{ $file = join_path(project_root(),$name) }
 	}
 	-e $file or say("$file: file not found. Skipping"), return;
-	my @lines = split "\n",io($file)->all;
+	my @lines = split "\n",read_file($file);
 	my $old_opt_r = $opts{R};
 	$opts{R} = 1; # turn off auto reconfigure
 	for my $input (@lines) { process_line($input)};
@@ -5429,9 +5474,10 @@ sub user_rec_tracks { some_user_tracks('REC') }
 sub user_mon_tracks { some_user_tracks('MON') }
 
 sub ecasound_get_info {
+	# get information about an audio object
+	
 	my ($path, $command) = @_;
-	eval_iam('cs-disconnect') if eval_iam('cs-connected');
-	eval_iam('cs-remove') if eval_iam('cs-selected');
+	teardown_engine();
 	eval_iam('cs-add gl');
 	eval_iam('c-add g');
 	eval_iam('ai-add ' . $path);
@@ -5439,8 +5485,7 @@ sub ecasound_get_info {
 	eval_iam('cs-connect');
 	eval_iam('ai-select '. $path);
 	my $result = eval_iam($command);
-	eval_iam('cs-disconnect');
-	eval_iam('cs-remove');
+	teardown_engine();
 	$result;
 }
 sub get_length { 
@@ -5456,6 +5501,9 @@ sub freq { [split ',', $_[0] ]->[2] }  # e.g. s16_le,2,44100
 
 sub channels { [split ',', $_[0] ]->[1] }
 	
+	
+	
+
 
 ### end
 
@@ -6998,19 +7046,26 @@ sub show_region {
 }
 
 sub show_status {
-	my @fields;
-	push @fields, $main->rw eq 'REC' 
-					? "live input allowed" 
-					: "live input disabled";
-	push @fields, "record" if grep{ ! /Mixdown/ } Audio::Nama::really_recording();
-	push @fields, "playback" if grep { $_->rec_status eq 'MON' } 
+	print "\n";
+	my @modes;
+	push @modes, $preview if $preview;
+	push @modes, "master" if $mastering_mode;
+	say   "Modes settings:   ", join(", ", @modes) if @modes;
+	my @actions;
+	push @actions, "record" if grep{ ! /Mixdown/ } Audio::Nama::really_recording();
+	push @actions, "playback" if grep { $_->rec_status eq 'MON' } 
 		map{ $tn{$_} } $main->tracks, q(Mixdown);
-	push @fields, "mixdown" 
-		if $tn{Mixdown}->rec_status eq 'REC';
-	push @fields, "doodle" if $preview eq 'doodle';
-	push @fields, "preview" if $preview eq 'preview';
-	push @fields, "master" if $mastering_mode;
-	"[ ". join(", ", @fields) . " ]\n";
+
+	# We only check Main bus for playback. 
+	# sub-buses will route their playback signals through the 
+	# Main bus, however it may be that sub-bus mixdown
+	# tracks are set to REC (with rec-to-file disabled)
+	
+	push @actions, "mixdown" if $tn{Mixdown}->rec_status eq 'REC';
+	say "Pending actions:  ", join(", ", @actions) if @actions;
+	say "Main bus allows:  ", $main->allows, " track status";
+	say "Main bus version: ",$Audio::Nama::main->version if $Audio::Nama::main->version;
+	say "Audio output is:  ", $main_out ? "ON" : "OFF";
 }
 sub placeholder { 
 	my $val = shift;
@@ -7059,16 +7114,6 @@ sub show_tracks {
 	$output;
 }
 
-}
-
-sub show_tracks_extra_info {
-
-	my $string;
-	$string .= $/. "Global version setting: ".  $Audio::Nama::main->version. $/
-		if $Audio::Nama::main->version;
-	$string .=  $/. Audio::Nama::Text::show_status();
-	$string .=  $/;	
-	$string;
 }
 
 
@@ -7152,35 +7197,43 @@ IAM
 	
 }
 sub help_effect {
-	my $input = shift;
-	print "input: $input\n";
+	my ($input, $id, $no_match, @output);
+	$id = $input = shift;
+	push @output, "\n";
+
 	# e.g. help tap_reverb    
 	#      help 2142
 	#      help var_chipmunk # preset
 
+	# convert digits to LADSPA label
 
-	if ($input !~ /\D/){ # all digits
-		$input = $ladspa_label{$input}
-			or print("$input: effect not found.\n\n"), return;
-	}
-	elsif ( my $id = $ladspa_unique_id{$input} ){$input = $ladspa_label{$id} }
-	if ( $effect_i{$input} ) {} # do nothing
-	elsif ( $effect_j{$input} ) { $input = $effect_j{$input} }
-	else { print("$input: effect not found.\n\n"), return }
-	if ($input =~ /pn:/) {
-		print grep{ /$input/  } @effects_help;
-	}
-	elsif ( $input =~ /el:/) {
+	if ($id !~ /\D/){ $id = $ladspa_label{$id} or $no_match++ } 
+
+	# convert ladspa_label to el:ladspa_label
+	# convert preset_name  to pn:preset_name
 	
-	my @output = $ladspa_help{$input};
-	print "label: $input\n";
-	Audio::Nama::pager( @output );
-	#print $ladspa_help{$input};
-	} else { 
-	print "$input: Ecasound effect. Type 'man ecasound' for details.\n";
-	}
-}
+	if ($effect_i{$id}){} # we are ready
+	elsif ( $effect_j{$id} ) { $id = $effect_j{$id} }
+	else { $no_match++ }
 
+	# one-line help for Ecasound presets
+	
+	if ($id =~ /pn:/) {
+		push @output, grep{ /$id/  } @effects_help;
+	}
+
+	# full help for LADSPA plugins
+	
+	elsif ( $id =~ /el:/) {
+		@output = $ladspa_help{$id};
+	} else { 
+		@output = qq("$id" is an Ecasound chain operator.
+Type 'man ecasound' at a shell prompt for details.);
+	}
+
+	if( $no_match ){ print "No effects were found matching: $input\n\n"; }
+	else { Audio::Nama::pager(@output) }
+}
 
 sub find_effect {
 	my @keys = @_;
@@ -7202,7 +7255,7 @@ sub find_effect {
 # 
 # EFFECT
 	Audio::Nama::pager( $text_wrap->paragraphs(@matches) , "\n" );
-	} else { print "No matching effects.\n\n" }
+	} else { print join " ", "No effects were found matching:",@keys,"\n\n" }
 }
 
 

@@ -138,8 +138,11 @@ our (
 	@mastering_effect_ids,        # effect ids for mastering mode
 
 	@effects,		# static effects information (parameters, hints, etc.)
-	%effect_i,		# an index , pn:amp -> effect number
-	%effect_j,      # an index , amp -> effect number
+	%effect_i,		# pn:preset_name -> effect number
+	                # el:ladspa_label -> effect number
+	
+	%effect_j,      # preset_name -> pn:preset_name
+	                # ladspa_label -> el:ladspa_label
 	@effects_help,  # one line per effect, for text search
 
 	@ladspa_sorted, # ld
@@ -478,7 +481,7 @@ our (
 
 # defeat namarc detection to force using $default namarc
 
-push @ARGV, qw(-f dummy);
+push @ARGV, qw(-f /dev/null);
 
 # set text mode (don't start gui)
 
@@ -492,6 +495,10 @@ push @ARGV, qw(-d .);
 
 push @ARGV, q(-E);
 
+# don't initialize terminal
+
+push @ARGV, q(-T);
+
 diag("working directory: ",cwd);
 
 setup_grammar();
@@ -499,8 +506,8 @@ process_options();
 
 prepare();
 diag "Check representative variable from default .namarc";
-is ( $Audio::Nama::mix_to_disk_format, "s16_le,N,44100,i", "Read mix_to_disk_format");
 
+is ( $Audio::Nama::mix_to_disk_format, "s16_le,N,44100,i", "Read mix_to_disk_format");
 =skip
 # Ecasound dependent
 diag "Check static effects data read";
@@ -625,7 +632,7 @@ $expected_setup_lines = <<EXPECTED;
 
 # post-input processing
 
--a:R3 -chmove:2,1 -chcopy:1,2
+-a:R3 -chmove:2,1
 -a:3 -chmove:2,1 -chcopy:1,2
 
 # audio outputs
@@ -648,7 +655,6 @@ $expected_setup_lines = <<EXPECTED;
 
 # post-input processing
 
--a:R3 -chcopy:1,2
 -a:3 -chcopy:1,2
 
 # audio outputs
@@ -966,7 +972,6 @@ sub cleanup {
 		rmdir './untitled/.wav';
 		rmdir './untitled';
 		unlink './.effects_cache';
-		$term->rl_deprep_terminal();
 }
 
 cleanup();
