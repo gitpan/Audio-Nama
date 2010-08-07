@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.063;
+$VERSION = 1.064;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -4548,6 +4548,9 @@ sub process_line {
 sub command_process {
 	my $input = shift;
 	my $input_was = $input;
+
+	# parse repeatedly until all input is consumed
+	
 	while ($input =~ /\S/) { 
 		$debug and say "input: $input";
 		$parser->meta(\$input) or print("bad command: $input_was\n"), last;
@@ -8193,7 +8196,8 @@ meta: for bunch_spec ';' namacode stopper {
 	1;
 }
 bunch_spec: text 
-meta: text semicolon(?) { $Audio::Nama::parser->do_part($item{text}) }
+meta: nosemi(s /\s*;\s*/) semicolon(?) 
+nosemi: text { $Audio::Nama::parser->do_part($item{text}) }
 text: /[^;]+/ 
 semicolon: ';'
 do_part: track_spec command
