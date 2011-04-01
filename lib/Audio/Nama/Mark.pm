@@ -6,22 +6,28 @@ use Carp;
 use warnings;
 no warnings qw(uninitialized);
 our @ISA;
-use vars qw($n %by_name @all  %used_names);
+use vars qw($n %by_name @all);
 use Audio::Nama::Object qw( 
 				 name 
                  time
 				 active
 				 );
-@all = ();	
-%by_name = ();	# return ref to Mark by name
-%used_names = (); 
 
+sub initialize {
+	map{ $_->remove} Audio::Nama::Mark::all();
+	@all = ();	
+	%by_name = ();	# return ref to Mark by name
+	@Audio::Nama::marks_data = (); # for save/restore
+}
 sub new {
 	my $class = shift;	
 	my %vals = @_;
 	croak "undeclared field: @_" if grep{ ! $_is_field{$_} } keys %vals;
-	croak  "name already in use: $vals{name}\n"
-		 if $used_names{$vals{name}}; # null name returns false
+
+	# to support set_edit_points, we now allow marks to be overwritten
+	#
+	#croak  "name already in use: $vals{name}\n"
+	#	 if $by_name{$vals{name}}; # null name returns false
 	
 	my $object = bless { 
 
@@ -34,7 +40,6 @@ sub new {
 
 	#print "object class: $class, object type: ", ref $object, $/;
 	if ($object->name) {
-		$used_names{$vals{name}}++;
 		$by_name{ $object->name } = $object;
 	}
 	push @all, $object;
@@ -53,7 +58,6 @@ sub set_name {
 	}
 	else {
 		$mark->set(name => $name);
-		$used_names{$name}++;
 		$by_name{ $name } = $mark;
 	}
 }
@@ -63,11 +67,16 @@ sub jump_here {
 	Audio::Nama::eval_iam( "setpos " . $mark->time);
 	$Audio::Nama::this_mark = $mark;
 }
+sub adjusted_time {  # for marks within current edit
+	my $mark = shift;
+	return $mark->time unless $Audio::Nama::offset_run_flag;
+	my $time = $mark->time - Audio::Nama::play_start_time();
+	$time > 0 ? $time : 0
+}
 sub remove {
 	my $mark = shift;
 	if ( $mark->name ) {
 		delete $by_name{$mark->name};
-		delete $used_names{$mark->name};
 	}
 	$Audio::Nama::debug and warn "marks found: ",scalar @all, $/;
 	# @all = (), return if scalar @all
@@ -85,7 +94,7 @@ sub previous {
 
 # -- Class Methods
 
-sub all { sort { $a->time <=> $b->time }@all }
+sub all { sort { $a->{time} <=> $b->{time} }@all }
 
 sub loop_start { 
 	my @points = sort { $a <=> $b } 
@@ -98,7 +107,7 @@ sub loop_end {
 		grep{ $_ } map{ mark_time($_)} @Audio::Nama::loop_endpoints[0,1];
 	$points[1];
 }
-sub mark_time {
+sub unadjusted_mark_time {
 	my $tag = shift;
 	$tag or $tag = '';
 	#print "tag: $tag\n";
@@ -116,8 +125,13 @@ sub mark_time {
 	return undef if ! defined $mark;
 	#print "mark time: ", $mark->time, $/;
 	return $mark->time;
-		
 }
-
+sub mark_time {
+	my $tag = shift;
+	my $time = unadjusted_mark_time($tag);
+	return unless defined $time;
+	$time -= Audio::Nama::play_start_time() if Audio::Nama::edit_mode();
+	$time
+}
 	
 1;

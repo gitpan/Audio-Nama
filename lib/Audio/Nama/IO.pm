@@ -34,13 +34,39 @@ our %io_class = qw(
 	wav_out 				Audio::Nama::IO::to_wav
 	loop_source				Audio::Nama::IO::from_loop
 	loop_sink				Audio::Nama::IO::to_loop
-	jack_port_in			Audio::Nama::IO::from_jack_port
-	jack_port_out 			Audio::Nama::IO::to_jack_port
+	jack_manual_in			Audio::Nama::IO::from_jack_port
+	jack_manual_out			Audio::Nama::IO::to_jack_port
+	jack_ports_list_in		Audio::Nama::IO::from_jack_port
+	jack_ports_list_out		Audio::Nama::IO::to_jack_port
 	jack_multi_in			Audio::Nama::IO::from_jack_multi
 	jack_multi_out			Audio::Nama::IO::to_jack_multi
 	jack_client_in			Audio::Nama::IO::from_jack_client
 	jack_client_out			Audio::Nama::IO::to_jack_client
 	);
+
+### class descriptions
+
+# === CLASS Audio::Nama::IO::from_jack_port ===
+#
+# is triggered by source_type codes: 
+#
+#  + jack_manual_in 
+#  + jack_ports_list_in
+#
+# For track 'piano', the class creates an input similar to:
+#
+# -i:jack,,piano_in 
+#
+# which receives input from JACK node: 
+#
+#  + ecasound:piano_in,
+# 
+# If piano is stereo, the actual ports will be:
+#
+#  + ecasound:piano_in_1
+#  + ecasound:piano_in_2
+
+# (CLASS Audio::Nama::IO::to_jack_port is similar)
 
 ### class definition
 
@@ -105,91 +131,44 @@ sub AUTOLOAD {
 sub DESTROY {}
 
 
-# The following track-related routines belong here
+# The following methods were moved here from the Track class
 # because they are only used in generating chain setups.
-# They are accessed via AUTOLOAD, querying the track object
-# associated with a particular IO object
+# They retain $track as the $self variable.
 
-# If there is no track for an object, the object must
-# provide any needed data
+sub _mono_to_stereo{
 
-sub _mono_to_stereo { 
-	my $self = shift;
-	my $file = $self->full_path;
-	if ( 	$self->width == 2 and $self->rec_status eq 'REC'
-		    or  -e $file and Audio::Nama::channels(Audio::Nama::get_format($file)) == 2){ 
-		return q(); 
-	} elsif ( (! $self->width or $self->width == 1) and $self->rec_status eq 'REC'
-				or  -e $file and Audio::Nama::channels(Audio::Nama::get_format($file)) == 1){ 
-		return "-chcopy:1,2" 
-	} else {} # do nothing for higher channel counts
+	# Truth table
+
+	#REC status, Track width stereo: null
+	#REC status, Track width mono:   chcopy
+	#MON status, WAV width mono:   chcopy
+	#MON status, WAV width stereo: null
+	#Higher channel count (WAV or Track): null
+
+	my $self   = shift;
+	my $status = $self->rec_status();
+	my $copy   = "-chcopy:1,2";
+	my $nocopy = "";
+	my $is_mono_track = sub { $self->width == 1 };
+	my $is_mono_wav   = sub { Audio::Nama::channels(Audio::Nama::wav_format($self->full_path)) == 1};
+	if  (      $status eq 'REC' and $is_mono_track->()
+			or $status eq 'MON' and $is_mono_wav->() )
+		 { $copy }
+	else { $nocopy }
 }
-sub soundcard_input { 
-	[Audio::Nama::IO::soundcard_input_type_string(), $_[0]->source_id()]
-}
-sub source_input {
+sub _playat_output {
 	my $track = shift;
-	given ( $track->source_type ){
-		when ( 'soundcard'  ){ return $track->soundcard_input }
-		when ( 'jack_client'){
-			if ( $Audio::Nama::jack_running ){ return ['jack_client_in', $track->source_id] }
-			else { 	say($track->name. ": cannot set source ".$track->source_id
-				.". JACK not running."); return [] }
-		}
-		when ( 'loop'){ return ['loop_source',$track->source_id ] } 
-		when ('jack_port'){
-			if ( $Audio::Nama::jack_running ){ return ['jack_port_in', $track->source_id] }
-			else { 	say($track->name. ": cannot set source ".$track->source_id
-				.". JACK not running."); return [] }
-		}
-		default { say $track->name, ": unsupported source type: $_"; return [] }
-	}
+	return unless $track->adjusted_playat_time;
+	join ',',"playat" , $track->adjusted_playat_time;
 }
-
-sub source_type_string { $_[0]->source_input()->[0] }
-sub source_device_string { $_[0]->source_input()->[1] }
-sub send_output {
+sub _select_output {
 	my $track = shift;
-	given ($track->send_type){
-		when ( 'soundcard' ){ 
-			if ($Audio::Nama::jack_running) {
-				return ['jack_multi_out', 'system']
-			} else {return [ 'soundcard_device_out', $track->send_id] }
-		}
-		when ('jack_client') { 
-			if ($Audio::Nama::jack_running){return [ 'jack_client_out', $track->send_id] }
-			else { carp $track->name . 
-					q(: auxilary send to JACK client specified,) .
-					q( but jackd is not running.  Skipping.);
-					return [];
-			}
-		}
-		when ('loop') { return [ 'loop_sink', $track->send_id ] }
-			
-		default { return [] }
-	}
- };
-
-sub send_type_string { $_[0]->send_output()->[0] }
-sub send_device_string { $_[0]->send_output()->[1] }
-sub playat_output {
-	my $track = shift;
-	if ( $track->playat_time ){
-		join ',',"playat" , $track->playat_time;
-	}
+	my $start = $track->adjusted_region_start_time;
+	my $end   = $track->adjusted_region_end_time;
+	return unless defined $start and defined $end;
+	my $length = $end - $start;
+	join ',',"select", $start, $length
 }
-
-sub select_output {
-	my $track = shift;
-	if ( $track->region_start and $track->region_end){
-		my $end = $track->region_end_time;
-		my $start = $track->region_start_time;
-		my $length = $end - $start;
-		join ',',"select", $start, $length
-	}
-}
-
-
 ###  utility subroutines
 
 sub get_class {
@@ -210,22 +189,44 @@ sub soundcard_input_device_string {
 sub soundcard_output_device_string {
 	$Audio::Nama::jack_running ? 'system' : $Audio::Nama::alsa_playback_device
 }
+
 sub jack_multi_route {
 	my ($client, $direction, $start, $width)  = @_;
 	# can we route to these channels?
 	my $end   = $start + $width - 1;
-	my $max = scalar @{$Audio::Nama::jack{$client}{$direction}};
+
+	# the following logic avoids deferencing undef for a 
+	# non-existent client, and correctly handles
+	# the case of a portname (containing colon)
+	
+	my $count_maybe_ref = $Audio::Nama::jack{$client}{$direction};
+	my $max = ref $count_maybe_ref eq 'ARRAY' 
+		? scalar @$count_maybe_ref 
+		: $count_maybe_ref;
+
+	#my $max = scalar @{$Audio::Nama::jack{$client}{$direction}};
 	die qq(JACK client "$client", direction: $direction
 channel ($end) is out of bounds. $max channels maximum.\n) 
 		if $end > $max;
 	join q(,),q(jack_multi),
-	@{$Audio::Nama::jack{$client}{$direction}}[$start-1..$end-1];
+	map{quote_jack_port($_)}
+		@{$Audio::Nama::jack{$client}{$direction}}[$start-1..$end-1];
 }
+sub default_jack_ports_list {
+	my ($track_name) = shift;
+	"$track_name.ports"
+}
+sub quote_jack_port {
+	my $port = shift;
+	($port =~ /\s/ and $port !~ /^"/) ? qq("$port") : $port
+}
+
 
 ### subclass definitions
 
-### we add an underscore _ to any method name that
-### we want to override
+### method names with a preceding underscore 
+### can be overridded by the object constructor
+
 package Audio::Nama::IO::from_null;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub _device_id { 'null' } # 
@@ -276,11 +277,6 @@ sub new {
 	my $class = $io_class{Audio::Nama::IO::soundcard_output_type_string()};
 	$class->new(@_);
 }
-package Audio::Nama::IO::from_jack_client;
-use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub device_id { 'jack,'.$_[0]->source_device_string}
-sub ecs_extra { $_[0]->mono_to_stereo}
-
 package Audio::Nama::IO::to_jack_multi;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub device_id { 
@@ -316,15 +312,12 @@ sub ecs_extra { $_[0]->mono_to_stereo }
 
 package Audio::Nama::IO::to_jack_client;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub device_id { 
-	my $io = shift;
-	my $client = $io->direction eq 'input' 
-		? $io->source_id
-		: $io->send_id;
-	"jack,$client"
-}
+sub device_id { "jack," . Audio::Nama::IO::quote_jack_port($_[0]->send_id); }
+
 package Audio::Nama::IO::from_jack_client;
-use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO::to_jack_client';
+use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
+sub device_id { 'jack,'.  Audio::Nama::IO::quote_jack_port($_[0]->source_id); }
+sub ecs_extra { $_[0]->mono_to_stereo}
 
 package Audio::Nama::IO::from_soundcard_device;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';

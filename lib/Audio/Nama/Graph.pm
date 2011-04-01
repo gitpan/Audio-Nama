@@ -9,6 +9,7 @@ use vars qw(%reserved $debug $debug2);
 *debug = \$Audio::Nama::debug;
 *debug2 = \$Audio::Nama::debug2;
 
+{
 my %seen;
 
 sub expand_graph {
@@ -44,12 +45,6 @@ sub expand_graph {
 	}
 	
 }
-sub add_path {
-	my @nodes = @_;
-	$debug and say "adding path: ", join " ", @nodes;
-	$Audio::Nama::g->add_path(@nodes);
-}
-sub add_edge { add_path(@_) }
 	
 sub add_inserts {
 	my $g = shift;
@@ -150,11 +145,11 @@ sub add_loop {
  		my $attr = $g->get_edge_attributes($a,$_);
  		$debug and say "deleting edge: $a-$_";
  		$g->delete_edge($a,$_);
-		add_edge($loop, $_);
+		$g->add_edge($loop, $_);
 		$g->set_edge_attributes($loop,$_, $attr) if $attr;
 		$seen{"$a-$_"}++;
  	} $g->successors($a);
-	add_edge($a,$loop);
+	$g->add_edge($a,$loop);
 }
  
 
@@ -169,20 +164,18 @@ sub add_far_side_loop {
  		my $attr = $g->get_edge_attributes($_,$b);
  		$debug and say "deleting edge: $_-$b";
  		$g->delete_edge($_,$b);
-		add_edge($_,$loop);
+		$g->add_edge($_,$loop);
 		$g->set_edge_attributes($_,$loop, $attr) if $attr;
 		$seen{"$_-$b"}++;
  	} $g->predecessors($b);
-	add_edge($loop,$b);
+	$g->add_edge($loop,$b);
 }
 
+}
 
 sub in_loop{ "$_[0]_in" }
 sub out_loop{ "$_[0]_out" }
-#sub is_a_track{ $Audio::Nama::tn{$_[0]} }
-sub is_a_track{ return unless $_[0] !~ /_(in|out)$/;}
-# $debug and say "$_[0] is a track"; 1
-#}
+sub is_a_track{ $Audio::Nama::tn{$_[0]} }  # most reliable
 sub is_terminal { $reserved{$_[0]} }
 sub is_a_loop{
 	my $name = shift;
@@ -200,25 +193,39 @@ sub inputless_tracks {
 	my $g = shift;
 	(grep{ is_a_track($_) and $g->is_source_vertex($_) } $g->vertices)
 }	
-sub remove_inputless_tracks {
+sub remove_out_of_bounds_tracks {
 	my $g = shift;
-	while(my @i = Audio::Nama::Graph::inputless_tracks($g)){
-		map{ 	$g->delete_edges(map{@$_} $g->edges_from($_));
-				$g->delete_vertex($_);
-		} @i;
+	my @names = $g->successors('wav_in');  # MON status tracks
+	map{ remove_tracks($g, $_) } 
+	grep{
+		Audio::Nama::set_edit_vars($Audio::Nama::tn{$_});
+		Audio::Nama::edit_case() =~ /out_of_bounds/
+	} @names;
+}
+
+sub recursively_remove_inputless_tracks {
+	my $g = shift;
+	# make multiple passes if necessary
+	while(my @i = inputless_tracks($g)){
+		remove_tracks($g, @i);
 	}
 }
 sub outputless_tracks {
 	my $g = shift;
 	(grep{ is_a_track($_) and $g->is_sink_vertex($_) } $g->vertices)
 }	
-sub remove_outputless_tracks {
+sub recursively_remove_outputless_tracks {
 	my $g = shift;
-	while(my @i = Audio::Nama::Graph::outputless_tracks($g)){
-		map{ 	$g->delete_edges(map{@$_} $g->edges_to($_));
-				$g->delete_vertex($_);
-		} @i;
+	while(my @i = outputless_tracks($g)){
+		remove_tracks($g, @i);
 	}
+}
+sub remove_tracks {
+	my ($g, @names) = @_;
+		map{ 	$g->delete_edges(map{@$_} $g->edges_from($_));
+				$g->delete_edges(map{@$_} $g->edges_to($_));
+				$g->delete_vertex($_);
+		} @names;
 }
 		
 1;
@@ -235,7 +242,7 @@ If we are to record the input, we need:
 
 	sax -> wav_out
 
-If we add an instrument monitor for the sax player, we need:
+If we add an instrument monitor on a separate channel for the sax player, we need:
 
 	sax -> soundcard_out
 
@@ -244,14 +251,13 @@ must fan out or fan in.
 
 	soundcard_in -> sax -> sax_out -> Master -> soundcard_out
 
-	sax_out -> wav_out
+	                       sax_out -> wav_out
 
-	sax_out -> soundcard_out
+	                       sax_out -> soundcard_out
 
 Here 'sax_out' is a loop device.
 
-Though there are more complicated additions, such as inserts,
-they must follow these same rules.
+All routing functions follow these rules.
 
 We then process each edge to generate a line for the Ecasound chain setup
 file.
@@ -260,10 +266,11 @@ Master -> soundcard_out is easy to process, because the track
 Master knows what it's outputs should be.
 
 The edge sax_out -> soundcard_out, an auxiliary send, needs to know its
-associated track, as well as the chain_id, the identifier for the Ecasound
-chain corresponding to this edge.
+associated track, the chain_id (identifier for the Ecasound
+chain corresponding to this edge) and in the final step
+the soundcard channel number.
 
-We provide this information as edge attributes.
+We can provide this information as edge attributes.
 
 We also allow vertexes, for example a track or loop device, to carry data is
 well, for example to tell the dispatcher to override the 

@@ -2,8 +2,16 @@
 abstract: ~
 author:
   - 'Joel Roth, <joelz@pobox.com>'
+build_requires:
+  ExtUtils::MakeMaker: 6.42
+configure_requires:
+  ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.79'
+generated_by: 'Module::Install version 1.00'
+keywords:
+  - audio
+  - recording
+  - mixing
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -14,16 +22,19 @@ no_index:
     - inc
     - t
 requires:
-  AnyEvent: 5
+  AnyEvent: 5.0
   Data::Section: 0
   Event: 0
+  File::Copy: 0
   File::Copy::Link: 0
   File::Find::Rule: 0
   File::HomeDir: 0
+  File::Slurp: 0
   File::Temp: 0
   Graph: 0
-  IO::All: 0
+  IO::Select: 0
   IO::Socket: 0
+  IPC::Open3: 0
   Modern::Perl: 0
   Module::Load::Conditional: 0
   Parse::RecDescent: 0
@@ -35,4 +46,5 @@ requires:
   perl: 5.10.0
 resources:
   license: http://dev.perl.org/licenses/
-version: 1.064
+  repository: https://github.com/bolangi/nama
+version: 1.07

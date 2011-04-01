@@ -6,9 +6,9 @@ use warnings;
 no warnings q(uninitialized);
 use Carp;
 use YAML::Tiny;
-use IO::All;
+use File::Slurp;
 use File::HomeDir;
-use Storable;
+use Storable qw(nstore retrieve);
 #use Devel::Cycle;
 
 require Exporter;
@@ -29,9 +29,9 @@ our %EXPORT_TAGS = ( 'all' => [ qw(
 		strip_blank_lines
 		strip_comments
 		remove_spaces
-		read_file
 		expand_tilde
 		resolve_path
+		quote_yaml_scalars
 ) ] );
 
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
@@ -170,7 +170,7 @@ sub assign_vars {
 				$ref = yaml_in($source);
 		} elsif ( $source =~ /\.pl$/i or $format eq 'perl'){
 				$debug and print "found a perl file: $source\n";
-				my $code = io($source)->all ;
+				my $code = read_file($source);
 				$ref = eval $code or carp "$source: eval failed: $@\n";
 		} else {
 				$debug and print "assuming Storable file: $source\n";
@@ -236,16 +236,16 @@ sub serialize {
 	if ( $h{file} ) {
 
 		if ($h{format} eq 'storable') {
-			my $result1 = store \%state, $file; # old method
+			my $result1 = nstore \%state, $file; # old method
 		} elsif ($h{format} eq 'perl'){
 			$file .= '.pl' unless $file =~ /\.pl$/;
 			#my $pl = dump \%state;
-			#$pl > io($file);
+			#write_file($file, $pl);
 		} elsif ($h{format} eq 'yaml'){
 			$file .= '.yml' unless $file =~ /\.yml$/;
 			#find_cycle(\%state);
 			my $yaml = yaml_out(\%state);
-			$yaml > io($file);
+			write_file($file, $yaml);
 			$debug and print $yaml;
 		}
 	} else { yaml_out(\%state) }
@@ -274,7 +274,7 @@ sub yaml_in {
 	my $input = shift;
 	my $yaml = $input =~ /\n/ # check whether file or text
 		? $input 			# yaml text
-		: io($input)->all;	# file name
+		: read_file($input);	# file name
 	if ($yaml =~ /\t/){
 		croak "YAML file: $input contains illegal TAB character.";
 	}
@@ -372,10 +372,24 @@ sub expand_tilde {
 	($home/)x;
 	$path
 }
-sub read_file {
-	my $path = shift;
-	$path = resolve_path($path);
-	io($path)->all;
+sub quote_yaml_scalars {
+	my $yaml = shift;
+	my @modified;
+	map
+		{  
+		chomp;
+		if( /^(?<beg>(\s*\w+: )|(\s+- ))(?<end>.+)$/ ){
+			my($beg,$end) = ($+{beg}, $+{end});
+			# quote if contains colon and not quoted
+			if ($end =~ /:\s/ and $end !~ /^('|")/ ){ 
+				$end =~ s(')(\\')g; # escape existing single quotes
+				$end = qq('$end') } # single-quote string
+			push @modified, "$beg$end\n";
+		}
+		else { push @modified, "$_\n" }
+	} split "\n", $yaml;
+	join "", @modified;
 }
+	
 
 1;

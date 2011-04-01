@@ -1,483 +1,31 @@
+# to initialize the environment, we
+
+# 1. use Audio::Nama (pull in the whole application)
+
+# 2. set the current namespace to Audio::Nama 
+#    (so we can put both hands in abdominal cavity)
+
+# 3. declare variables by including the declarations blocks of Nama.pm
+
 package Audio::Nama;
 use Test::More qw(no_plan);
+use Audio::Nama::Assign qw(yaml_in yaml_out);
 use strict;
 use warnings;
 no warnings qw(uninitialized);
 our ($expected_setup_lines);
 use Cwd;
 
+our (
+	$main,
+	$this_track,
+	%opts,
+	$jack_running,
+);
+
 BEGIN { use_ok('Audio::Nama') };
 
 diag ("TESTING $0\n");
-
-our (
-
-    # 'our' means these variables will be accessible, without
-	# package qualifiers, to all packages inhabiting 
-	# the same file.
-	#
-	# this allows us to bring our variables from 
-    # procedural core into Audio::Nama::Graphical and Audio::Nama::Text
-	# packages. 
-	
-	# it didn't work out to be as helpful as i'd like
-	# because the grammar requires package path anyway
-
-	$banner,
-	$help_screen, 		# 
-	@help_topic,    # array of help categories
-	%help_topic,    # help text indexed by topic
-	$use_pager,     # display lengthy output data using pager
-	$use_placeholders,  # use placeholders in show_track output
-	$text_wrap,          # Text::Format object
-
-	$ui, # object providing class behavior for graphic/text functions
-
-	@persistent_vars, # a set of variables we save
-					  	# as one big config file
-	@effects_static_vars,	# the list of which variables to store and retrieve
-	@effects_dynamic_vars,		# same for all chain operators
-	@config_vars,    # contained in config file
-	%abbreviations, # for replacements in config files
-
-	$ecasound_globals_realtime,     # .namarc field
-	$ecasound_globals_default,  # .namarc field
-	$ecasound_tcp_port,  # for Ecasound NetECI interface
-	$saved_version, # copy of $VERSION saved with settings in State.yml
-
-
-	$default,		# the internal default configuration file, as string
-	$default_palette_yml, # default GUI colors
-					
-	$raw_to_disk_format,
-	$mix_to_disk_format,
-	$cache_to_disk_format,
-	$mixer_out_format,
-	$execute_on_project_load, # Nama text commands 
-	$use_group_numbering, # same version number for tracks recorded together
-
-	# .namarc mastering fields
-    $mastering_effects, # apply on entering mastering mode
-	$volume_control_operator,
-	$eq, 
-	$low_pass,
-	$mid_pass,
-	$high_pass,
-	$compressor,
-	$spatialiser,
-	$limiter,
-
-	$initial_user_mode, # preview, doodle, 0, undef TODO
-	
-	%state_c_ops, 	# intermediate copy for storage/retrieval
-	$effects_cache_file, # where we keep info on Ecasound
-					# and LADSPA effects, presets, etc.
-	
-	$ecasound, 		# the name to invoke when we want to kill ecasound
-
-	$grammar, 		# filled by Grammar.pm
-	$parser,		# for the objected created by Parse::RecDescent
-	%iam_cmd,		# for identifying IAM commands in user input
-	@nama_commands,# array of commands my functions provide
-	%nama_commands,# as hash as well
-	$project_root,	
-
-					# Nama directory structure and files
-
-					# ~/.namarc						# config file
-					# ~/nama/untitled				# project directory
-					# ~/nama/untitled/.wav			# wav directory
-					# ~/nama/untitled/State.yml		# project state
-					# ~/nama/untitled/Setup.ecs		# Ecasound chain setup
-					# ~/nama/.effects_cache			# static effects data
-					# ~/nama/effect_chains			# Nama effect presets
-					# ~/nama/effect_profiles		# Nama effect profiles
-
-	$state_store_file,	# filename for storing @persistent_vars
-	$effect_chain_file, # for storing effect chains
-	$effect_profile_file, # for storing effect templates
-	$chain_setup_file, # Ecasound uses this 
-
-	$soundcard_channels,# channel selection range 
-	$tk_input_channels,# alias for above
-	                # on the menubutton
-	%cfg,        # 'config' information as hash
-	%devices, 		# alias to data in %cfg
-	%opts,          # command line options
-	%oid_status,    # state information for the chain templates
-	$use_monitor_version_for_mixdown, # sync mixdown version numbers
-	              	# to selected track versions , not
-					# implemented
-	$this_track,	 # the currently active track -- 
-					 # used by Text UI only at present
-	$this_track_name, # for save/restore 
-	$old_this_track, # when we need to remember previous setting
-	$this_op,      # currently selected effect # future
-	$this_mark,    # current mark  # for future
-	$this_bus, 		# current bus
-
-	@format_fields, # data for replies to text commands
-
-	$project,		# variable for GUI text input
-	$project_name,	# current project name
-	%state_c,		# for backwards compatilility
-
-	### for effects
-
-	$cop_id, 		# chain operator id, that how we create, 
-					# store, find them, adjust them, and destroy them,
-					# per track or per project?
-	$magical_cop_id, # cut through five levels of subroutines
-	%cops,			 # chain operators stored here
-	%copp,			# their parameters for effect update
-	%copp_exp,      # for log-scaled sliders
-
-# auxiliary track information - saving not required
-
-	%offset,        # index by chain, offset for user-visible effects 
-	@mastering_effect_ids,        # effect ids for mastering mode
-
-	@effects,		# static effects information (parameters, hints, etc.)
-	%effect_i,		# pn:preset_name -> effect number
-	                # el:ladspa_label -> effect number
-	
-	%effect_j,      # preset_name -> pn:preset_name
-	                # ladspa_label -> el:ladspa_label
-	@effects_help,  # one line per effect, for text search
-
-	@ladspa_sorted, # ld
-	%effects_ladspa, # parsed data from analyseplugin 
-	%effects_ladspa_file, 
-					# get plugin filename from Plugin Unique ID
-	%ladspa_unique_id, 
-					# get plugin unique id from plugin label
-	%ladspa_label,  # get plugin label from unique id
-	%ladspa_help,   # plugin_label => analyseplugin output
-	$e,				# the name of the variable holding
-					# the Ecasound engine object.
-					
-	%e_bound,		# for displaying hundreds of effects in groups
-	$unit,			# jump multiplier, 1 or 60 seconds
-	%old_vol,		# a copy of volume settings, for muting
-	$length,		# maximum duration of the recording/playback if known
- 	$jack_system,   # jack soundcard device
-	$jack_running,  # jackd status (pid)
-	$jack_lsp,      # jack_lsp -Ap
-	$fake_jack_lsp, # for testing
-	%jack,			# jack clients data from jack_lsp
-
-	@input_chains,	# list of input chain segments 
-	@output_chains, # list of output chain segments
-	@post_input,	# post-input chain operators
-	@pre_output, 	# pre-output chain operators
-
-	%subst,			# alias, substitutions for the config file
-	$tkeca_effects_data,	# original tcl code, actually
-
-	### Widgets
-	
-	$mw, 			# main window
-	$ew, 			# effects window
-	$canvas, 		# to lay out the effects window
-
-	# each part of the main window gets its own frame
-	# to control the layout better
-
-	$load_frame,
-	$add_frame,
-	$group_frame,
-	$time_frame,
-	$clock_frame,
-	$oid_frame,
-	$track_frame,
-	$effect_frame,
-	$iam_frame,
-	$perl_eval_frame,
-	$transport_frame,
-	$mark_frame,
-	$fast_frame, # forward, rewind, etc.
-
-	## collected widgets (i may need to destroy them)
-
-	%parent, # ->{mw} = $mw; # main window
-			 # ->{ew} = $ew; # effects window
-			 # eventually will contain all major frames
-	$group_label, 
-	$group_rw, # 
-	$group_version, # 
-	%track_widget, # for chains (tracks)
-	%track_widget_remove, # what to destroy by remove_track
-	%effects_widget, # for effects
-	@widget_o, # for templates (oids) 
-	%widget_o, # 
-	%mark_widget, # marks
-
-	@global_version_buttons, # to set the same version for
-						  	#	all tracks
-	$markers_armed, # set true to enable removing a mark
-	$mark_remove,   # a button that sets $markers_armed
-	$time_step,     # widget shows jump multiplier unit (seconds or minutes)
-	$clock, 		# displays clock
-	$setup_length,  # displays setup running time
-
-	$project_label,	# project name
-
-	$sn_label,		# project load/save/quit	
-	$sn_text,
-	$sn_load,
-	$sn_new,
-	$sn_quit,
-	$sn_palette, # configure default master window colors
-	$sn_namapalette, # configure nama-specific master-window colors
-	$sn_effects_palette, # configure effects window colors
-	@palettefields, # set by setPalette method
-	@namafields,    # field names for color palette used by nama
-	%namapalette,     # nama's indicator colors
-	%palette,  # overall color scheme
-	$rec,      # background color
-	$mon,      # background color
-	$off,      # background color
-	$palette_file, # where to save selections
-
-
-	### A separate box for entering IAM (and other) commands
-	$iam_label,
-	$iam_text,
-	$iam, # variable for text entry
-	$iam_execute,
-	$iam_error, # unused
-
-	# add track gui
-	#
-	$build_track_label,
-	$build_track_text,
-	$build_track_add_mono,
-	$build_track_add_stereo,
-	$build_track_rec_label,
-	$build_track_rec_text,
-	$build_track_mon_label,
-	$build_track_mon_text,
-
-	$build_new_take,
-
-	# transport controls
-	
-	$transport_label,
-	$transport_setup_and_connect,
-	$transport_setup, # unused
-	$transport_connect, # unused
-	$transport_disconnect,
-	$transport_new,
-	$transport_start,
-	$transport_stop,
-
-	$old_bg, # initial background color.
-	$old_abg, # initial active background color
-
-	@oids,	# output templates, are applied to the
-			# chains collected previously
-			# the results are grouped as
-			# input, output and intermediate sections
-
-	%inputs,
-	%outputs,
-	%post_input,
-	%pre_output,
-
-	$ladspa_sample_rate,	# used as LADSPA effect parameter fixed at 44100
-
-	$track_name,	# received from Tk text input form
-	%track_names,   # belongs in Track.pm
-	$ch_r,			# recording channel assignment
-	$ch_m,			# monitoring channel assignment
-
-
-	%L,	# for effects
-	%M,
-	$debug,				# debug level flags for diagnostics
-	$debug2,			# for subroutine names as execute
-	$debug3,			# deprecated
-						
-	$OUT,				# filehandle for Text mode print
-	#$commands,	# ref created from commands.yml
-	%commands,	# created from commands.yml
-	$commands_yml, # the string form of commands.yml
-	$cop_hints_yml, # ecasound effects hinting
-
-	$save_id, # text variable
-	$sn_save_text,# text entry widget
-	$sn_save,	# button to save settings
-	$sn_recall,	# button to recall settings
-
-	# new object core
-	
-	$main_bus, 
-	$main, # main group
-	$null_bus,
-    $null, # null group
-
-	%ti, # track by index (alias %Audio::Nama::Track::by_index)
-	%tn, # track by name  (alias %Audio::Nama::Track::by_name)
-
-	@tracks_data, # staging for saving
-	@groups_data, # obsolete
-	@marks_data,  # for storage
-	@inserts_data, # for storage
-	@bus_data,    # 
-	@fade_data, #
-	@system_buses, # 
-	%is_system_bus, # 
-
-	$alsa_playback_device,
-	$alsa_capture_device,
-
-	$main_out, # boolean: route audio output to soundcard?
-
-	# mastering mode status
-
-	$mastering_mode,
-
-   # marks and playback looping
-   
-	$clock_id,		# used in GUI for the Tk event system
-					# ->cancel method not reliable
-					# for 'repeat' events, so converted to
-					# 'after' events
-	%event_id,    # events will store themselves with a key
-	@loop_endpoints, # they define the loop
-	$loop_enable, # whether we automatically loop
-
-   $previous_text_command, # i want to know if i'm repeating
-	$term, 			# Term::ReadLine object
-	$controller_ports, # where we listen for MIDI messages
-    $midi_inputs,  # on/off/capture
-
-	@already_muted, # for soloing list of Track objects that are 
-                    # muted before we begin
-    $soloing,       # one user track is on, all others are muted
-
-	%bunch,			# user collections of tracks
-	@keywords,      # for autocompletion
-	$attribs,       # Term::Readline::Gnu object
-	$seek_delay,    # allow microseconds for transport seek
-                    # (used with JACK only)
-    $prompt,        # for text mode
-	$preview,       # am running engine with rec_file disabled
-	%duplicate_inputs, # named tracks will be OFF in doodle mode
-	%already_used,  #  source => used_by
-	$memoize,       # do I cache this_wav_dir?
-	$hires,        # do I have Timer::HiRes?
-	$fade_time, 	# duration for fadein(), fadeout()
-	$old_snapshot,  # previous status_snapshot() output
-					# to check if I need to reconfigure engine
-	$old_group_rw, # previous $main->rw setting
-	%old_rw,       # previous track rw settings (indexed by track name)
-	
-	@mastering_track_names, # reserved for mastering mode
-	@command_history,
-	$disable_auto_reconfigure, # for debugging
-
-	$g, 			# Graph var, for chain setup
-	%cooked_record_pending, # an intermediate mixdown for tracks
-	$press_space_to_start_transport, #  in text mode
-	%effect_chain, # named effect sequences
-	%effect_profile, # effect chains for multiple tracks
-	$sock, 			# socket for Net-ECI mode
-	%versions,		# store active versions for use after engine run
-	@io, 			# accumulate IO objects for generating setup
-	$track_snapshots, # to save recalculating for each IO object
-	$chain_setup,	# current chain setup
-	%mute_level,	# 0 for ea as vol control, -127 for eadb
-	%fade_out_level, # 0 for ea, -40 for eadb
-	$fade_resolution, # steps per second
-	%unity_level,	# 100 for ea, 0 for eadb
-	
-	$default_fade_length, 
-	$regenerate_setup, # force us to generate new chain setup
-	%is_ecasound_chain,   # suitable for c-select
-);
- 
- 
-# variables found in namarc
-#
-@config_vars = qw(
-						%abbreviations
-						%devices
-						$ecasound_globals_realtime
-						$ecasound_globals_default
-						$ecasound_tcp_port
-						$mix_to_disk_format
-						$raw_to_disk_format
-						$cache_to_disk_format
-						$mixer_out_format
-						$alsa_playback_device
-						$alsa_capture_device	
-						$soundcard_channels
-						$project_root 	
-						$use_group_numbering
-						$press_space_to_start_transport
-						$execute_on_project_load
-						$initial_user_mode
-						$volume_control_operator
-						$mastering_effects
-						$eq 
-						$low_pass
-						$mid_pass
-						$high_pass
-						$compressor
-						$spatialiser
-						$limiter
-
-						);
-
-						
-						
-# used for saving to State.yml
-#
-@persistent_vars = qw(
-
-						%cops 			
-						$cop_id 		
-						%copp 			
-						%copp_exp
-						$unit			
-						%oid_status		
-						%old_vol		
-						$this_op
-						@tracks_data
-						@bus_data
-						@groups_data
-						@marks_data
-						@fade_data
-						@inserts_data
-						$loop_enable
-						@loop_endpoints
-						$length
-						%bunch
-						$mastering_mode
-						@command_history
-						$saved_version
-						$main_out
-						$this_track_name
-						);
-					 
-# used for effects_cache 
-#
-@effects_static_vars = qw(
-
-						@effects		
-						%effect_i	
-						%effect_j	
-						%e_bound
-						@ladspa_sorted
-						%effects_ladspa	
-						%effects_ladspa_file
-						%ladspa_unique_id
-						%ladspa_label
-						%ladspa_help
-						@effects_help
-						);
-
 
 # defeat namarc detection to force using $default namarc
 
@@ -495,23 +43,25 @@ push @ARGV, qw(-d .);
 
 push @ARGV, q(-E);
 
+# fake jack client data
+
+push @ARGV, q(-J);
+
 # don't initialize terminal
 
 push @ARGV, q(-T);
 
 diag("working directory: ",cwd);
 
-setup_grammar();
 process_options();
-
-prepare();
+initialize_interfaces();
 diag "Check representative variable from default .namarc";
 
-is ( $Audio::Nama::mix_to_disk_format, "s16_le,N,44100,i", "Read mix_to_disk_format");
+is( $Audio::Nama::mix_to_disk_format, "s16_le,N,44100,i", "Read mix_to_disk_format");
 =skip
 # Ecasound dependent
 diag "Check static effects data read";
-is ( $Audio::Nama::e_bound{cop}{z} > 40, 1, "Verify Ecasound chain operator count");
+is( $Audio::Nama::e_bound{cop}{z} > 40, 1, "Verify Ecasound chain operator count");
 
 diag "Check effect hinting and help";
 
@@ -538,9 +88,39 @@ is( $effects_help[0],
 	qq(dyn_compress_brutal,  -pn:dyn_compress_brutal:gain-%\n),
 	'Preset help for dyn_compress_brutal');
 
+my @result = Audio::Nama::Fade::spec_to_pairs([0,1,'out']);
+my @expected = ( 0, 1, 0.95, 0.75, 1, 0 );
+
+is_deeply(\@result, \@expected, "Fade::spec_to_pairs - fade-out");
+
+@result = Audio::Nama::Fade::spec_to_pairs([0,1,'in']);
+@expected = ( 0, 0, 0.05, 0.75, 1, 1 );
+
+is_deeply(\@result, \@expected, "Fade::spec_to_pairs - fade-in");
+
 =cut
 
-is( ref $main_bus, q(Audio::Nama::Bus), 'Bus initializtion');
+# object id => type mappings
+#
+my @id_to_type = (
+	1 						=> 'soundcard',
+    Fluidsynth 				=> 'jack_client',
+	"MPlayer [20120]:out_0" => 'jack_client',
+	"drumkit.ports"			=> 'jack_ports_list',
+	manual					=> 'jack_manual',
+	jack					=> 'jack_manual',
+	bus						=> 'bus',
+	null					=> 'null',
+	"loop,16"				=> 'loop',
+	"loop,Master"			=> 'loop',
+);
+
+while( my($dest,$type) = splice @id_to_type, 0,2){
+	is( dest_type($dest), $type, "$dest => $type");
+}
+
+
+is( ref $main, q(Audio::Nama::Bus), 'Bus initializtion');
 
 # SKIP: { 
 # my $cs_got = eval_iam('cs');
@@ -557,6 +137,121 @@ load_project(name => $test_project, create => 1);
 
 is( project_dir(), "./$test_project", "establish project directory");
 
+force_jack();
+
+### Unit Tests for Audio::Nama::IO.pm
+
+my @io_test_data = split "\n\n",
+my $yaml = q(---
+-
+  class: from_null
+  ecs_string: -i:null
+-
+  class: to_null
+  ecs_string: -o:null
+-
+  class: to_wav
+  args:
+    name: sax
+    width: 1
+    full_path: test_dir/sax_1.wav
+  ecs_string: -f:s16_le,1,44100,i -o:test_dir/sax_1.wav
+-
+  class: from_wav
+  args:
+    playat_output: playat,5
+    select_output: select,1,4
+    modifiers: []
+    full_path: test_dir/sax_1.wav
+  ecs_string: /-i:playat,5,select,1,4,.+sax_\d+.wav/
+-
+  class: from_loop
+  args:
+    endpoint: sax_in
+  ecs_string: -i:loop,sax_in
+-
+  class: to_loop
+  args:
+    endpoint: sax_out
+  ecs_string: -o:loop,sax_out
+-
+  class: to_soundcard_device
+  ecs_string: -o:alsa,default
+-
+  class: from_soundcard_device
+  ecs_string: -i:alsa,default
+-
+  class: from_soundcard
+  args:
+    width: 1
+    source_id: 2
+  ecs_string: -i:jack_multi,system:capture_2
+-
+  class: to_soundcard
+  args:
+    width: 2
+    send_id: 5
+  ecs_string: -o:jack_multi,system:playback_5,system:playback_6
+-
+  class: to_jack_port
+  args:
+    width: 1
+    port_name: sax
+  ecs_string: -f:f32_le,1,44100 -o:jack,,sax_out
+-
+  class: from_jack_port
+  args:
+    port_name: sax
+    width: 2
+  ecs_string: -f:f32_le,2,44100 -i:jack,,sax_in
+-
+  class: from_jack_client
+  args:
+    source_id: Horgand
+    source_type: jack_client
+  ecs_string: -i:jack,Horgand
+-
+  class: to_jack_client
+  args:
+    send_id: system
+    send_type: jack_client
+  ecs_string: -o:jack,system
+-
+  class: to_jack_multi
+  args:
+    width: 2
+    send_id: system
+    send_type: jack_multi
+  ecs_string: -o:jack_multi,system:playback_1,system:playback_2
+-
+  class: from_jack_multi
+  args:
+    width: 2
+    source_id: Horgand
+    source_type: jack_client
+  ecs_string: -i:jack_multi,Horgand:out_1,Horgand:out_2
+...);
+
+my @test = @{yaml_in($yaml)};
+
+
+my $i;
+
+for (@test) {
+	my %t = %$_;
+	$i++;
+	diag "IO.pm unit test $i";
+	my $class = "Audio::Nama::IO::$t{class}";
+	my $io = $class->new(%{$t{args}});
+	my @keys = sort grep{ $_ ne 'class'} keys %t;
+	if( $t{ecs_string} =~ m(^/)){
+		like( $io->ecs_string, $t{ecs_string}, "$t{class} ecs_string");
+	}else{
+		is(   $io->ecs_string, $t{ecs_string}, "$t{class} ecs_string");
+	}
+}
+	
+
 force_alsa();
 
 command_process('add sax');
@@ -566,6 +261,7 @@ like(ref $this_track, qr/Track/, "track creation");
 is( $this_track->name, 'sax', "current track assignment");
 
 command_process('source 2');
+
 
 is( $this_track->source_type, 'soundcard', "set soundcard input");
 is( $this_track->source_id,  2, "set input channel");
@@ -585,38 +281,37 @@ like( ref $io, qr/IO$/, 'IO base class object');
 
 $io = Audio::Nama::IO::to_soundcard_device->new(track => 'sax'); 
 
-is ($io->ecs_string, '-o:alsa,default', 'IO to_soundcard_device 1');
-is ($io->ecs_extra,  ' -chmove:1,5', 'IO to_soundcard_device 2');
+is($io->ecs_string, '-o:alsa,default', 'IO to_soundcard_device 1');
+is($io->ecs_extra,  ' -chmove:1,5', 'IO to_soundcard_device 2');
 
 $io = Audio::Nama::IO::to_soundcard->new(track => 'sax'); 
 
-is ($io->ecs_string, '-o:alsa,default', 'IO to_soundcard 1');
-is ($io->ecs_extra, ' -chmove:1,5', 'IO to_soundcard 2');
-
+is($io->ecs_string, '-o:alsa,default', 'IO to_soundcard 1');
+is($io->ecs_extra, ' -chmove:1,5', 'IO to_soundcard 2');
 
 force_jack();
 
 
 $io = Audio::Nama::IO::from_soundcard->new(track => 'sax'); 
 like (ref $io, qr/from_jack_multi/, 'sound system ALSA/JACK detection: input');
-is ($io->ecs_string, '-i:jack_multi,system:capture_2', 'IO from_soundcard: jack 1');
-is ($io->ecs_extra, '-chcopy:1,2', 'IO from_soundcard: jack 2');
+is($io->ecs_string, '-i:jack_multi,system:capture_2', 'IO from_soundcard: jack 1');
+is($io->ecs_extra, '-chcopy:1,2', 'IO from_soundcard: jack 2');
 
 
 $io = Audio::Nama::IO::to_soundcard->new(track => 'sax'); 
 like (ref $io, qr/to_jack_multi/, 'sound system ALSA/JACK detection: output');
 
-is ($io->ecs_string, '-o:jack_multi,system:playback_5', 'IO to_soundcard: jack 1');
-ok (! $io->ecs_extra, 'IO to_soundcard: jack 2');
+is($io->ecs_string, '-o:jack_multi,system:playback_5', 'IO to_soundcard: jack 1');
+ok(! $io->ecs_extra, 'IO to_soundcard: jack 2');
 
 $io = Audio::Nama::IO::to_null->new(track => 'sax', device_id => 'alsa,default');
 
-is ($io->device_id, 'alsa,default', 'value overrides method call');
+is($io->device_id, 'alsa,default', 'value overrides method call');
 
 command_process("sax; source Horgand; gen");
-like( $chain_setup, qr/Horgand/, 'set JACK client as input');
+like( Audio::Nama::ChainSetup::ecasound_chain_setup(), qr/Horgand/, 'set JACK client as input');
 command_process("sax; source jack; gen");
-like( $chain_setup, qr/jack,,sax_in/, 'set JACK port for manual input');
+like( Audio::Nama::ChainSetup::ecasound_chain_setup(), qr/jack,,sax_in/, 'set JACK port for manual input');
 
 command_process("sax; source 2");
 
@@ -847,9 +542,9 @@ gen_jack();
 check_setup('Mixdown in mastering mode - JACK');
 
 command_process('mixoff; master_off');
-command_process('for 4 5 6 7 8; remove_track');
+command_process('for 4 5 6 7 8; remove_track quiet');
 command_process('Master; send 1');
-command_process('asub Horns; sax set bus Horns; sax stereo');
+command_process('asub Horns; sax move_to_bus Horns; sax stereo');
 
 $expected_setup_lines = <<EXPECTED;
 
@@ -901,6 +596,7 @@ gen_jack();
 check_setup('Send bus - soundcard - JACK');
 command_process('remove_bus Vo');
 command_process('sax mono');
+=comment
 command_process('add_insert post 5');
 $expected_setup_lines = <<EXPECTED;
 
@@ -943,6 +639,60 @@ EXPECTED
 gen_jack();
 
 check_setup('Send bus - raw - JACK');
+=cut
+
+{
+
+diag "Edit mode playat and region endpoints adjustment";
+my @tests = split "\n",<<TEST_DATA;
+1 12 5 15 4   8  *  *  * 30 out_of_bounds_near region
+2 12 5 15 23 26  *  *  * 30 out_of_bounds_far region
+3 12 5 15 10 17  2  5 10 30 play_start_during_playat_delay region
+4 12 5 15 13 21  0  6 14 30 play_start_within_region region
+5 12 5 15 21 26  0 14 19 30 play_start_within_region region
+6  0 5 15  5  9  0 10 14 30 play_start_within_region region
+7  0 0  0  5  9  0  5  9 30 no_region_play_start_after_playat_delay no_playat
+8  2 0  0  5  9  0  3  7 30 no_region_play_start_after_playat_delay
+9  6 0  0  5  9  1  0  3 30 no_region_play_start_during_playat_delay
+10 6 0  0  3  5  *  *  * 30 out_of_bounds_near no_region
+11 6 0  0 40 49  *  *  * 30 out_of_bounds_far  no_region
+12 6 0  0 34 40  0 28 30 30 no_region_play_start_after_playat_delay end_after_wav_length
+
+TEST_DATA
+
+foreach(@tests){
+
+	#diag($_);
+	my ($index, 
+		$playat, 
+		$region_start, 
+		$region_end, 
+		$edit_play_start,
+		$edit_play_end, 
+		$new_playat, 
+		$new_region_start, 
+		$new_region_end,
+		$length,
+		$case, 
+		$comment,
+	) = split " ", $_;
+
+	Audio::Nama::set_edit_vars_testing( 
+		$playat, 
+		$region_start, 
+		$region_end, 
+		$edit_play_start,
+		$edit_play_end,
+		$length,
+	);
+
+		
+	is( Audio::Nama::edit_case(), $case, "$index: $case $comment");
+	is( Audio::Nama::new_playat(), $new_playat, "$index: new_playat: $case");
+	is( Audio::Nama::new_region_start(), $new_region_start, "$index: new_region_start: $case");
+	is( Audio::Nama::new_region_end(), $new_region_end, "$index: new_region_end: $case");
+}
+}
 
 sub gen_alsa { force_alsa(); command_process('gen')}
 sub gen_jack { force_jack(); command_process('gen')}
@@ -960,7 +710,7 @@ sub setup_content {
 }
 sub check_setup {
 	my $test_name = shift;
-	is( yaml_out(setup_content($chain_setup)), 
+	is( yaml_out(setup_content(Audio::Nama::ChainSetup::ecasound_chain_setup())), 
 		yaml_out(setup_content($expected_setup_lines)), 
 		$test_name);
 }

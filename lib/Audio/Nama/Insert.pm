@@ -23,6 +23,7 @@ use Audio::Nama::Object qw(
 	wet_vol
 	dry_vol
 );
+use Audio::Nama::Util qw(input_node output_node dest_type);
 # tracks: deprecated
 
 initialize();
@@ -86,13 +87,6 @@ sub remove {
 	my $self = shift;
 	$Audio::Nama::tn{ $self->wet_name }->remove;
 	$Audio::Nama::tn{ $self->dry_name }->remove;
-	my $type = $self->type;
-
-	# look for track that has my id and delete it
-	my ($track) = grep{$_->$type == $self->n} values %Audio::Nama::Track::by_name;
-	$track->set(  $type => undef );
-
-	# delete my own index entry
 	delete $by_index{$self->n};
 }
 	
@@ -102,7 +96,7 @@ sub add_insert {
 	my ($type, $send_id, $return_id) = @_;
 	# $type : prefader_insert | postfader_insert
 	say "\n",$Audio::Nama::this_track->name , ": adding $type\n";
-	my $old_this_track = $Audio::Nama::this_track;
+	local $Audio::Nama::this_track;
 	my $t = $Audio::Nama::this_track;
 	my $name = $t->name;
 
@@ -111,6 +105,9 @@ sub add_insert {
 	
 	my $class =  $type =~ /pre/ ? 'Audio::Nama::PreFaderInsert' : 'Audio::Nama::PostFaderInsert';
 	
+	# remove an existing insert of specified type, if present
+	$t->$type and $by_index{$t->$type}->remove;
+
 	my $i = $class->new( 
 		track => $t->name,
 		send_type 	=> Audio::Nama::dest_type($send_id),
@@ -123,15 +120,23 @@ sub add_insert {
 		$i->{return_id} =  $i->{send_id} if $i->{return_type} eq 'jack_client';
 		$i->{return_id} =  $i->{send_id} + 2 if $i->{return_type} eq 'soundcard';
 	}
-	$t->$type and $by_index{$t->$type}->remove;
-	$t->set($type => $i->n); 
-	$Audio::Nama::this_track = $old_this_track;
 }
 sub get_id {
+	# get Insert index for track
+	
+	# optionally specify whether we are looking for
+	# prefader or postfader insert
+	
+	# 
 	my ($track, $prepost) = @_;
-	my %id = (pre => $track->prefader_insert,
-			 post => $track->postfader_insert);
-	#print "prepost: $prepost\n";
+	my @inserts = grep{ $track->name eq $_->track} values %by_index;
+	my ($prefader) = (map{$_->n} 
+					grep{$_->class =~ /pre/i} 
+					@inserts);
+	my ($postfader) = (map{$_->n} 
+					grep{$_->class =~ /post/i} 
+					@inserts);
+	my %id = ( pre => $prefader, post => $postfader);
 	$prepost = $id{pre} ? 'pre' : 'post'
 		if (! $prepost and ! $id{pre} != ! $id{post} );
 	$id{$prepost};;
@@ -170,9 +175,9 @@ sub add_paths {
 
 	# wet send path (no track): track -> loop -> output
 	
-	my @edge = ($loop, Audio::Nama::output_node($self->{send_type}));
+	my @edge = ($loop, output_node($self->{send_type}));
 	$debug and say "edge: @edge";
-	Audio::Nama::Graph::add_path($name, @edge);
+	$g->add_path( $name, @edge);
 	$g->set_vertex_attributes($loop, {n => $t->n});
 	$g->set_edge_attributes(@edge, { 
 		send_id => $self->{send_id},
@@ -188,11 +193,11 @@ sub add_paths {
 				source_type => $self->{return_type},
 				source_id => $self->{return_id},
 	});
-	Audio::Nama::Graph::add_path(Audio::Nama::input_node($self->{return_type}), $wet->name, $successor);
+	$g->add_path(input_node($self->{return_type}), $wet->name, $successor);
 
 	# connect dry track to graph
 	
-	Audio::Nama::Graph::add_path($loop, $dry->name, $successor);
+	$g->add_path($loop, $dry->name, $successor);
 	}
 	
 }
@@ -227,9 +232,9 @@ sub add_paths {
 
 		#pre:  wet send path (no track): predecessor -> output
 
-		my @edge = ($predecessor, Audio::Nama::output_node($self->{send_type}));
+		my @edge = ($predecessor, output_node($self->{send_type}));
 		$debug and say "edge: @edge";
-		Audio::Nama::Graph::add_path(@edge);
+		$g->add_path(@edge);
 		$g->set_edge_attributes(@edge, { 
 			send_id => $self->{send_id},
 			send_type => $self->{send_type},
@@ -253,14 +258,14 @@ sub add_paths {
 		$g->set_vertex_attributes($dry->name, {
 				mono_to_stereo => '', # override
 		});
-		Audio::Nama::Graph::add_path(Audio::Nama::input_node($self->{return_type}), $wet->name, $loop);
+		$g->add_path(input_node($self->{return_type}), $wet->name, $loop);
 
 		# connect dry track to graph
 		#
 		# post: dry path: loop -> dry -> successor
 		# pre: dry path:  predecessor -> dry -> loop
 		
-		Audio::Nama::Graph::add_path($predecessor, $dry->name, $loop, $name);
+		$g->add_path($predecessor, $dry->name, $loop, $name);
 	}
 	
 }

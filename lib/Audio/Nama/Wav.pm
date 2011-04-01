@@ -1,7 +1,7 @@
 package Audio::Nama::Wav;
 our $VERSION = 1.0;
 our @ISA; 
-use Audio::Nama::Object qw(name active dir);
+use Audio::Nama::Object qw(name version dir);
 use warnings;
 use Audio::Nama::Assign qw(:all);
 use Memoize qw(memoize unmemoize);
