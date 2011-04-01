@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.071;
+$VERSION = 1.072;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);

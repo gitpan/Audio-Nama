@@ -48,6 +48,7 @@ use Carp;
 use Audio::Nama::Assign qw(:all);
 
 our @ISA = 'Audio::Nama';
+our $VERSION = 1.071;
 
 sub hello {"hello world!";}
 
