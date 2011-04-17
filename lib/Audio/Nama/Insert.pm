@@ -96,7 +96,7 @@ sub add_insert {
 	my ($type, $send_id, $return_id) = @_;
 	# $type : prefader_insert | postfader_insert
 	say "\n",$Audio::Nama::this_track->name , ": adding $type\n";
-	local $Audio::Nama::this_track;
+	local $Audio::Nama::this_track = $Audio::Nama::this_track; # temporarily change
 	my $t = $Audio::Nama::this_track;
 	my $name = $t->name;
 
@@ -145,6 +145,7 @@ sub get_id {
 {
 package Audio::Nama::PostFaderInsert;
 use Modern::Perl; use Carp; our @ISA = qw(Audio::Nama::Insert); our $debug;
+use Audio::Nama::Util qw(input_node output_node dest_type);
 sub add_paths {
 
 	# Since this routine will be called after expand_graph, 
@@ -204,6 +205,7 @@ sub add_paths {
 {
 package Audio::Nama::PreFaderInsert;
 use Modern::Perl; use Carp; our @ISA = qw(Audio::Nama::Insert); our $debug;
+use Audio::Nama::Util qw(input_node output_node dest_type);
 sub add_paths {
 
 # --- predecessor --+-- wet-send    wet-return ---+-- insert_pre -- track

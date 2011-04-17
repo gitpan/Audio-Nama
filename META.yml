@@ -43,8 +43,8 @@ requires:
   Time::HiRes: 0
   YAML::Tiny: 0
   autodie: 0
-  perl: 5.10.0
+  perl: 5.10.1
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/bolangi/nama
-version: 1.072
+version: 1.073
