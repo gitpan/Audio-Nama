@@ -182,6 +182,11 @@ sub loop {
 
 sub initialize_tk { can_load( modules => { Tk => undef } ) }
 
+# the following graphical methods are placed in the root namespace
+# allowing access to root namespace variables 
+# with a package path
+
+package Audio::Nama;
 # gui handling
 #
 sub init_gui {
@@ -1514,7 +1519,7 @@ sub save_palette {
 }
 
 ### end
- # root namespace!
+
 
 ## refresh functions
 
@@ -1629,9 +1634,6 @@ sub refresh_oids{ # OUTPUT buttons
 
 ### end
 
-
-## The following code loads the object core of the system 
-## and initiates the chain templates (rules)
 
 1;
 __END__
