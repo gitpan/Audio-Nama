@@ -1398,7 +1398,7 @@ sub get_saved_colors {
 	*Audio::Nama::rec = \$namapalette{RecBackground};
 	*Audio::Nama::mon = \$namapalette{MonBackground};
 	*Audio::Nama::off = \$namapalette{OffBackground};
-
+	
 	$old_abg = $palette{mw}{activeBackground};
 	$old_abg = $project_label->cget('-activebackground') unless $old_abg;
 	#print "1palette: \n", yaml_out( \%palette );

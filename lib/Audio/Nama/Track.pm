@@ -328,7 +328,7 @@ sub region_end_time {
 	#return if $track->rec_status ne 'MON';
 	carp $track->name, ": expected MON status" if $track->rec_status ne 'MON';
 	if ( $track->region_end eq 'END' ){
-		return Audio::Nama::wav_length($track->full_path);
+		return $track->wav_length;
 	} else {
 		Audio::Nama::Mark::unadjusted_mark_time( $track->region_end )
 	}
@@ -720,6 +720,16 @@ sub fixdc {
 	print "executing: $cmd\n";
 	system $cmd;
 }
+sub wav_length {
+	my $track = shift;
+	Audio::Nama::wav_length($track->full_path)
+}
+sub wav_format{
+	my $track = shift;
+	Audio::Nama::wav_format($track->full_path)
+}
+
+	
 sub mute {
 	package Audio::Nama;
 	my $track = shift;
@@ -866,7 +876,7 @@ sub adjusted_length {
 		$length = 	$track->adjusted_region_end_time
 				  - $track->adjusted_region_start_time
 	} else {
-		$length = 	Audio::Nama::wav_length($track->full_path);
+		$length = 	$track->wav_length;
 	}
 	$length += $track->adjusted_playat_time;
 }
@@ -897,7 +907,7 @@ sub hashref {
 
 				
 }
-	
+
 # subclasses
 
 
