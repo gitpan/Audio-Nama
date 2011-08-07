@@ -29,7 +29,6 @@ our (
 
 	$mastering_mode,
 	$jack_running,
-	$main_out,
 
 # find_duplicate_inputs()
 
@@ -69,7 +68,7 @@ sub generate_setup {
 	# catch errors unless testing (no-terminal option)
 	local $@ unless $opts{T}; 
 	track_memoize(); 			# freeze track state 
-	my $success = $opts{T} 
+	my $success = $opts{T}      # don't catch errors during testing 
 		?  Audio::Nama::ChainSetup::generate_setup_try(@_)
 		:  eval { Audio::Nama::ChainSetup::generate_setup_try(@_) }; 
 	remove_temporary_tracks();  # cleanup
@@ -151,7 +150,7 @@ sub reconfigure_engine {
 	$old_snapshot = status_snapshot();
 	$old_offset_run_status = $offset_run_flag;
 
-	command_process('show_tracks');
+	command_process('show_tracks_all');
 
 	stop_transport('quiet') if $was_running;
 
@@ -209,7 +208,6 @@ sub status_snapshot {
 	my %snapshot = ( project 		=> 	$project_name,
 					 mastering_mode => $mastering_mode,
 					 preview        => $preview,
-					 main_out 		=> $main_out,
 					 jack_running	=> $jack_running,
 					 tracks			=> [], );
 	map { push @{$snapshot{tracks}}, $_->snapshot(\@relevant_track_fields) }

@@ -18,7 +18,7 @@ package Audio::Nama::Track;
 # class, hopefully saving a painful error
 
 use Modern::Perl;
-use Carp;
+use Carp qw(carp cluck croak);
 use File::Copy qw(copy);
 use File::Slurp;
 use Memoize qw(memoize unmemoize);
@@ -28,7 +28,7 @@ our ($debug);
 local $debug = 0;
 use Audio::Nama::Assign qw(join_path);
 use Audio::Nama::Util qw(freq input_node dest_type);
-use vars qw($n %by_name @by_index %track_names %by_index @all);
+use vars qw($n %by_name @by_index %track_names %by_index);
 our @ISA = 'Audio::Nama::Wav';
 use Audio::Nama::Object qw(
 					class 			
@@ -81,7 +81,6 @@ initialize();
 
 sub initialize {
 	$n = 0; 	# incrementing numeric key
-	@all = ();
 	%by_index = ();	# return ref to Track by numeric key
 	%by_name = ();	# return ref to Track by name
 	%track_names = (); 
@@ -93,12 +92,14 @@ sub idx { # return first free track index
 		return $n if not $by_index{$n}
 	}
 }
-sub all { @all }
+sub all { sort{$a->n <=> $b->n } values %by_name }
 
-{ my %non_user = map{ $_, 1} qw( Master Mixdown Eq Low Mid High Boost );
+{ my %system_track = map{ $_, 1} qw( Master Mixdown Eq Low Mid High Boost );
 sub user {
-	grep{ ! $non_user{$_} } map{$_->name} @all
+	grep{ ! $system_track{$_} } map{$_->name} all();
 }
+sub is_user_track   { !  $system_track{$_[0]->name} } 
+sub is_system_track {    $system_track{$_[0]->name} } 
 }
 
 sub new {
@@ -153,7 +154,6 @@ sub new {
 	#print "names used: ", Audio::Nama::yaml_out( \%track_names );
 	$by_index{$n} = $object;
 	$by_name{ $object->name } = $object;
-	push @all, $object;
 	#Audio::Nama::add_latency_compensation($n);	
 	Audio::Nama::add_pan_control($n);
 	Audio::Nama::add_volume_control($n);
@@ -455,7 +455,6 @@ sub remove {
  	map{ Audio::Nama::remove_effect($_) } @{ $track->ops };
  	delete $by_index{$n};
  	delete $by_name{$track->name};
- 	@all = grep{ $_->n != $n} @all;
 }
 
 	
@@ -794,7 +793,7 @@ sub import_audio  {
 		say "Use 'import_audio <path> <frequency>' if possible.";
 		return 
 	}
-	my $desired_frequency = Audio::Nama::freq( $Audio::Nama::raw_to_disk_format );
+	my $desired_frequency = freq( $Audio::Nama::raw_to_disk_format );
 	my $destination = join_path(Audio::Nama::this_wav_dir(),$track->name."_$version.wav");
 	#say "destination: $destination";
 	if ( $frequency == $desired_frequency and $path =~ /.wav$/i){
@@ -859,11 +858,12 @@ sub busify {
 	# create the bus if needed
 	# create or convert named track to mix track
 	
-	Audio::Nama::add_sub_bus($name);
+	Audio::Nama::add_sub_bus($name) unless $track->is_system_track;
 
 }
 sub unbusify {
 	my $track = shift;
+	return unless $track->is_system_track;
 	$track->set( rw => 'MON',
                  rec_defeat => 0);
 	$track->set_track_class($track->was_class // 'Audio::Nama::Track');
@@ -917,15 +917,13 @@ use Modern::Perl; use Carp;
 no warnings qw(uninitialized redefine);
 our @ISA = 'Audio::Nama::Track';
 
-sub rec_status{
-
-#	$Audio::Nama::debug2 and print "&rec_status (SimpleTrack)\n";
-	my $track = shift;
-	return 'MON' unless $track->rw eq 'OFF';
-	'OFF';
-
+sub rec_status {
+	$_[0]->rw eq 'OFF' ? 'OFF' : 'MON'
 }
+sub rec_status_display { $_[0]->rec_status } 
 }
+sub busify {}
+sub unbusify {}
 {
 package Audio::Nama::MasteringTrack; # used for mastering chains 
 use Modern::Perl;
@@ -1036,6 +1034,148 @@ sub input_path {
 		:  ()
 }
 }
+
+
+# ----------- Track_subs -------------
+{
+package Audio::Nama;
+use Modern::Perl;
+our (
+	$debug,
+	$debug2,
+	$this_track,
+	$ui,
+	%tn,
+	%ti,
+	%bn,
+	%effect_j,
+	$ch_m,
+	$ch_r,
+	$track_name,
+	$volume_control_operator,
+	$preview,
+	@mastering_track_names,
+);
+
+# usual track
+
+sub add_track {
+
+	$debug2 and print "&add_track\n";
+	#return if transport_running();
+	my ($name, @params) = @_;
+	my %vals = (name => $name, @params);
+	my $class = $vals{class} // 'Audio::Nama::Track';
+	
+	$debug and print "name: $name, ch_r: $ch_r, ch_m: $ch_m\n";
+	
+	say("$name: track name already in use. Skipping."), return 
+		if $Audio::Nama::Track::by_name{$name};
+	say("$name: reserved track name. Skipping"), return
+	 	if grep $name eq $_, @mastering_track_names; 
+
+	my $track = $class->new(%vals);
+	return if ! $track; 
+	$this_track = $track;
+	$debug and print "ref new track: ", ref $track; 
+	$track->source($ch_r) if $ch_r;
+#		$track->send($ch_m) if $ch_m;
+
+	my $group = $bn{$track->group}; 
+	command_process('for mon; mon') if $preview and $group->rw eq 'MON';
+	$group->set(rw => 'REC') unless $track->target; # not if is alias
+
+	# normal tracks default to 'REC'
+	# track aliases default to 'MON'
+	$track->set(rw => $track->target
+					?  'MON'
+					:  'REC') ;
+	$track_name = $ch_m = $ch_r = undef;
+
+	set_current_bus();
+	$ui->track_gui($track->n);
+	$debug and print "Added new track!\n", $track->dump;
+	$track;
+}
+
+# create read-only track pointing at WAV files of specified
+# name in current project
+
+sub add_track_alias {
+	my ($name, $track) = @_;
+	my $target; 
+	if 		( $tn{$track} ){ $target = $track }
+	elsif	( $ti{$track} ){ $target = $ti{$track}->name }
+	add_track(  $name, target => $target );
+}
+# create read-only track pointing at WAV files of specified
+# track name in a different project
+
+sub add_track_alias_project {
+	my ($name, $track, $project) = @_;
+	my $dir =  join_path(project_root(), $project, '.wav'); 
+	if ( -d $dir ){
+		if ( glob "$dir/$track*.wav"){
+			print "Found target WAV files.\n";
+			my @params = (target => $track, project => $project);
+			add_track( $name, @params );
+		} else { print "No WAV files found.  Skipping.\n"; return; }
+	} else { 
+		print("$project: project does not exist.  Skipping.\n");
+		return;
+	}
+}
+
+
+sub add_volume_control {
+	my $n = shift;
+	return unless need_vol_pan($ti{$n}->name, "vol");
+	
+	my $vol_id = cop_add({
+				chain => $n, 
+				type => $volume_control_operator,
+				cop_id => $ti{$n}->vol, # often undefined
+				});
+	
+	$ti{$n}->set(vol => $vol_id);  # save the id for next time
+	$vol_id;
+}
+sub add_pan_control {
+	my $n = shift;
+	return unless need_vol_pan($ti{$n}->name, "pan");
+
+	my $pan_id = cop_add({
+				chain => $n, 
+				type => 'epp',
+				cop_id => $ti{$n}->pan, # often undefined
+				});
+	
+	$ti{$n}->set(pan => $pan_id);  # save the id for next time
+	$pan_id;
+}
+
+# not used at present. we are probably going to offset the playat value if
+# necessary
+
+sub add_latency_compensation {
+	print('LADSPA L/C/R Delay effect not found.
+Unable to provide latency compensation.
+'), return unless $effect_j{lcrDelay};
+	my $n = shift;
+	my $id = cop_add({
+				chain => $n, 
+				type => 'el:lcrDelay',
+				cop_id => $ti{$n}->latency, # may be undef
+				values => [ 0,0,0,50,0,0,0,0,0,50,1 ],
+				# We will be adjusting the 
+				# the third parameter, center delay (index  2)
+				});
+	
+	$ti{$n}->set(latency => $id);  # save the id for next time
+	$id;
+}
+
+} # end package
 
 1;
 __END__

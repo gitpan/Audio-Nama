@@ -29,8 +29,6 @@ our (
 	%bunch,
 	@command_history,
 	$mastering_mode,
-	$main_out,
-	%old_vol,
 	$this_track_name,
 	$this_op,
 

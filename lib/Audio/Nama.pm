@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.075;
+$VERSION = 1.076;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -76,11 +76,26 @@ use Audio::Nama::Graphical;
 # the following separate out functionality
 # however occupy the Audio::Nama namespace
 
-use Audio::Nama::Persistence ();
+use Audio::Nama::Initialize_subs ();
+use Audio::Nama::Option_subs ();
+use Audio::Nama::Config_subs ();
+use Audio::Nama::Terminal_subs ();
+use Audio::Nama::Wavinfo_subs ();
+use Audio::Nama::Project_subs ();
+use Audio::Nama::Mode_subs ();
 use Audio::Nama::ChainSetup ();
+use Audio::Nama::Engine_setup_subs ();
+use Audio::Nama::Engine_cleanup_subs ();
+use Audio::Nama::Realtime_subs ();
+use Audio::Nama::Mute_Solo_Fade ();
+use Audio::Nama::Jack_subs ();
+use Audio::Nama::Region_subs ();
+use Audio::Nama::Effect_chain_subs ();
+use Audio::Nama::Midi_subs ();
+use Audio::Nama::Memoize_subs ();
 use Audio::Nama::CacheTrack ();
-use Audio::Nama::Edit_subs ();
 use Audio::Nama::Effect_subs ();
+use Audio::Nama::Persistence ();
 use Audio::Nama::Util qw(
 	rw_set 
 	process_is_running 
@@ -95,25 +110,6 @@ use Audio::Nama::Util qw(
 	input_node
 	output_node
 );
-use Audio::Nama::Initialize_subs ();
-use Audio::Nama::Option_subs ();
-use Audio::Nama::Config_subs ();
-use Audio::Nama::Terminal_subs ();
-use Audio::Nama::Wavinfo_subs ();
-use Audio::Nama::Project_subs ();
-use Audio::Nama::Mode_subs ();
-use Audio::Nama::Engine_setup_subs ();
-use Audio::Nama::Engine_cleanup_subs ();
-use Audio::Nama::Realtime_subs ();
-use Audio::Nama::Mute_Solo_Fade ();
-use Audio::Nama::Jack_subs ();
-use Audio::Nama::Bus_subs ();
-use Audio::Nama::Track_subs ();
-use Audio::Nama::Region_subs ();
-use Audio::Nama::Effect_chain_subs ();
-use Audio::Nama::Mark_and_jump_subs ();
-use Audio::Nama::Midi_subs ();
-use Audio::Nama::Memoize_subs ();
 
 ## Definitions ##
 
@@ -456,8 +452,6 @@ our (
 	%bunch,
 	@command_history,
 	$mastering_mode,
-	$main_out,
-	%old_vol,
 	$this_track_name,
 	$this_op,
 	%devices,
@@ -565,8 +559,6 @@ our (
 	%bunch			
 	@command_history
 	$mastering_mode
-	$main_out 		
-	%old_vol		
 	$this_track_name 
 	$this_op      	
 );
@@ -627,7 +619,6 @@ $save_id = "State";
 $user_customization_file = "custom.pl";
 $fade_time = 0.3; # when starting/stopping transport
 $old_snapshot = {};
-$main_out = 1; # enable main output
 $this_bus = 'Main';
 jack_update(); # to be polled by Event
 $memoize = 1;
@@ -1597,14 +1588,6 @@ master_off:
   short: mro
   what: Leave mastering mode
   parameters: none
-main_off:
-  type: general
-  what: turn off main output
-  parameters: none
-main_on:
-  type: general
-  what: turn on main output
-  parameters: none
 add_track:
   type: track
   short: add new
@@ -1755,11 +1738,11 @@ pan_back:
   parameters: none
 show_tracks:
   type: track 
-  short: show lt
+  short: lt
   what: show track status
 show_tracks_all:
   type: track
-  short: sha showa 
+  short: show sha showa 
   what: show status of all tracks, visible and hidden
 show_bus_tracks:
   type: track 
@@ -1949,8 +1932,8 @@ loop_disable:
   parameters: none
 add_controller:
   type: effect
-  what: add a controller to an operator (use mfx to modify, rfx to remove)
-  parameters: <s_parent_id> <s_effect_code> [ <f_param1> <f_param2>...]
+  what: add a controller to an operator (current operator, by default) use mfx to modify, rfx to remove)
+  parameters: [<s_operator_id>] <s_effect_code> [ <f_param1> <f_param2>...]
   short: acl
 add_effect:
   short: afx
@@ -2761,7 +2744,10 @@ mon: 'Xxx' {}
 command: rw end 
 rw_setting: 'rec'|'mon'|'off'
 rw: rw_setting {
-	Audio::Nama::rw_set($Audio::Nama::Bus::by_name{$Audio::Nama::this_bus},$Audio::Nama::this_track,$item{rw_setting}); 1
+	$Audio::Nama::this_track->is_system_track 
+		? $Audio::Nama::this_track->set(rw => uc $item{rw_setting}) 
+		: Audio::Nama::rw_set($Audio::Nama::Bus::by_name{$Audio::Nama::this_bus},$Audio::Nama::this_track,$item{rw_setting}); 
+	1
 }
 rec_defeat: _rec_defeat { 
 	$Audio::Nama::this_track->set(rec_defeat => 1);
@@ -2913,7 +2899,21 @@ add_controller: _add_controller parent effect value(s?) {
 		my $pi = 	Audio::Nama::effect_index($Audio::Nama::cops{$parent}->{type});
 		my $pname = $Audio::Nama::effects[$pi]->{name};
 		print "\nAdded $id ($iname) to $parent ($pname)\n\n";
-		$Audio::Nama::this_op = $id; 
+	}
+	1;
+}
+add_controller: _add_controller effect value(s?) {
+	my $code = $item{effect};
+	my $parent = $Audio::Nama::this_op;
+	my $values = $item{"value(s?)"};
+	my $id = Audio::Nama::Text::t_add_ctrl($parent, $code, $values);
+	if($id)
+	{
+		my $i = 	Audio::Nama::effect_index($code);
+		my $iname = $Audio::Nama::effects[$i]->{name};
+		my $pi = 	Audio::Nama::effect_index($Audio::Nama::cops{$parent}->{type});
+		my $pname = $Audio::Nama::effects[$pi]->{name};
+		print "\nAdded $id ($iname) to $parent ($pname)\n\n";
 	}
 	1;
 }
@@ -3037,14 +3037,6 @@ list_history: _list_history {
 	my %seen;
 	map { print "$_\n" unless $seen{$_}; $seen{$_}++ } @history
 }
-main_off: _main_off { 
-	$Audio::Nama::main_out = 0;
-1;
-} 
-main_on: _main_on { 
-	$Audio::Nama::main_out = 1;
-1;
-} 
 add_send_bus_cooked: _add_send_bus_cooked bus_name destination {
 	Audio::Nama::add_send_bus( $item{bus_name}, $item{destination}, 'cooked' );
 	1;
@@ -3363,8 +3355,6 @@ command: mixoff
 command: automix
 command: master_on
 command: master_off
-command: main_off
-command: main_on
 command: add_track
 command: add_tracks
 command: link_track
@@ -3553,8 +3543,6 @@ _mixoff: /mixoff\b/ | /mxo\b/
 _automix: /automix\b/
 _master_on: /master_on\b/ | /mr\b/
 _master_off: /master_off\b/ | /mro\b/
-_main_off: /main_off\b/
-_main_on: /main_on\b/
 _add_track: /add_track\b/ | /add\b/ | /new\b/
 _add_tracks: /add_tracks\b/ | /add\b/ | /new\b/
 _link_track: /link_track\b/ | /link\b/
@@ -3585,8 +3573,8 @@ _pan_right: /pan_right\b/ | /pr\b/
 _pan_left: /pan_left\b/ | /pl\b/
 _pan_center: /pan_center\b/ | /pc\b/
 _pan_back: /pan_back\b/ | /pb\b/
-_show_tracks: /show_tracks\b/ | /show\b/ | /lt\b/
-_show_tracks_all: /show_tracks_all\b/ | /sha\b/ | /showa\b/
+_show_tracks: /show_tracks\b/ | /lt\b/
+_show_tracks_all: /show_tracks_all\b/ | /show\b/ | /sha\b/ | /showa\b/
 _show_bus_tracks: /show_bus_tracks\b/ | /shb\b/
 _show_track: /show_track\b/ | /sh\b/
 _show_mode: /show_mode\b/ | /shm\b/
@@ -4320,7 +4308,7 @@ volume_control_operator: eadb # must be 'ea' or 'eadb'
 
 # effects for use in mastering mode
 
-eq: Parametric1 1 0 0 40 0.125 0 0 200 0.125 0 0 600 0.125 0 0 3300 0.125 0
+eq: Parametric1 1 0 0 40 1 0 0 200 1 0 0 600 1 0 0 3300 1 0
 
 low_pass: lowpass_iir 106 2
 

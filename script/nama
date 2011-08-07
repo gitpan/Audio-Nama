@@ -871,24 +871,6 @@ C<master_off>
 
 =back
 
-=head2 General commands
-
-=head4 B<main_off> - Turn off main output
-
-=over 8
-
-C<main_off> 
-
-=back
-
-=head4 B<main_on> - Turn on main output
-
-=over 8
-
-C<main_on> 
-
-=back
-
 =head2 Track commands
 
 =head4 B<add_track> (add new) - Create a new track
@@ -1155,7 +1137,7 @@ C<pan_back>
 
 =back
 
-=head4 B<show_tracks> (show lt) - Show track status
+=head4 B<show_tracks> (lt) - Show track status
 
 =over 8
 
@@ -1163,7 +1145,7 @@ C<show_tracks>
 
 =back
 
-=head4 B<show_tracks_all> (sha showa) - Show status of all tracks, visible and hidden
+=head4 B<show_tracks_all> (show sha showa) - Show status of all tracks, visible and hidden
 
 =over 8
 
@@ -1508,11 +1490,11 @@ C<loop_disable>
 
 =head2 Effect commands
 
-=head4 B<add_controller> (acl) - Add a controller to an operator (use mfx to modify, rfx to remove)
+=head4 B<add_controller> (acl) - Add a controller to an operator (current operator, by default) use mfx to modify, rfx to remove)
 
 =over 8
 
-C<add_controller> <s_parent_id> <s_effect_code> [ <f_param1> <f_param2>...]
+C<add_controller> [<s_operator_id>] <s_effect_code> [ <f_param1> <f_param2>...]
 
 =back
 
