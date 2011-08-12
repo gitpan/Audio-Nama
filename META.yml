@@ -47,4 +47,4 @@ requires:
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/bolangi/nama
-version: 1.076
+version: 1.077

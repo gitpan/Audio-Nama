@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.076;
+$VERSION = 1.077;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -4714,7 +4714,7 @@ __END__
 
 =head1 NAME
 
-Nama (Audio::Nama) - an audio recording, mixing and editing application
+Nama/Audio::Nama - an audio recording, mixing and editing application
 
 =head1 DESCRIPTION
 
