@@ -23,6 +23,7 @@ our (
 	$sock,
 	$ecasound_tcp_port,
 	$hires,
+	$waveform_viewer,
 
 );
 sub initialize_interfaces {
@@ -302,5 +303,7 @@ sub eval_iam_libecasoundc{
 	}
 	"@result";
 }
+
+	
 1;
 __END__

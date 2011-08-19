@@ -26,7 +26,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = 1.077;
+$VERSION = 1.078;
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -197,6 +197,10 @@ our (
 	$midi_output_dev, 
 	$controller_ports,	# where we listen for MIDI messages
     $midi_inputs,		# on/off/capture
+
+# category: view waveform
+
+    $waveform_viewer,   # mhwaveedit at present
 
 # category: filenames
 
@@ -2398,6 +2402,14 @@ offset_run_off:
   type: setup
   short: ofo
   what: clear offset run mode
+view_waveform:
+  type: general
+  short: wview
+  what: launch mhwavedit to view/edit waveform of current track/version WAV file
+edit_waveform:
+  type: general
+  short: wedit
+  what: launch audacity to view/edit waveform of current track/version WAV file
 ...
 
 __[grammar]__
@@ -3330,6 +3342,33 @@ offset_run_off: _offset_run_off {
 	print "no run offset.\n";
 	Audio::Nama::offset_run_mode(0); 1
 }
+view_waveform: _view_waveform { 
+	my $viewer = 'mhwaveedit';
+	if( `which $viewer` =~ m/\S/){ 
+		my $cmd = join " ",
+			$viewer,
+			"--driver",
+			$Audio::Nama::jack_running ? "jack" : "alsa",
+			$Audio::Nama::this_track->full_path,
+			"&";
+		system($cmd) 
+	}
+	else { print "No waveform viewer available (need to install Mhwaveedit?)\n" }
+}
+edit_waveform: _edit_waveform { 
+	if ( `which audacity` =~ m/\S/ ){  
+		my $cmd = join " ",
+			'audacity',
+			$Audio::Nama::this_track->full_path,
+			"&";
+		my $old_pwd = Audio::Nama::getcwd();		
+		chdir Audio::Nama::this_wav_dir();
+		system($cmd);
+		chdir $old_pwd;
+	}
+	else { print "No waveform editor available (need to install Audacity?)\n" }
+	1;
+}
 
 command: help
 command: help_effect
@@ -3519,6 +3558,8 @@ command: limit_run_time
 command: limit_run_time_off
 command: offset_run
 command: offset_run_off
+command: view_waveform
+command: edit_waveform
 _help: /help\b/ | /h\b/
 _help_effect: /help_effect\b/ | /hfx\b/ | /he\b/
 _find_effect: /find_effect\b/ | /ffx\b/ | /fe\b/
@@ -3707,6 +3748,8 @@ _limit_run_time: /limit_run_time\b/ | /lrt\b/
 _limit_run_time_off: /limit_run_time_off\b/ | /lro\b/
 _offset_run: /offset_run\b/ | /ofr\b/
 _offset_run_off: /offset_run_off\b/ | /ofo\b/
+_view_waveform: /view_waveform\b/ | /wview\b/
+_edit_waveform: /edit_waveform\b/ | /wedit\b/
 __[chain_op_hints_yml]__
 ---
 -

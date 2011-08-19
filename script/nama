@@ -2317,6 +2317,24 @@ C<offset_run_off>
 
 =back
 
+=head2 General commands
+
+=head4 B<view_waveform> (wview) - Launch mhwavedit to view/edit waveform of current track/version WAV file
+
+=over 8
+
+C<view_waveform> 
+
+=back
+
+=head4 B<edit_waveform> (wedit) - Launch audacity to view/edit waveform of current track/version WAV file
+
+=over 8
+
+C<edit_waveform> 
+
+=back
+
 =head1 DIAGNOSTICS
 
 On any change in setup, the GUI display updates and
