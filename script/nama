@@ -18,23 +18,22 @@ non-destructive editing, mixing and mastering using the
 Ecasound audio engine developed by Kai Vehmanen.
 Primarily text-based, it also has a simple Tk based GUI.
  
-Features include tracks with multiple WAV versions (AKA
-takes), buses, effects, presets, sends, inserts, marks,
-regions, edits, templates and user-defined commands. Nama
-runs under JACK and ALSA audio frameworks, automatically
-detects LADSPA plugins, and supports Ladish Level 1 session
-handling.
+Features include tracks with multiple versions (AKA takes)
+buses, effects, presets, sends, inserts, marks, regions,
+edits, templates and user-defined commands. Nama runs under
+JACK and ALSA audio frameworks, automatically detects LADSPA
+plugins, and supports Ladish Level 1 session handling.
 
 Nama's audio processing is non-destructive by default:
 effects are applied in realtime; edits are accomplished
 through crossfades. These modifications to a track can be
-"frozen" as a new version for that track.
+frozen as a new version for that track.
  
 The command prompt accepts Nama commands, Ecasound
 interactive-mode commands, shell commands and perl code,
-providing command history and autocompletion.  The help
-system covers internal commands and LADSPA effects and
-includes keyword search.
+with command history and autocompletion.  The help
+system provides documentation and keyword search 
+covering Nama commands and effects.
 
 By default, Nama displays a simple graphic interface while
 the command processor runs in a terminal window. The B<-t>
@@ -133,7 +132,7 @@ Supply a command to execute
 The Ecasound audio engine is configured through use of
 I<chain setups> that specify the signal processing network.
 After lauching the engine, realtime control capabilities are
-available, for example to adjust signal volume and to set playback
+available, for example to adjust effect parameters and set playback
 position.
 
 Nama serves as an intermediary, taking high-level commands
@@ -141,17 +140,17 @@ from the user, generating appropriate chain setups for
 recording, playback, mixing, etc. and running the audio
 engine.
 
-=head2 STATIC COMMANDS
+=head2 Static Commands
 
-Static commands affect I<future> runs of the audio
-engine. For example, B<rec, mon> and B<off>
-determine whether the current track will get its audio
-stream from a live source or whether an existing WAV file
-will be played back. Nama responds to static commands by
+Static commands affect I<future> runs of the audio engine.
+For example, B<rec, mon> and B<off> determine whether the
+current track will get its audio stream from an external
+(usually live) source or whether an existing WAV file will
+be played back. Nama responds to static commands by
 automatically reconfiguring the engine and displaying the
 updated track status.
 
-=head2 DYNAMIC COMMANDS
+=head2 Dynamic Commands
 
 Once a chain setup is loaded and the engine is launched,
 another set of commands controls the realtime behavior of
@@ -161,7 +160,7 @@ playback repositioning commands such C<forward>, C<rewind> and
 C<setpos>. Effects may be added, modified or removed 
 while the engine is running.
 
-=head2 CONFIGURATION
+=head2 Configuration
 
 General configuration of sound devices and program options
 is performed by editing the F<.namarc> file. On Nama's first
@@ -172,28 +171,38 @@ the user's home directory.
 
 Invoked by default if Tk is installed, this interface
 provides a subset of Nama's functionality on two
-windows, one for general control, the second for effects. 
+windows: 
 
-The B<main window> has buttons for project create, load
-and save, for adding tracks and effects, and for setting
-the vol, pan and record status of each track.
+=head2 Main Window
+
+The top section has buttons for creating, loading
+and saving projects, adding tracks,
+adding effects to tracks.
+In short, for setup.
+
+Below are buttons for controlling the transport (start, stop
+and friends) and for setting marks. 
 
 The GUI project name bar and time display change color to indicate
 whether the upcoming operation will include live recording
 (red), mixdown only (yellow) or playback only (green).  Live
 recording and mixdown can take place simultaneously.
 
+=head2 Effects Window
+
 The B<effects window> provides sliders for each effect
-parameters. Parameter range, defaults, and log/linear
+parameter of each track. Parameter range, defaults, and log/linear
 scaling hints are automatically detected. Text-entry widgets
 are used to enter parameters values for plugins without
 hinted ranges.
 
-The command prompt appears in the terminal window
-during GUI operation. Text commands may be issued at any
-time.
+=head2 Terminal Window 
 
-=head1 TEXT UI
+The command prompt appears in the terminal window during GUI
+operation. Text commands are used to access Nama's more
+advanced functions.
+
+=head1 TEXT USER INTERFACE
 
 Press the I<Enter> key if necessary to get the 
 command prompt, which will look something like this:
@@ -249,7 +258,7 @@ Master track on the way to soundcard for monitoring.
 The following sections describes track attributes and
 their effects.
 
-=head2 WIDTH
+=head2 Width
 
 Specifying 'mono' means the track has one input channel, which
 will be recorded as a mono WAV file. Mono track signals are
@@ -287,32 +296,17 @@ will show OFF status, even if set to MON.
 
 =head3 Bus setting
 
-We describe the effect of Main bus REC/MON/OFF settings on
-member tracks. (Sub-bus settings have similar effects on their
-tracks.)
-
-The Main bus REC setting does not limit user track status in
-any way.
-
-The Main bus MON setting disables recording for member tracks.
-Track REC status is forced to MON if a WAV file
-is available, or OFF if no WAV file is available.
-
-The Main bus OFF setting forces all user tracks to OFF
-status, causing them to be excluded from the chain setup.
-I<Note: This setting is distinct from the action of the
-C<mute> command, which sets the volume of the track to
-zero.>
-
-The Main bus MON mode triggers automatically after a successful
-recording run.
+Nama provides MON and OFF settings for buses.
+OFF (set by C<bus_off>) removes all member tracks from the chain
+setup, MON (set by C<bus_mon> restores them.
+(The bus REC setting is obsolete, now equivalent to MON.) 
 
 The B<mixplay> command sets the Mixdown track to MON and the
 Main bus to OFF.
 
-=head2 VERSION NUMBER
+=head2 Version Number
 
-Multiple WAV files can be recorded for each track. These are
+Multiple WAV files ("takes") can be recorded for each track. These are
 distinguished by a version number that increments with each
 recording run, i.e. F<sax_1.wav>, F<sax_2.wav>, etc.  All
 WAV files recorded in the same run have the same version
@@ -326,13 +320,13 @@ the fifth song of a live recording session.
 
 The track version setting, if present, overrides the bus
 setting. Setting the track version to zero restores control
-of the version number to the bus setting.
+of the version number to the bus.
 
 The Main bus version setting does I<not> currently propagate to
 sub-buses. If you have sub-buses you must set bus version 
 numbers for each separately if desired.
 
-=head2 MARKS
+=head2 Marks
 
 Marks in Nama are similar to those in other audio editing
 software, with one small caveat: Mark positions are relative
@@ -341,36 +335,43 @@ involves a single track, and you will be shortening the
 stream by setting a region to play, set any marks you need
 I<after> defining the region.
 
-=head2 REGIONS
+=head2 Regions
 
 The C<region> command allows you to define endpoints
 for a portion of an audio file. Use the C<shift> command
 to specify a delay for starting playback.
 
-Only one region may be specified per track. To work around
-this limitation, use the C<new_region> command to clone a
-track, specifying a new region definition. You can then
-independently control volume and pan of this new region,
-apply effects, etc.
+Each track can have one region definition. For multiple
+regions, the C<new_region> command takes a pair of marks to
+create a read-only copy of the current track with region
+definition. 
 
-The C<link_track> command can clone tracks from other
-Nama projects. 
+You can control this region as you would any other other
+track, applying effects, adjusting volume, etc.
 
-=head2 EFFECTS
+Currently, regions are not clipped out of their host track.
+This feature may be implemented in future.
+
+=head3 Using Tracks from Other Projects
+
+The C<link_track> clones a read-only track from
+another track, which may belong to a different project. 
+
+=head2 Effects
 
 Each track gets volume and pan effects by default.  New
 effects added using C<add_effect> are applied after pan 
 volume controls.  You can position effects anywhere you choose
 using C<insert_effect>.
 
-=head3 FADERS
+=head3 Fades
 
 Nama allows you to place fades on any track. Fades are
-logarithmic, defined by a mark position and a duration.  An
-initial volume operator, -eadb, is additionally applied to
-tracks as necessary to enable this function.
+logarithmic, defined by a mark position and a duration. An
+additional volume operator, -eadb, is applied to each track
+to host the envelope controller that implements fades.
 
-=head3 SENDS AND INSERTS
+=head3 Sends and Inserts
 
 The C<send> command can route a track's post-fader output
 to a soundcard channel or JACK client in addition to the
@@ -384,13 +385,13 @@ setting of 100% wet.
 
 Each track can have one pre-fader and one post-fader insert.
 
-=head2 BUNCHES
+=head2 Bunches
 
 A bunch is just a list of track names. Bunch names are used
-with the keyword C<for> to apply one or more commands to to several
+with the keyword C<for> to apply one or more commands to several
 tracks at once. A bunch can be created with the C<new_bunch>
 command. Any bus name can also be treated as a bunch.
-Finally, a number of special bunch keywords are available.
+Finally, several system defined bunches are available:
 
 =over 12
 
@@ -404,9 +405,9 @@ All tracks with the corresponding I<status> in the current bus
 
 =back
 
-=head2 BUSES
+=head2 Buses
 
-=head3 SUB BUSES
+=head3 Sub Buses
 
 B<Sub buses> enable multiple tracks to be routed through a
 single mix track before feeding the main mixer bus (or
@@ -428,7 +429,7 @@ the bus and is stereo by default.
 	# use the mix track to control bus output volume
 	Strings vol - 10
 
-=head3 SEND BUSES
+=head3 Send Buses
 
 B<Send buses> can be used as instrument monitors,
 or to send pre- or post-fader signals from multiple
@@ -436,9 +437,9 @@ user tracks to an external program such as jconverter
 
 =head1 ROUTING
 
-=head2 General notes
+=head2 General Notes
 
-While Nama can address tracks by either a name and a number,
+While Nama can address tracks by either name and track number,
 the chain setups use the track number exclusively.
 
 The Master track (mixer output control) is always
@@ -449,7 +450,7 @@ two tracks, or to allow one track to have multiple inputs or
 outputs. Each loop device adds one buffer, which increases
 latency.
 
-=head2 Flow diagrams
+=head2 Flow Diagrams
 
 Let's examine the signal flow from track 3, the first 
 available user track. Assume track 3 is named "sax".
@@ -495,7 +496,7 @@ soundcard or WAV file.
 
                        +- Low -+ 
                        |       |
-         ------ Eq ----+- Mid -+--- Boost -> soundcard/wav_out
+    Master_in --- Eq --+- Mid -+--- Boost -> soundcard/wav_out
                        |       |
                        +- High + 
 
@@ -513,9 +514,17 @@ in the configuration file F<.namarc>.
 
 The C<mixdown> command configures Nama for mixdown. 
 The Mixdown track is set to REC (equivalent to C<Mixdown rec>) and the audio
-monitoring output is turned off (equivalent to C<main_off>).
+monitoring output is turned off (equivalent to C<Main off>).
 
 Mixdown proceeds after you start the transport.
+
+As a convenience, Mixdown_nn.wav will be symlinked to
+F<<branch_name>_nn.wav> in the project directory. (If git is
+disabled or not available F<<project_name>_nn.wav> is used
+instead)  Corresponding encoded files are created if the
+"mixdown_encodings" option is set. Acceptable values are a
+space-separated list. The default is "mixdown_encodings: ogg
+mp3".
 
 =head2 Preview and Doodle Modes
 
@@ -526,29 +535,75 @@ mode> disables MON inputs while enabling only one REC track per
 signal source. The C<arm> command releases both preview
 and doodle modes.
 
-=head2 Autosave
+=head2 Saving Projects
 
-The B<save> command is the usual way to save your work.
-Most settings are saved in the file F<State.yml> in the
-current project directory.
+The C<save> command is the usual way to save your work.
+Settings related to the state of the current mix
+are saved in the file F<State.json> in the
+current project directory. F<State.json> is tracked by git. 
 
-When you type B<quit> Nama will automatically save your 
-work to F<State.yml>. This will overwrite previous settings
-in F<State.yml>. If you I<don't> want this behavior, use
+C<save> updates several other data files as well:
+
+F<Aux.json>, in the current project directory, contains
+data that is part of the project (such as command history
+and track comments) with no direct effect on the project audio.  
+
+F<global_effect_chains.json>, in the project root directory,
+contains system and user defined effect chains.
+
+C<save somename.json> will force saving to a different
+filename. Similarly C<get somename.json> will load
+the corresponding file.
+
+(The F<.json> suffix may be omitted if git is not present
+or is disabled in F<.namarc>.)
+
+=head3 Requirements to Use Git for saving projects
+
+To use git for version control, you must have git installed and, 
+"use_git: 1" must be set in F<.namarc>.
+
+=head3 Standard git commands
+
+You can issue git commands in the normal way,
+and Nama will stay out of your way. Note that
+merging of branches is untested.
+
+=head3 Simplified Workflow Using Git to Manage Project State
+
+Use the C<save> command periodically. On each save command,
+changes to F<State.json> will be committed to the
+repository.  The commit message will include a list of
+commands executed since the previous commit.
+
+The C<save> and C<get> commands for branches behave in a
+similar way to save/restore of named files. 
+
+You can say C<save initial-mix> and C<get initial-mix> 
+and have them behave as expected, without being
+familiar with Git.
+
+What actually happens: C<save initial-mix> will save project
+state to F<State.json>, commit changes to that file to the
+git repository, and tag current branch's HEAD commit as
+"initial-mix". The current branch does not change, remains
+in the default branch, "master". 
+
+Later on, on typing C<get initial-mix>, Nama automatically
+promotes the tagged commit "initial-mix" to a branch named
+"initial-mix-branch" which becomes the current branch.
+
+If you want to start a new branch named something else
+at tag "initial-mix" you can say this: 
+
+C<new_branch compressed-mix initial-mix
+
+=head2 Exiting
+
+When you type C<quit> Nama will automatically save your work
+to F<State.json>. This will overwrite previous settings in
+F<State.json>. If you I<don't> want this behavior, use
 Ctrl-C to exit Nama.
-
-If you load a new project and there are unsaved 
-changes, Nama will automatically save settings
-in a file tagged with the current date and time,
-for example, F<State-autosave-2010.09.20-15:32:05>.
-
-By specifying some number of minutes for the
-B<autosave_interval> configuration variable in your .namarc
-file, Nama will save your settings periodically. However,
-Nama will not save settings while the engine is running.
-
-To avoid creating duplicate files, the new settings file
-will be created only if it differs from the previous file.
 
 =head2 Jack ports list file
 
@@ -669,33 +724,53 @@ zero or more edits, each represented by one track object.
 
 =head2 Help commands
 
-=head4 B<help> (h) - Display help
+=head4 B<help> (h) - Display help on Nama commands.
 
 =over 8
 
 C<help> [ <i_help_topic_index> | <s_help_topic_name> | <s_command_name> ]
 
+C<help marks 
+help 6 
+help mfx 
+>
+
+
+
 =back
 
-=head4 B<help_effect> (hfx he) - Display analyseplugin output if available or one-line help
+=head4 B<help_effect> (hfx he) - Display detailed help on a LADSPA or LV2 effect or ask a note to consult the Ecasound manpage for Ecasound's internal effects. For LADSPA and LV2 effects use either the analyseplugin oder analyselv2.
 
 =over 8
 
 C<help_effect> <s_label> | <i_unique_id>
 
+C<help_effect 1970 
+he etd 
+hfx lv2-vocProc 
+>
+
+
+
 =back
 
-=head4 B<find_effect> (ffx fe) - Display one-line help for effects matching search strings
+=head4 B<find_effect> (ffx fe) - Display one-line help for effects matching the search string(s).
 
 =over 8
 
 C<find_effect> <s_keyword1> [ <s_keyword2>... ]
 
+C<find_effect compressor 
+fe feedback 
+>
+
+
+
 =back
 
 =head2 General commands
 
-=head4 B<exit> (quit q) - Exit program, saving settings
+=head4 B<exit> (quit q) - Exit Nama, saving settings (the current project).
 
 =over 8
 
@@ -703,7 +778,7 @@ C<exit>
 
 =back
 
-=head4 B<memoize> - Enable WAV dir cache
+=head4 B<memoize> - Enable WAV directory caching, so Nama won't have to scan the entire project folder for new fiels after every run.
 
 =over 8
 
@@ -711,7 +786,7 @@ C<memoize>
 
 =back
 
-=head4 B<unmemoize> - Disable WAV dir cache
+=head4 B<unmemoize> - Disable WAV directory caching.
 
 =over 8
 
@@ -721,59 +796,87 @@ C<unmemoize>
 
 =head2 Transport commands
 
-=head4 B<stop> (s) - Stop transport
+=head4 B<stop> (s) - Stop transport. Stop the engine, when recording or playing back.
 
 =over 8
 
 C<stop> 
 
+C<rec 
+start 
+stop 
+>
+
+
+
 =back
 
-=head4 B<start> (t) - Start transport
+=head4 B<start> (t) - Start transport. Start the engine, to start recording or playing back.
 
 =over 8
 
 C<start> 
 
+C<doodle 
+start 
+stop 
+>
+
+
+
 =back
 
-=head4 B<getpos> (gp) - Get current playhead position (seconds)
+=head4 B<getpos> (gp) - Get the current playhead position (in seconds).
 
 =over 8
 
 C<getpos> 
 
+C<start 
+gp 
+>
+
+
+
 =back
 
-=head4 B<setpos> (sp) - Set current playhead position
+=head4 B<setpos> (sp) - Set current playhead position (in seconds).
 
 =over 8
 
 C<setpos> <f_position_seconds>
 
-C<setpos 65 (set play position to 65 seconds from start)>
+C<setpos 65.0>
 
 
 
 =back
 
-=head4 B<forward> (fw) - Move playback position forward
+=head4 B<forward> (fw) - Move playback position forwards (in seconds). Oldschool forwarding.
 
 =over 8
 
 C<forward> <f_increment_seconds>
 
+C<fw 23.7>
+
+
+
 =back
 
-=head4 B<rewind> (rw) - Move transport position backward
+=head4 B<rewind> (rw) - Move playback position backwards (in seconds). Oldschool rewind.
 
 =over 8
 
-C<rewind> <f_increment_seconds>
+C<rewind> <f_decrement_seconds>
+
+C<rewind 6.5>
+
+
 
 =back
 
-=head4 B<to_start> (beg) - Set playback head to start
+=head4 B<to_start> (beg) - Set the playback head to the start. A synonym for setpos 0.0 .
 
 =over 8
 
@@ -781,7 +884,7 @@ C<to_start>
 
 =back
 
-=head4 B<to_end> (end) - Set playback head to end minus 10 seconds
+=head4 B<to_end> (end) - Set the playback head to end minus 10 seconds.
 
 =over 8
 
@@ -789,7 +892,7 @@ C<to_end>
 
 =back
 
-=head4 B<ecasound_start> (T) - Ecasound-only start
+=head4 B<ecasound_start> (T) - Ecasound-only start. Mainly useful for diagnostics and debugging. Use the command start in normal circumstances.
 
 =over 8
 
@@ -797,7 +900,7 @@ C<ecasound_start>
 
 =back
 
-=head4 B<ecasound_stop> (S) - Ecasound-only stop
+=head4 B<ecasound_stop> (S) - Ecasound-only stop. Mainly useful for diagnostics and debugging. Use command stop in normal circumstances.
 
 =over 8
 
@@ -805,41 +908,81 @@ C<ecasound_stop>
 
 =back
 
-=head4 B<preview> - Start engine with rec_file disabled (for mic test, etc.)
+=head4 B<restart_ecasound> - Restart the Ecasound application again, when it has crashed or is behaving oddly.
+
+=over 8
+
+C<restart_ecasound> 
+
+=back
+
+=head4 B<preview> - Enter the preview mode. Configure Nama to allow playback and passthru of inputs (for mic test, rehearsals, etc.). Nothing is recorded to disk!
 
 =over 8
 
 C<preview> 
 
+C<rec 
+preview 
+start 
+stop 
+arm 
+>
+
+
+
 =back
 
-=head4 B<doodle> - Start engine while monitoring REC-enabled inputs
+=head4 B<doodle> - Enter the doodle mode. In doodle mode all live inputs from tracks - set to record - are enabled. Nama excludes multiple tracks having the same input. This mode is designed to allow rehearsing and adjusting effects without listening to playback -as in preview.
 
 =over 8
 
 C<doodle> 
 
+C<doodle 
+start 
+stop 
+arm 
+>
+
+
+
 =back
 
 =head2 Mix commands
 
-=head4 B<mixdown> (mxd) - Enable mixdown for subsequent engine runs
+=head4 B<mixdown> (mxd) - Enter mixdown mode for subsequent engine runs. You will record new mixes, until you leave mixdown mode by mixoff.
 
 =over 8
 
 C<mixdown> 
 
+C<mxd 
+t 
+mxo 
+>
+
+
+
 =back
 
-=head4 B<mixplay> (mxp) - Enable mixdown file playback, setting user tracks to OFF
+=head4 B<mixplay> (mxp) - Enter mixdown file playback mode, setting user tracks to OFF and only playing the Mixdown track. You can leave the mixplay mode by using mixoff.
 
 =over 8
 
 C<mixplay> 
 
+C<mixplay 
+start 
+stop 
+mxo 
+>
+
+
+
 =back
 
-=head4 B<mixoff> (mxo) - Set Mixdown track to OFF, user tracks to MON
+=head4 B<mixoff> (mxo) - Leave the mixdown or mixplay mode. Set Mixdown track to OFF, user tracks to MON.
 
 =over 8
 
@@ -847,7 +990,7 @@ C<mixoff>
 
 =back
 
-=head4 B<automix> - Normalize track vol levels, then mixdown
+=head4 B<automix> - Normalize track volume levels and fix DC-offsets. Then mix dwn to the Mixdown track.
 
 =over 8
 
@@ -855,15 +998,22 @@ C<automix>
 
 =back
 
-=head4 B<master_on> (mr) - Enter mastering mode. Add tracks Eq, Low, Mid, High and Boost if necessary
+=head4 B<master_on> (mr) - Turn on the mastering mode, adding tracks Eq, Low, Mid, High and Boost, if necessary. The mastering setup allows for one EQ and a three-band multiband compression and a final boosting stage. Leave the mastering mode by master_off.
 
 =over 8
 
 C<master_on> 
 
+C<mr 
+start 
+stop 
+>
+
+
+
 =back
 
-=head4 B<master_off> (mro) - Leave mastering mode
+=head4 B<master_off> (mro) - Leave mastering mode. Remove the EQ, multi-band compression and Booster.
 
 =over 8
 
@@ -873,75 +1023,95 @@ C<master_off>
 
 =head2 Track commands
 
-=head4 B<add_track> (add new) - Create a new track
+=head4 B<add_track> (add new) - Create a new audio track.
 
 =over 8
 
-C<add_track> <s_name> [ <s_key1> <s_val1> <s_key2> <s_val2>... ]
+C<add_track> <s_name>
 
-C<add_track clarinet group woodwinds>
+C<add_track clarinet 
+>
 
 
 
 =back
 
-=head4 B<add_tracks> (add new) - Create one or more new tracks
+=head4 B<add_tracks> - Create one or more new tracks in one go.
 
 =over 8
 
 C<add_tracks> <s_name1> [ <s_name2>... ]
 
-C<add_track sax violin tuba>
+C<add_tracks violin viola contra_bass>
 
 
 
 =back
 
-=head4 B<link_track> (link) - Create a read-only track that uses .WAV files from another track.
+=head4 B<link_track> (link) - Create a read-only track, that uses audio files from another track.
 
 =over 8
 
-C<link_track> <s_name> <s_target> [ <s_project> ]
+C<link_track> <s_dest_name> <s_source_name> [ <s_project> ]
 
-C<link_track intro Mixdown song_intro creates a track 'intro' using all .WAV versions from the Mixdown track of 'song_intro' project>
+C<link part_1 Mixdown my_long_song_1 
+link_track piano_conp piano 
+>
 
 
 
 =back
 
-=head4 B<import_audio> (import) - Import a sound file (wav, ogg, mp3, etc.) to the current track, resampling if necessary.
+=head4 B<import_audio> (import) - Import a sound file (wav, ogg, mp3, etc.) to the current track, resampling it, if necessary.
 
 =over 8
 
-C<import_audio> <s_wav_file_path> [i_frequency]
+C<import_audio> <s_full_path_to_file> [ <i_frequency> ]
+
+C<import /home/samples/bells.flac 
+import /home/music/song.mp3 44100 
+>
+
+
 
 =back
 
-=head4 B<set_track> - Directly set current track parameters (use with care!)
+=head4 B<set_track> - Directly set current track parameters (use with care!).
 
 =over 8
 
-C<set_track> <s_track_field> value
+C<set_track> <s_track_field> <value>
 
 =back
 
-=head4 B<rec> - REC-enable current track
+=head4 B<record> (rec) - Set current track to record from its input (also known as REC-enabling).
 
 =over 8
 
-C<rec> 
+C<record> 
+
+C<rec 
+start 
+stop 
+>
+
+
 
 =back
 
-=head4 B<mon> (on) - Set current track to MON
+=head4 B<mon> (on) - Set current track to playback the currently selected version. by default the last version is always played.
 
 =over 8
 
 C<mon> 
 
+C<mon>
+
+
+
 =back
 
-=head4 B<off> (z) - Set current track to OFF (exclude from chain setup)
+=head4 B<off> (z) - Set current track to OFF (exclude from setup). You can include the track with mon or rec.
 
 =over 8
 
@@ -949,7 +1119,7 @@ C<off>
 
 =back
 
-=head4 B<rec_defeat> (rd) - Prevent writing a WAV file for current track
+=head4 B<rec_defeat> (rd) - Prevent writing an audio file for the current track. So the track will just pass thru the incoming audio. Useful for tracks connected to internal signal generators.
 
 =over 8
 
@@ -957,7 +1127,7 @@ C<rec_defeat>
 
 =back
 
-=head4 B<rec_enable> (re) - Allow writing a WAV file for current track
+=head4 B<rec_enable> (re) - Allow writing an audio file for the current track. This is the opposite to rec_defeat. Useful to record a metronome or other special track to disk.
 
 =over 8
 
@@ -965,27 +1135,38 @@ C<rec_enable>
 
 =back
 
-=head4 B<source> (src r) - Set track source
+=head4 B<source> (src r) - Set the current track's input (source). This can be a soundcard channel or a JACK client name.
 
 =over 8
 
-C<source> <i_soundcard_channel> | 'null' (for metronome) | <s_jack_client_name> | <s_jack_port_name> | 'jack' (opens ports ecasound:trackname_in_N, connects ports listed in trackname.ports if present in project_root dir)
+C<source> <i_soundcard_channel> | 'null' | <s_jack_client_name> | <s_jack_port_name> | 'jack'
 
-C<source "MPlayer [20120]:out_0">
+C<source 3 
+source null 
+src LinuxSampler 
+r synth:output_3 
+src jack 
+>
 
 
 
 =back
 
-=head4 B<send> (out aux) - Set aux send
+=head4 B<send> (aux) - Set an aux send for the current track. Remove sends with remove_send .
 
 =over 8
 
-C<send> <i_soundcard_channel> (3 or above) | <s_jack_client_name>
+C<send> <i_soundcard_channel> | <s_jack_client_name> | <s_loop_id>
+
+C<send 3 
+send jconvolver 
+>
+
+
 
 =back
 
-=head4 B<remove_send> (nosend rms) - Remove aux send
+=head4 B<remove_send> (nosend noaux) - Remove an aux send from the current track.
 
 =over 8
 
@@ -993,7 +1174,7 @@ C<remove_send>
 
 =back
 
-=head4 B<stereo> - Record two channels for current track
+=head4 B<stereo> - Set the current track to stereo (two channels). Will record two channels or easily import stereo audio files.
 
 =over 8
 
@@ -1001,7 +1182,7 @@ C<stereo>
 
 =back
 
-=head4 B<mono> - Record one channel for current track
+=head4 B<mono> - Set the current track to mono (one channel). Will record one channel or easily import mono audio files (this is the default, when creating a track).
 
 =over 8
 
@@ -1009,19 +1190,22 @@ C<mono>
 
 =back
 
-=head4 B<set_version> (version n ver) - Set track version number for monitoring (overrides group version setting)
+=head4 B<set_version> (version ver) - Set the active version of the current track for playback/monitoring (overrides group version setting).
 
 =over 8
 
 C<set_version> <i_version_number>
 
-C<sax; version 5; sh>
+C<piano 
+version 2 
+sh 
+>
 
 
 
 =back
 
-=head4 B<destroy_current_wav> - Unlink current track's selected WAV version (use with care!)
+=head4 B<destroy_current_wav> - DESTRUCTIVE: Remove the current track\'s currently selected recording. This removes the underlying  audio file on your disk. USE WITH CARE!
 
 =over 8
 
@@ -1029,27 +1213,36 @@ C<destroy_current_wav>
 
 =back
 
-=head4 B<list_versions> (lver lv) - List version numbers of current track
+=head4 B<list_versions> (lver) - List versions of the current track. This will print the numbers of all versions of this track to the screen.
 
 =over 8
 
 C<list_versions> 
 
+C<list_versions 
+>
+
+
+
 =back
 
-=head4 B<vol> (v) - Set, modify or show current track volume
+=head4 B<vol> (v) - Change or show the current track's volume.
 
 =over 8
 
-C<vol> [ [ + | - | * | / ] <f_value> ]
+C<vol> [ [ + | - | / | * ] <f_volume> ]
 
-C<vol * 1.5 (multiply current volume setting by 1.5)>
+C<vol * 1.5 
+vol 75 
+vol - 5.7 
+vol 
+>
 
 
 
 =back
 
-=head4 B<mute> (c cut) - Mute current track volume
+=head4 B<mute> (c cut) - Mute the current track. Turn the current track's volume absolutely down. You can unmute the track with the command unmute.
 
 =over 8
 
@@ -1057,7 +1250,7 @@ C<mute>
 
 =back
 
-=head4 B<unmute> (C uncut) - Restore previous volume level
+=head4 B<unmute> (C uncut) - Restore previous volume level. It can be used after mute or solo.
 
 =over 8
 
@@ -1065,23 +1258,37 @@ C<unmute>
 
 =back
 
-=head4 B<unity> - Set current track volume to unity
+=head4 B<unity> - Set the current track's volume to unity. This will change the volume to the default value (100% or 0 dB).
 
 =over 8
 
 C<unity> 
 
+C<vol 55 
+unity 
+vol 
+>
+
+
+
 =back
 
-=head4 B<solo> (sl) - Mute all but current track
+=head4 B<solo> (sl) - Mute all tracks but the current track or the tracks or bunches specified. You can reverse this with nosolo.
 
 =over 8
 
-C<solo> [track_name(s)] [bunch_name(s)]
+C<solo> [ <strack_name_1> | <s_bunch_name_1> ] [ <s_track_name_2 | <s_bunch_name_2> ] ...
+
+C<solo 
+nosolo 
+solo piano bass Drums 
+>
+
+
 
 =back
 
-=head4 B<nosolo> (nsl) - Release solo, previously muted tracks are still muted
+=head4 B<nosolo> (nsl) - Unjute all tracks, which have been turned down by solo. Tracks, that had beenmuted before the solo command stay muted.
 
 =over 8
 
@@ -1089,23 +1296,39 @@ C<nosolo>
 
 =back
 
-=head4 B<all> - Release solo, unmuting all tracks
+=head4 B<all> - Unmute all tracks, this includes tracks muted by solo and other single tracks muted previously by mute.
 
 =over 8
 
 C<all> 
 
+C<piano 
+mute 
+sax 
+solo 
+all 
+>
+
+
+
 =back
 
-=head4 B<pan> (p) - Get/set current track pan position
+=head4 B<pan> (p) - Change or display the current panning position of the current track. Panning is moving the audio in the stereo panorama between right and left. Position is given in percent. 0 is hard left and 100 hard right, 50% is dead centre.
 
 =over 8
 
-C<pan> [ <f_value> ]
+C<pan> [ <f_pan_position_in_percent> ]
+
+C<pan 75 
+p 50 
+pan 
+>
+
+
 
 =back
 
-=head4 B<pan_right> (pr) - Pan current track fully right
+=head4 B<pan_right> (pr) - Pan the current track hard right. this is a synonym for pan 100 . Can be reverse with pan_back .
 
 =over 8
 
@@ -1113,7 +1336,7 @@ C<pan_right>
 
 =back
 
-=head4 B<pan_left> (pl) - Pan current track fully left
+=head4 B<pan_left> (pl) - Pan the current track hard left. This is a synonym for pan 0 . Can be reversed with pan_back .
 
 =over 8
 
@@ -1121,7 +1344,7 @@ C<pan_left>
 
 =back
 
-=head4 B<pan_center> (pc) - Set pan center
+=head4 B<pan_center> (pc) - Pan the current track to the centre. This is a synonym for pan 50 . Can be reversed with pan_back .
 
 =over 8
 
@@ -1129,7 +1352,7 @@ C<pan_center>
 
 =back
 
-=head4 B<pan_back> (pb) - Restore current track pan setting prior to pan_left, pan_right or pan_center
+=head4 B<pan_back> (pb) - Restore the current track's pan position prior to pan_left, pan_right or pan_center .
 
 =over 8
 
@@ -1137,7 +1360,7 @@ C<pan_back>
 
 =back
 
-=head4 B<show_tracks> (lt) - Show track status
+=head4 B<show_tracks> (lt show) - Show a list of tracks, including their index number, volume, pan position, recording status and input.
 
 =over 8
 
@@ -1145,7 +1368,7 @@ C<show_tracks>
 
 =back
 
-=head4 B<show_tracks_all> (show sha showa) - Show status of all tracks, visible and hidden
+=head4 B<show_tracks_all> (sha showa) - Show a list of all tracks, visible and hidden, with their ndex number, recording status, input, volume and pan position. This is mainly useful for diagnostics and debugging.
 
 =over 8
 
@@ -1153,7 +1376,7 @@ C<show_tracks_all>
 
 =back
 
-=head4 B<show_bus_tracks> (shb) - Show tracks in current bus
+=head4 B<show_bus_tracks> (ltb showb) - Show a list of tracks in the current bus.
 
 =over 8
 
@@ -1161,7 +1384,7 @@ C<show_bus_tracks>
 
 =back
 
-=head4 B<show_track> (sh) - Show current track status
+=head4 B<show_track> (sh) - Display information about the current track, including index, recording status, effects, inserts, versions, stereo width (a.k.a. channel count) and controllers.
 
 =over 8
 
@@ -1171,7 +1394,7 @@ C<show_track>
 
 =head2 Setup commands
 
-=head4 B<show_mode> (shm) - Show current record/playback modes
+=head4 B<show_mode> (shm) - Display the current record/playback mode. this will indicate the mode - i.e. doodle, preview, etc. - and possible record/playback settings.
 
 =over 8
 
@@ -1181,23 +1404,59 @@ C<show_mode>
 
 =head2 Track commands
 
-=head4 B<set_region> (srg) - Specify a playback region for the current track using marks. Use 'new_region' for multiple regions.
+=head4 B<show_track_latency> (shl) - Display the latency information for the current track.
+
+=over 8
+
+C<show_track_latency> 
+
+=back
+
+=head2 Diagnostics commands
+
+=head4 B<show_latency_all> (shla) - Dump all latency data.
+
+=over 8
+
+C<show_latency_all> 
+
+=back
+
+=head2 Track commands
+
+=head4 B<set_region> (srg) - Specify a playback region for the current track using marks. Use the command new_region to create more than one region from a track. Can be reversed with remove_region .
 
 =over 8
 
 C<set_region> <s_start_mark_name> <s_end_mark_name>
 
+C<sax 
+setpos 2.5 
+mark sax_start 
+sp 120.5 
+mark sax_end 
+set_region sax_start sax_end 
+>
+
+
+
 =back
 
-=head4 B<new_region> (nrg) - Create a region for the current track using an auxiliary track
+=head4 B<add_region> (arg) - Create a region for the current track using an auxiliary track. This is a named region, which leaves the original track visible and untouched.
 
 =over 8
 
-C<new_region> <s_start_mark_name> <s_end_mark_name> [<s_region_name>]
+C<add_region> <s_start_mark_name> | <f_start_time> <s_end_mark_name> | <f_end_time> [ <s_region_name> ]
+
+C<sax 
+new_region sax_start 66.7 trimmed_sax 
+>
+
+
 
 =back
 
-=head4 B<remove_region> (rrg) - Remove region (including associated auxiliary track)
+=head4 B<remove_region> (rrg) - Remove the current region (including associated the auxiliary track).
 
 =over 8
 
@@ -1205,15 +1464,21 @@ C<remove_region>
 
 =back
 
-=head4 B<shift_track> (shift playat pat) - Set playback delay for track or region
+=head4 B<shift_track> (shift playat pat) - Move the beginning of the track or region, also known as offsetting or shifting. Can be reversed by unshift_track .
 
 =over 8
 
 C<shift_track> <s_start_mark_name> | <i_start_mark_index | <f_start_seconds>
 
+C<piano 
+shift 6.7 
+>
+
+
+
 =back
 
-=head4 B<unshift_track> (unshift) - Remove playback delay for track or region
+=head4 B<unshift_track> (unshift) - Move the start of a track or region back to 0.0 seconds (the beginning of the setup.
 
 =over 8
 
@@ -1221,19 +1486,20 @@ C<unshift_track>
 
 =back
 
-=head4 B<modifiers> (mods mod) - Set/show modifiers for current track (man ecasound for details)
+=head4 B<modifiers> (mods mod) - Add/show modifiers for the current track (man ecasound for details). This is only useful in rare cases.
 
 =over 8
 
 C<modifiers> [ Audio file sequencing parameters ]
 
-C<modifiers select 5 15.2>
+C<modifiers select 5 15.2 
+>
 
 
 
 =back
 
-=head4 B<nomodifiers> (nomods nomod) - Remove modifiers from current track
+=head4 B<nomodifiers> (nomods nomod) - Remove modifiers from the current track.
 
 =over 8
 
@@ -1241,7 +1507,7 @@ C<nomodifiers>
 
 =back
 
-=head4 B<normalize> (norm ecanormalize) - Apply ecanormalize to current track version
+=head4 B<normalize> (norm ecanormalize) - Apply ecanormalize to the current track version. This will raise the gain/volume of the current track as far as possible and store it that way on disk. Note: this will permanently change the file.
 
 =over 8
 
@@ -1249,7 +1515,7 @@ C<normalize>
 
 =back
 
-=head4 B<fixdc> (ecafixdc) - Apply ecafixdc to current track version
+=head4 B<fixdc> (ecafixdc) - Fix the DC-offset of the current track using ecafixdc. Note: This will permanently change the file.
 
 =over 8
 
@@ -1257,7 +1523,7 @@ C<fixdc>
 
 =back
 
-=head4 B<autofix_tracks> (autofix) - Fixdc and normalize selected versions of all MON tracks
+=head4 B<autofix_tracks> (autofix) - Apply the commands fixdc and normalize to all current version of all tracks, that are set to playback, i.e. MON .
 
 =over 8
 
@@ -1265,7 +1531,7 @@ C<autofix_tracks>
 
 =back
 
-=head4 B<remove_track> - Remove effects, parameters and GUI for current track
+=head4 B<remove_track> - Remove the current track. This will only remove the effects and display. all recorded audio will emain on your disk. The default is to ask, before Nama removes a track. this can be changed in namarc .
 
 =over 8
 
@@ -1275,7 +1541,7 @@ C<remove_track>
 
 =head2 Bus commands
 
-=head4 B<bus_rec> (brec grec) - Rec-enable bus tracks
+=head4 B<bus_rec> (brec grec) - Set a bus mix_track to record (the default behaviour).
 
 =over 8
 
@@ -1283,7 +1549,7 @@ C<bus_rec>
 
 =back
 
-=head4 B<bus_mon> (bmon gmon) - Set group-mon mode for bus tracks
+=head4 B<bus_mon> (bmon gmon) - Set a bus mix_track to playback. This only does anything, if a complete bus has been cached/frozend/bounced before.
 
 =over 8
 
@@ -1291,7 +1557,7 @@ C<bus_mon>
 
 =back
 
-=head4 B<bus_off> (boff goff) - Set group-off mode for bus tracks
+=head4 B<bus_off> (boff goff) - Set a bus mixtrack to OFF. Can be reversed with bus_rec and bus_mon.
 
 =over 8
 
@@ -1301,7 +1567,7 @@ C<bus_off>
 
 =head2 Group commands
 
-=head4 B<bus_version> (bn bver bv gver gn gv) - Set default monitoring version for tracks in current bus
+=head4 B<bus_version> (bver gver) - Set the default monitoring version for tracks in the current bus.
 
 =over 8
 
@@ -1309,15 +1575,23 @@ C<bus_version>
 
 =back
 
-=head4 B<new_bunch> (nb) - Define a bunch of tracks
+=head4 B<add_bunch> (abn) - Define a bunch of tracks. A bunch is useful for shorter for statements.
 
 =over 8
 
-C<new_bunch> <s_group_name> [<s_track1> <s_track2>...]
+C<add_bunch> <s_bunch_name> [ <s_track_name_1> | <i_track_index_1> ] ...
+
+C<new_bunch woodwind 
+nb strings violin cello basso 
+for strings;mute 
+for strings;vol * 0.8 
+>
+
+
 
 =back
 
-=head4 B<list_bunches> (lb) - List track bunches
+=head4 B<list_bunches> (lbn) - Dispaly a list of all bunches and their tracks.
 
 =over 8
 
@@ -1325,41 +1599,86 @@ C<list_bunches>
 
 =back
 
-=head4 B<remove_bunches> (rb) - Remove the definition of a track bunch
+=head4 B<remove_bunch> (rbn) - Remove the specified bunches. This does not remove the tracks, only the groupings.
 
 =over 8
 
-C<remove_bunches> <s_bunch_name> [<s_bunch_name>...]
+C<remove_bunch> <s_bunch_name> [ <s_bunch_name> ] ...
 
 =back
 
-=head4 B<add_to_bunch> (ab) - Add track(s) to a bunch
+=head4 B<add_to_bunch> (atbn) - Add track(s) to a bunch.
 
 =over 8
 
-C<add_to_bunch> <s_bunch_name> <s_track1> [<s_track2>...]
+C<add_to_bunch> <s_bunch_name> <s_track1> [ <s_track2> ] ...
+
+C<add_to_bunch woodwind oboe sax_1 flute 
+>
+
+
 
 =back
 
 =head2 Project commands
 
-=head4 B<save_state> (keep save) - Save project settings to disk
+=head4 B<commit> (ci) - Commit Nama's current state
 
 =over 8
 
-C<save_state> [ <s_settings_file> ]
+C<commit> <s_message>
 
 =back
 
-=head4 B<get_state> (recall retrieve) - Retrieve project settings
+=head4 B<tag> - Git tag the current branch HEAD commit
 
 =over 8
 
-C<get_state> [ <s_settings_file> ]
+C<tag> <s_tag_name> [<s_message>]
 
 =back
 
-=head4 B<list_projects> (lp) - List projects
+=head4 B<branch> (br) - Change to named branch
+
+=over 8
+
+C<branch> <s_branch_name>
+
+=back
+
+=head4 B<list_branches> (lb lbr) - List branches when called with no arguments
+
+=over 8
+
+C<list_branches> <s_branch_name>
+
+=back
+
+=head4 B<new_branch> (nbr) - Create a new branch
+
+=over 8
+
+C<new_branch> <s_new_branch_name> [<s_existing_branch_name>]
+
+=back
+
+=head4 B<save_state> (keep save) - Save the project settings as file or tagged commit
+
+=over 8
+
+C<save_state> [ <s_settings_target> [ <s_message> ] ]
+
+=back
+
+=head4 B<get_state> (get recall retrieve) - Retrieve project settings from file, branch or tag
+
+=over 8
+
+C<get_state> <s_settings_target>
+
+=back
+
+=head4 B<list_projects> (lp) - List all projects. This will list all Nama projects, which are stored in the Nama project root directory.
 
 =over 8
 
@@ -1367,23 +1686,31 @@ C<list_projects>
 
 =back
 
-=head4 B<create_project> (create) - Create a new project
+=head4 B<new_project> (create) - Create or open a new empty Nama project.
 
 =over 8
 
-C<create_project> <s_new_project_name>
+C<new_project> <s_new_project_name>
+
+C<create my_song>
+
+
 
 =back
 
-=head4 B<load_project> (load) - Load an existing project using last saved state
+=head4 B<load_project> (load) - Load an existing project. This will load the project from the default project state file. If you wish to load a project state saved to a user specific file, load teh project and then use get_state.
 
 =over 8
 
-C<load_project> <s_project_name>
+C<load_project> <s_existing_project_name>
+
+C<load my_old_song>
+
+
 
 =back
 
-=head4 B<project_name> (project name) - Show current project name
+=head4 B<project_name> (project name) - Display the name of the current project.
 
 =over 8
 
@@ -1391,23 +1718,33 @@ C<project_name>
 
 =back
 
-=head4 B<new_project_template> (npt) - Make a project template based on current project
+=head4 B<new_project_template> (npt) - Make a project template based on the current project. This will include tracks and busses.
 
 =over 8
 
-C<new_project_template> <s_template_name> [<s_template_description>]
+C<new_project_template> <s_template_name> [ <s_template_description> ]
+
+C<new_project_template my_band_setup "tracks and busses for bass, drums and me"
+>
+
+
 
 =back
 
-=head4 B<use_project_template> (upt apt) - Use a template to create tracks in a newly created, empty project
+=head4 B<use_project_template> (upt apt) - Use a template to create tracks in a newly created, empty project.
 
 =over 8
 
 C<use_project_template> <s_template_name>
 
+C<apt my_band_setup 
+>
+
+
+
 =back
 
-=head4 B<list_project_templates> (lpt) - List project templates
+=head4 B<list_project_templates> (lpt) - List all project templates.
 
 =over 8
 
@@ -1415,17 +1752,17 @@ C<list_project_templates>
 
 =back
 
-=head4 B<remove_project_template> (rpt dpt) - Remove one or more project templates
+=head4 B<destroy_project_template> - Remove one or more project templates.
 
 =over 8
 
-C<remove_project_template> <s_template_name1> [<s_template_name2>... ]
+C<destroy_project_template> <s_template_name1> [ <s_template_name2> ] ...
 
 =back
 
 =head2 Setup commands
 
-=head4 B<generate> (gen) - Generate chain setup for audio processing
+=head4 B<generate> (gen) - Generate an Ecasound chain setup for audio processing manually. Mainly useful for diagnostics and debugging.
 
 =over 8
 
@@ -1433,7 +1770,7 @@ C<generate>
 
 =back
 
-=head4 B<arm> - Generate and connect chain setup
+=head4 B<arm> - Generate and connect a setup to record or playback. If you are in dodle or preview mode, this will bring you back to normal mode.
 
 =over 8
 
@@ -1441,7 +1778,15 @@ C<arm>
 
 =back
 
-=head4 B<connect> (con) - Connect chain setup
+=head4 B<arm_start> (arms) - Generate and connect the setup and then start. This means, that you can directly record or listen to your tracks.
+
+=over 8
+
+C<arm_start> 
+
+=back
+
+=head4 B<connect> (con) - Connect the setup, so everything is ready to run. Ifusing JACK, this means, that Nama will connect to all the necessary JACK ports.
 
 =over 8
 
@@ -1449,7 +1794,7 @@ C<connect>
 
 =back
 
-=head4 B<disconnect> (dcon) - Disconnect chain setup
+=head4 B<disconnect> (dcon) - Disconnect the setup. If running with JACK, this will disconnect from all JACK ports.
 
 =over 8
 
@@ -1457,7 +1802,7 @@ C<disconnect>
 
 =back
 
-=head4 B<show_chain_setup> (chains) - Show current Ecasound chain setup
+=head4 B<show_chain_setup> (chains) - Show the underlying Ecasound chain setup for the current working condition. Mainly useful for diagnostics and debugging.
 
 =over 8
 
@@ -1465,127 +1810,197 @@ C<show_chain_setup>
 
 =back
 
-=head4 B<loop_enable> (loop) - Loop playback between two points
+=head4 B<loop> (l) - Loop the playback between two points. Can be stopped with loop_disable
 
 =over 8
 
-C<loop_enable> <start> <end> (start, end: mark names, mark indices, decimal seconds)
+C<loop> <s_start_mark_name> | <i_start_mark_index> | <f_start_time_in_secs> <s_end_mark_name> | <i_end_mark_index> | <f_end_time_in_secs>
 
-C<loop_enable 1.5 10.0  ; loop between 1.5 and 10.0 seconds
-loop_enable 1 5       ; loop between mark indices 1 and 5 
-loop_enable start end ; loop between mark ids 'start' and 'end'
+C<loop 1.5 10.0 
+loop 1 5 
+loop sax_start 12.6 
 >
 
 
 
 =back
 
-=head4 B<loop_disable> (noloop nl) - Disable automatic looping
+=head4 B<noloop> (nl) - Disable looping.
 
 =over 8
 
-C<loop_disable> 
+C<noloop> 
 
 =back
 
 =head2 Effect commands
 
-=head4 B<add_controller> (acl) - Add a controller to an operator (current operator, by default) use mfx to modify, rfx to remove)
+=head4 B<add_controller> (acl) - Add a controller to an effect (current effect, by default). Controllers can be modified by using mfx and remove using rfx.
 
 =over 8
 
-C<add_controller> [<s_operator_id>] <s_effect_code> [ <f_param1> <f_param2>...]
+C<add_controller> [ <s_operator_id> ] <s_effect_code> [ <f_param1> <f_param2> ] ...
+
+C<add_effect etd 100 2 2 50 50 
+acl E klg 1 100 200 2 0 100 15 200 
+>
+
+
 
 =back
 
-=head4 B<add_effect> (afx) - Add effect to the end of current track
+=head4 B<add_effect> (afx) - Add an effect prefader (before vol/pan controls) to the current track. Remove effects with reove_effect.
 
 =over 8
 
 C<add_effect> <s_effect_code> [ <f_param1> <f_param2>... ]
 
-C<add_effect amp 6     ; LADSPA Simple amp 6dB gain
-add_effect var_dali  ; preset var_dali. Note that you don't need
-; Ecasound's el: or pn: prefix
+C<help_effect decimator 
+afx decimator 12 22050 
 >
 
 
 
 =back
 
-=head4 B<insert_effect> (ifx) - Place effect before specified effect (engine stopped, prior to arm only)
+=head4 B<append_effect> (apfx) - Add an effect postfader (after vol/pan conrols) to the current track. Remove effect with remove_effect.
 
 =over 8
 
-C<insert_effect> <s_insert_point_id> <s_effect_code> [ <f_param1> <f_param2>... ]
+C<append_effect> <s_effect_code> [ <f_param1> <f_param2> ] ...
 
-=back
-
-=head4 B<modify_effect> (mfx modify_controller mcl) - Modify an effect parameter
-
-=over 8
-
-C<modify_effect> <s_effect_id> <i_parameter> [ + | - | * | / ] <f_value>
-
-C<modify_effect V 1 -1           ; set effect_id V, parameter 1 to -1
-modify_effect V 1 - 10         ; reduce effect_id V, parameter 1 by 10
-modify_effect V 1,2,3 + 0.5    ; modify multiple parameters
-modify_effect V,AC,AD 1,2 3.14 ; set multiple effects/parameters
+C<apfx var_dali 
 >
 
 
 
 =back
 
-=head4 B<remove_effect> (rfx remove_controller rcl) - Remove effects from selected track
+=head4 B<insert_effect> (ifx) - Place an effect before the specified unique effect ID. You will experience a short pause in playback.
 
 =over 8
 
-C<remove_effect> <s_effect_id1> [ <s_effect_id2>...]
+C<insert_effect> <s_insert_point_id> <s_effect_code> [ <f_param1> <f_param2> ] ...
+
+C<lfx 
+ifx AF etd 125 2 2 40 60 
+>
+
+
 
 =back
 
-=head4 B<position_effect> (pfx) - Position an effect before another effect (use 'ZZZ' for end)
+=head4 B<modify_effect> (mfx modify_controller mcl) - Modify effect parameter(s).
 
 =over 8
 
-C<position_effect> [<s_effect_id>]
+C<modify_effect> [ <s_effect_id> ] <i_parameter> [ + | - | * | / ] <f_value>
+
+C<lfx 
+mfx AF 1 62 
+mfx AF,BG 1 75 
+mfx CE 6,10 -3 
+mfx D 4 + 10 
+mfx A,B,C 3,6 * 5 
+>
+
+
 
 =back
 
-=head4 B<show_effect> (sfx) - Show effect information
+=head4 B<remove_effect> (rfx remove_controller rcl) - Remove effects. They don't have to be on the current track.
 
 =over 8
 
-C<show_effect> <s_effect_id1> [ <s_effect_id2>...]
+C<remove_effect> <s_effect_id1> [ <s_effect_id2> ] ...
 
 =back
 
-=head4 B<add_insert> (ain) - Add an external send/return to current track
+=head4 B<position_effect> (pfx) - Position an effect before another effect (use 'ZZZ' for end).
 
 =over 8
 
-C<add_insert> ( pre | post ) <s_send_id> [<s_return_id>]
+C<position_effect> <s_id_to_move> <s_position_id>
+
+C<position_effect G F 
+>
+
+
 
 =back
 
-=head4 B<set_insert_wetness> (wet) - Set wet/dry balance for current track insert: 100 = all wet, 0 = all dry
+=head4 B<show_effect> (sfx) - Show information about an effect. Default is to print information on the current effect.
+
+=over 8
+
+C<show_effect> [ <s_effect_id1> ] [ <s_effect_id2> ] ...
+
+C<sfx 
+sfx H 
+>
+
+
+
+=back
+
+=head4 B<list_effects> (lfx) - Print a short list of all effects on the current track, only including unique ID and effect name.
+
+=over 8
+
+C<list_effects> 
+
+=back
+
+=head4 B<add_insert> (ain) - Add an external send/return insert to current track.
+
+=over 8
+
+C<add_insert> ( pre | post ) <s_send_id> [ <s_return_id> ] -or- local (for wet/dry control)
+
+C<add_insert pre jconvolver 
+ain post jconvolver csound 
+guitar 
+ain local 
+guitar-1-wet 
+afx G2reverb 50 5.0 0.6 0.5 0 -16 -20 
+afx etc 6 100 45 2.5 
+guitar 
+wet 25 
+>
+
+
+
+=back
+
+=head4 B<set_insert_wetness> (wet) - Set wet/dry balance of the insert for the current track. The balance is given in percent, 0 meaning dry and 100 wet signal only.
 
 =over 8
 
 C<set_insert_wetness> [ pre | post ] <n_wetness>
 
+C<wet pre 50 
+set_insert_wetness 100 
+>
+
+
+
 =back
 
-=head4 B<remove_insert> (rin) - Remove an insert from the current track
+=head4 B<remove_insert> (rin) - Remove an insert from the current track.
 
 =over 8
 
 C<remove_insert> [ pre | post ]
 
+C<rin 
+remove_insert post 
+>
+
+
+
 =back
 
-=head4 B<ctrl_register> (crg) - List Ecasound controllers
+=head4 B<ctrl_register> (crg) - List all Ecasound controllers. Controllers include linear controllers and oscillators.
 
 =over 8
 
@@ -1593,7 +2008,7 @@ C<ctrl_register>
 
 =back
 
-=head4 B<preset_register> (prg) - List Ecasound presets
+=head4 B<preset_register> (prg) - List all Ecasound effect presets. See the Ecasound manpage for more detail on effect_presets.
 
 =over 8
 
@@ -1601,7 +2016,7 @@ C<preset_register>
 
 =back
 
-=head4 B<ladspa_register> (lrg) - List LADSPA plugins
+=head4 B<ladspa_register> (lrg) - List all LADSPA plugins, that Ecasound/Nama can find.
 
 =over 8
 
@@ -1611,7 +2026,7 @@ C<ladspa_register>
 
 =head2 Mark commands
 
-=head4 B<list_marks> (lmk lm) - List all marks
+=head4 B<list_marks> (lmk lm) - List all marks with index, name and their respective positions in time.
 
 =over 8
 
@@ -1619,39 +2034,48 @@ C<list_marks>
 
 =back
 
-=head4 B<to_mark> (tmk tom) - Move playhead to named mark or mark index
+=head4 B<to_mark> (tmk tom) - Move the playhead to the named mark or mark index.
 
 =over 8
 
-C<to_mark> <s_mark_id> | <i_mark_index>
+C<to_mark> <s_mark_name> | <i_mark_index>
 
-C<to_mark start (go to mark named 'start')>
+C<to_mark sax_start 
+tmk 2 
+>
 
 
 
 =back
 
-=head4 B<new_mark> (mark k) - Drop mark at current playback position
+=head4 B<add_mark> (mark amk) - Drop a new mark at the current playback position. this will fail, if a mark is already placed on that exact position.
 
 =over 8
 
-C<new_mark> [ <s_mark_id> ]
+C<add_mark> [ <s_mark_id> ]
 
-=back
-
-=head4 B<remove_mark> (rmk rom) - Remove mark, default to current mark
-
-=over 8
-
-C<remove_mark> [ <s_mark_id> | <i_mark_index> ]
-
-C<remove_mark start (remove mark named 'start')>
+C<k important 
+>
 
 
 
 =back
 
-=head4 B<next_mark> (nmk nm) - Move playback head to next mark
+=head4 B<remove_mark> (rmk rom) - Remove a mark. The default is to remove the current mark, if no parameter is given.
+
+=over 8
+
+C<remove_mark> [ <s_mark_name> | <i_mark_index> ]
+
+C<remove_mark important 
+rmk 16 
+>
+
+
+
+=back
+
+=head4 B<next_mark> (nmk) - Move the playhead to the next mark.
 
 =over 8
 
@@ -1659,7 +2083,7 @@ C<next_mark>
 
 =back
 
-=head4 B<previous_mark> (pmk pm) - Move playback head to previous mark
+=head4 B<previous_mark> (pmk) - Move the playhead to the previous mark.
 
 =over 8
 
@@ -1667,29 +2091,31 @@ C<previous_mark>
 
 =back
 
-=head4 B<name_mark> (nmk nom) - Give a name to the current mark
+=head4 B<name_mark> - Give a name to the current mark.
 
 =over 8
 
-C<name_mark> <s_mark_id>
-
-C<name_mark start>
-
-
+C<name_mark> <s_mark_name>
 
 =back
 
-=head4 B<modify_mark> (move_mark mmk mm) - Change the time setting of current mark
+=head4 B<modify_mark> (move_mark mmk) - Change the position (time) of the current mark.
 
 =over 8
 
 C<modify_mark> [ + | - ] <f_seconds>
 
+C<move_mark + 2.3 
+mmk 16.8 
+>
+
+
+
 =back
 
 =head2 Diagnostics commands
 
-=head4 B<engine_status> (egs) - Display Ecasound audio processing engine status
+=head4 B<engine_status> (egs) - Display the Ecasound audio processing engine status.
 
 =over 8
 
@@ -1697,7 +2123,7 @@ C<engine_status>
 
 =back
 
-=head4 B<dump_track> (dumpt dump) - Dump current track data
+=head4 B<dump_track> (dump) - Dump current track data.
 
 =over 8
 
@@ -1705,7 +2131,7 @@ C<dump_track>
 
 =back
 
-=head4 B<dump_group> (dumpgroup dumpg) - Dump group settings for user tracks
+=head4 B<dump_group> (dumpg) - Dump group settings for user tracks.
 
 =over 8
 
@@ -1713,7 +2139,7 @@ C<dump_group>
 
 =back
 
-=head4 B<dump_all> (dumpall dumpa) - Dump most internal state
+=head4 B<dump_all> (dumpa) - Dump most internal state data.
 
 =over 8
 
@@ -1721,17 +2147,17 @@ C<dump_all>
 
 =back
 
-=head4 B<show_io> (showio) - Show chain inputs and outputs
+=head4 B<dump_io> - Show chain inputs and outputs.
 
 =over 8
 
-C<show_io> 
+C<dump_io> 
 
 =back
 
 =head2 Help commands
 
-=head4 B<list_history> (lh) - List command history
+=head4 B<list_history> (lh) - List the command history. Every project stores its own command history.
 
 =over 8
 
@@ -1741,57 +2167,60 @@ C<list_history>
 
 =head2 Bus commands
 
-=head4 B<add_send_bus_cooked> (asbc) - Add a send bus that copies all user tracks' processed signals
+=head4 B<add_send_bus_cooked> (asbc) - Add a send bus, that copies all user tracks with effects and inserts (a.k.a. cooked signals). All busses begin with a capital letter!
 
 =over 8
 
 C<add_send_bus_cooked> <s_name> <destination>
 
-C<asbc Reverb jconv>
-
-
-
-=back
-
-=head4 B<add_send_bus_raw> (asbr) - Add a send bus that copies all user tracks' raw signals
-
-=over 8
-
-C<add_send_bus_raw> <s_name> <destination>
-
-C<asbr Reverb jconv>
-
-
-
-=back
-
-=head4 B<add_sub_bus> (asub) - Add a sub bus (default destination: to mixer via eponymous track)
-
-=over 8
-
-C<add_sub_bus> <s_name> [destination: s_track_name|s_jack_client|n_soundcard channel]
-
-C<asub Strings_bus
-asub Strings_bus some_jack_client
+C<asbc Reverb jconv 
 >
 
 
 
 =back
 
-=head4 B<update_send_bus> (usb) - Include tracks added since send bus was created
+=head4 B<add_send_bus_raw> (asbr) - Add a send bus, that copies all user tracks wihtout processing (a.k.a. raw signals). All busses begin with a capital letter!
 
 =over 8
 
-C<update_send_bus> <s_name>
+C<add_send_bus_raw> <s_name> <destination>
 
-C<usb Some_bus>
+C<asbr Reverb jconv 
+>
 
 
 
 =back
 
-=head4 B<remove_bus> - Remove a bus
+=head4 B<add_sub_bus> (asub) - Add a sub bus. This is a bus, as known from other DAWs. The default output goes to a mix track and that is routed to the mixer (the Master track). All busses begin with a capital letter!
+
+=over 8
+
+C<add_sub_bus> <s_name> [ <s_track_name> | <s_jack_client> | <i_soundcard_channel> ]
+
+C<asub Brass 
+asub special csound 
+>
+
+
+
+=back
+
+=head4 B<update_send_bus> (usb) - Include tracks added since the send bus was created.
+
+=over 8
+
+C<update_send_bus> <s_name>
+
+C<update_send_bus Reverb 
+>
+
+
+
+=back
+
+=head4 B<remove_bus> - Remove a bus.
 
 =over 8
 
@@ -1799,7 +2228,7 @@ C<remove_bus> <s_bus_name>
 
 =back
 
-=head4 B<list_buses> (lbs) - List buses and their parameters TODO
+=head4 B<list_buses> (lbs) - List buses and their parameters (TODO).
 
 =over 8
 
@@ -1807,81 +2236,124 @@ C<list_buses>
 
 =back
 
-=head4 B<set_bus> (sbs) - Set bus parameters
+=head4 B<set_bus> (sbs) - Set bus parameters. This command is intended for advanced users.
 
 =over 8
 
-C<set_bus> <s_busname> <key> <val>
+C<set_bus> <s_busname> <key> <value>
 
 =back
 
 =head2 Effect commands
 
-=head4 B<new_effect_chain> (nec) - Define a reusable sequence of effects (effect chain) with current parameters
+=head4 B<new_effect_chain> (nec) - Create a new effect chain. An effect chain i a list of effects with all their parameters stored. Useful for creating small processing templates for frequently used instruments.
 
 =over 8
 
-C<new_effect_chain> <s_name> [<op1>, <op2>,...]
+C<new_effect_chain> <s_name> [ <effect_id_1>, <effect_id_2> ] ...
+
+C<new_effect_chain my_piano 
+nec my_guitar A C F G H 
+>
+
+
 
 =back
 
-=head4 B<add_effect_chain> (aec) - Add an effect chain to the current track
+=head4 B<add_effect_chain> (aec) - Add an effect chain to the current track.
 
 =over 8
 
-C<add_effect_chain> <s_name>
+C<add_effect_chain> <s_effect_chain_name>
+
+C<aec my_piano 
+>
+
+
 
 =back
 
-=head4 B<overwrite_effect_chain> (oec) - Add an effect chain overwriting current effects (which are pushed onto stack)
+=head4 B<overwrite_effect_chain> (oec) - Add an effect chain, overwriting or replacing the current effects. Current effects are pushed onto the bypass list, so they aren't lost completely.
 
 =over 8
 
-C<overwrite_effect_chain> <s_name>
+C<overwrite_effect_chain> <s_effect_chain_name>
 
 =back
 
-=head4 B<delete_effect_chain> (dec) - Delete an effect chain definition from the list
+=head4 B<delete_effect_chain> (dec destroy_effect_chain) - Delete an effect chain definition. After that the effect chain will no longer be available to add. Projects, which use the effect chain won't be affected.
 
 =over 8
 
-C<delete_effect_chain> <s_name>
+C<delete_effect_chain> <s_effect_chain_name>
 
 =back
 
-=head4 B<list_effect_chains> (lec) - List effect chains, matching any strings provided
+=head4 B<find_effect_chains> (fec) - Dump effect chains, matching key/value pairs if provided
 
 =over 8
 
-C<list_effect_chains> [<s_frag1> <s_frag2>... ]
+C<find_effect_chains> [ <s_key_1> <s_value_1> ] ...
+
+C<fec 
+>
+
+
 
 =back
 
-=head4 B<bypass_effects> (bypass bye) - Bypass track effects (pushing them onto stack) except vol/pan
+=head4 B<find_user_effect_chains> (fuec) - List all *user* created effect chains, matching key/value pairs, if provided.
 
 =over 8
 
-C<bypass_effects> 
+C<find_user_effect_chains> [ <s_key_1> <s_value_1> ] ...
 
 =back
 
-=head4 B<restore_effects> (restore ref) - Restore bypassed track effects
+=head4 B<bypass_effects> (bypass bfx) - Bypass effects on the current track. With no parameters default to bypassing the current effect.
 
 =over 8
 
-C<restore_effects> 
+C<bypass_effects> [ <s_effect_id_1> <s_effect_id_2>... | 'all' ]
+
+C<bypass all 
+bypass AF 
+>
+
+
 
 =back
 
-=head4 B<new_effect_profile> (nep) - Create a named group of effect chains for multiple tracks
+=head4 B<bring_back_effects> (restore_effects bbfx) - Restore effects. If no parameter is given, the default is to restore the current effect.
 
 =over 8
 
-C<new_effect_profile> <s_bunch_name> [<s_effect_profile_name>]
+C<bring_back_effects> [ <s_effect_id_1> <s_effect_id_2> ... | 'all' ]
+
+C<bbfx 
+restore_effect AF 
+bring_back_effects all 
+>
+
+
 
 =back
 
-=head4 B<apply_effect_profile> (aep) - Use an effect profile to overwrite effects of multiple tracks
+=head4 B<new_effect_profile> (nep) - Create a new effect profile. An effect profile is a named group of effect chains for multiple tracks. Useful for storing a basic template of standard effects for a group of instruments, like a drum kit.
+
+=over 8
+
+C<new_effect_profile> <s_bunch_name> [ <s_effect_profile_name> ]
+
+C<new_bunch Drums snare toms kick 
+nep Drums my_drum_effects 
+>
+
+
+
+=back
+
+=head4 B<apply_effect_profile> (aep) - Apply an effect profile. this will add all the effects in it to the list of tracks stored in the effect profile. Note: You must give the tracks the same names as in the original project, where you created the effect profile.
 
 =over 8
 
@@ -1889,23 +2361,15 @@ C<apply_effect_profile> <s_effect_profile_name>
 
 =back
 
-=head4 B<overlay_effect_profile> (oep) - Use an effect profile to add effects to multiple tracks
+=head4 B<destroy_effect_profile> - Delete an effect profile. This will delete the effect profile definition from your disk. All projects, which use this effect profile will NOT be affected.
 
 =over 8
 
-C<overlay_effect_profile> <s_effect_profile_name>
+C<destroy_effect_profile> <s_effect_profile_name>
 
 =back
 
-=head4 B<delete_effect_profile> (dep) - Remove an effect chain bunch definition
-
-=over 8
-
-C<delete_effect_profile> <s_effect_profile_name>
-
-=back
-
-=head4 B<list_effect_profiles> (lep) - List effect chain bunches
+=head4 B<list_effect_profiles> (lep) - List all effect profiles.
 
 =over 8
 
@@ -1913,19 +2377,40 @@ C<list_effect_profiles>
 
 =back
 
-=head2 Track commands
-
-=head4 B<cache_track> (cache ct) - Store an effects-processed track signal as a new version
+=head4 B<show_effect_profiles> (sepr) - List effect profile.
 
 =over 8
 
-C<cache_track> [<f_additional_processing_time>]
+C<show_effect_profiles> 
+
+=back
+
+=head4 B<full_effect_profiles> (fep) - Dump effect profile data structure.
+
+=over 8
+
+C<full_effect_profiles> 
+
+=back
+
+=head2 Track commands
+
+=head4 B<cache_track> (cache ct) - Cache the current track, a.k.a. freezing or bouncing. Store a version of the current track with all processing to disk. Useful to save on processor power in large projects. Can be reversed by uncache_track .
+
+=over 8
+
+C<cache_track> [ <f_additional_processing_time> ]
+
+C<cache 10 
+>
+
+
 
 =back
 
 =head2 Effect commands
 
-=head4 B<uncache_track> (uncache unc) - Select the uncached track version; restores effects (but not inserts)
+=head4 B<uncache_track> (uncache unc) - Select the uncached track version. This restores effects, but not inserts.
 
 =over 8
 
@@ -1935,15 +2420,20 @@ C<uncache_track>
 
 =head2 General commands
 
-=head4 B<do_script> (do) - Execute Nama commands from a file in project_dir or project_root
+=head4 B<do_script> (do) - Execute Nama commands from a file in the main project's directory or in the Nama project root directory. A script is a list of Nama commands, just as you would type them on the Nama prompt.
 
 =over 8
 
 C<do_script> <s_filename>
 
+C<do prepare_my_drums 
+>
+
+
+
 =back
 
-=head4 B<scan> - Re-read project's .wav directory
+=head4 B<scan> - Re-read the project's .wav directory. Mainly useful for troubleshooting.
 
 =over 8
 
@@ -1953,31 +2443,37 @@ C<scan>
 
 =head2 Effect commands
 
-=head4 B<add_fade> (afd fade) - Add a fade-in or fade-out to current track
+=head4 B<add_fade> (afd fade) - Add a fade-in or fade-out to the current track.
 
 =over 8
 
-C<add_fade> in|out marks/times (see examples)
+C<add_fade> ( in | out ) marks/times (see examples)
 
-C<fade in mark1        ; fade in default 0.5s starting at mark1
-fade out mark2 2     ; fade out over 2s starting at mark2
-fade out 2 mark2     ; fade out over 2s ending at mark2
-fade out mark1 mark2 ; fade out from mark1 to mark2
+C<fade in mark1 
+fade out mark2 2 
+fade out 2 mark2 
+fade in mark1 mark2 
 >
 
 
 
 =back
 
-=head4 B<remove_fade> (rfd) - Remove a fade from the current track
+=head4 B<remove_fade> (rfd) - Remove a fade from the current track.
 
 =over 8
 
-C<remove_fade> <i_fade_index1> [<i_fade_index2>...]
+C<remove_fade> <i_fade_index_1> [ <i_fade_index_2> ] ...
+
+C<list_fade 
+rfd 2 
+>
+
+
 
 =back
 
-=head4 B<list_fade> (lfd) - List fades
+=head4 B<list_fade> (lfd) - List all fades.
 
 =over 8
 
@@ -1987,15 +2483,19 @@ C<list_fade>
 
 =head2 Track commands
 
-=head4 B<add_comment> (comment ac) - Add comment to current track (replacing any previous comment)
+=head4 B<add_comment> (comment ac) - Add a comment to the current track (replacing any previous comment). A comment maybe a short discription, notes on instrument settings, etc.
 
 =over 8
 
-C<add_comment> 
+C<add_comment> <s_comment>
+
+C<ac "Guitar, treble on 50%">
+
+
 
 =back
 
-=head4 B<remove_comment> (rc) - Remove comment from current track
+=head4 B<remove_comment> (rc) - Remove a comment from the current track.
 
 =over 8
 
@@ -2003,7 +2503,7 @@ C<remove_comment>
 
 =back
 
-=head4 B<show_comment> (sc) - Show comment for current track
+=head4 B<show_comment> (sc) - Show the comment for the current track.
 
 =over 8
 
@@ -2011,7 +2511,7 @@ C<show_comment>
 
 =back
 
-=head4 B<show_comments> (scs) - Show all track comments
+=head4 B<show_comments> (sca) - Show all track comments.
 
 =over 8
 
@@ -2019,15 +2519,19 @@ C<show_comments>
 
 =back
 
-=head4 B<add_version_comment> (comment avc) - Add version comment (replacing any previous user comment)
+=head4 B<add_version_comment> (avc) - Add a version comment (replacing any previous user comment). This will add a comment for the current version of the current track.
 
 =over 8
 
-C<add_version_comment> 
+C<add_version_comment> <s_comment>
+
+C<avc "The good take with the clear 6/8">
+
+
 
 =back
 
-=head4 B<remove_version_comment> (rvc) - Remove version comment(s) from current track
+=head4 B<remove_version_comment> (rvc) - Remove version comment(s) from the current track.
 
 =over 8
 
@@ -2035,7 +2539,7 @@ C<remove_version_comment>
 
 =back
 
-=head4 B<show_version_comment> (svc) - Show version comment(s)
+=head4 B<show_version_comment> (svc) - Show version comment(s) of the curent track.
 
 =over 8
 
@@ -2043,7 +2547,7 @@ C<show_version_comment>
 
 =back
 
-=head4 B<show_version_comments_all> (svca) - Show all version comments for current track
+=head4 B<show_version_comments_all> (svca) - Show all version comments for the current track.
 
 =over 8
 
@@ -2051,27 +2555,63 @@ C<show_version_comments_all>
 
 =back
 
-=head4 B<set_system_version_comment> (comment ssvc) - Set system version comment (for testing only)
+=head4 B<set_system_version_comment> (ssvc) - Set a system version comment. Useful for testing and diagnostics.
 
 =over 8
 
-C<set_system_version_comment> 
+C<set_system_version_comment> <s_comment>
 
 =back
 
 =head2 Midi commands
 
-=head4 B<midish_command> (m) - Send command text to 'midish' MIDI sequencer shell
+=head4 B<midish_command> (m) - Send the command text to  the midish MIDI sequencer. Midish must be installed and enabled in namarc. See the midish manpage and fullonline documentation for more.
 
 =over 8
 
 C<midish_command> <s_command_text>
 
+C<m tracknew my_midi_track>
+
+
+
+=back
+
+=head4 B<midish_mode_on> (mmo) - All users commands sent to midish, until
+
+=over 8
+
+C<midish_mode_on> 
+
+=back
+
+=head4 B<midish_mode_off> (mmx) - Exit midish mode, restore default Nama command mode, no midish sync
+
+=over 8
+
+C<midish_mode_off> 
+
+=back
+
+=head4 B<midish_mode_off_ready_to_play> (mmxrp) - Exit midish mode, sync midish start (p) with Ecasound
+
+=over 8
+
+C<midish_mode_off_ready_to_play> 
+
+=back
+
+=head4 B<midish_mode_off_ready_to_record> (mmxrr) - Exit midish mode, sync midish start (r) with Ecasound
+
+=over 8
+
+C<midish_mode_off_ready_to_record> 
+
 =back
 
 =head2 Edit commands
 
-=head4 B<new_edit> (ned) - Create an edit for the current track and version
+=head4 B<new_edit> (ned) - Create an edit for the current track and version.
 
 =over 8
 
@@ -2079,7 +2619,7 @@ C<new_edit>
 
 =back
 
-=head4 B<set_edit_points> (sep) - Mark play-start, record-start and record-end positions
+=head4 B<set_edit_points> (sep) - Mark play-start, record-start and record-end positions for the current edit.
 
 =over 8
 
@@ -2087,7 +2627,7 @@ C<set_edit_points>
 
 =back
 
-=head4 B<list_edits> (led) - List edits for current track and version
+=head4 B<list_edits> (led) - List all edits for current track and version.
 
 =over 8
 
@@ -2095,7 +2635,7 @@ C<list_edits>
 
 =back
 
-=head4 B<select_edit> (sed) - Select an edit to modify or delete, becomes current edit
+=head4 B<select_edit> (sed) - Select an edit to modify or delete. After selection it is the current edit.
 
 =over 8
 
@@ -2103,7 +2643,7 @@ C<select_edit> <i_edit_index>
 
 =back
 
-=head4 B<end_edit_mode> (eem) - Current track plays full length (input from edit sub-bus)
+=head4 B<end_edit_mode> (eem) - Switch back to normal playback/record mode. The track will play full length again. Edits are managed via a sub- bus.
 
 =over 8
 
@@ -2111,15 +2651,15 @@ C<end_edit_mode>
 
 =back
 
-=head4 B<destroy_edit> - Remove an edit and all associated WAV files (destructive)
+=head4 B<destroy_edit> - Remove an edit and all associated audio files. If no parameter is given, the default is to destroy the current edit. Note: The data will be lost permanently. Use with care!
 
 =over 8
 
-C<destroy_edit> [<i_edit_index>] (defaults to current edit)
+C<destroy_edit> [ <i_edit_index> ]
 
 =back
 
-=head4 B<preview_edit_in> (pei) - Play the track region without the edit segment
+=head4 B<preview_edit_in> (pei) - Play the track region without the edit segment.
 
 =over 8
 
@@ -2127,7 +2667,7 @@ C<preview_edit_in>
 
 =back
 
-=head4 B<preview_edit_out> (peo) - Play the removed edit segment
+=head4 B<preview_edit_out> (peo) - Play the removed edit segment.
 
 =over 8
 
@@ -2135,7 +2675,7 @@ C<preview_edit_out>
 
 =back
 
-=head4 B<play_edit> (ped) - Play a completed edit
+=head4 B<play_edit> (ped) - Play a completed edit.
 
 =over 8
 
@@ -2143,7 +2683,7 @@ C<play_edit>
 
 =back
 
-=head4 B<record_edit> (red) - Record a WAV file for the current edit
+=head4 B<record_edit> (red) - Record an audio file for the current edit.
 
 =over 8
 
@@ -2151,7 +2691,7 @@ C<record_edit>
 
 =back
 
-=head4 B<edit_track> (et) - Set the edit track as current track
+=head4 B<edit_track> (et) - Set the edit track as the current track.
 
 =over 8
 
@@ -2159,7 +2699,7 @@ C<edit_track>
 
 =back
 
-=head4 B<host_track_alias> (hta) - Set the host track alias as the current track
+=head4 B<host_track_alias> (hta) - Set the host track alias as the current track.
 
 =over 8
 
@@ -2167,7 +2707,7 @@ C<host_track_alias>
 
 =back
 
-=head4 B<host_track> (ht) - Set the host track (edit sub-bus mix track) as the current track
+=head4 B<host_track> (ht) - Set the host track (edit sub-bus mix track) as the current track.
 
 =over 8
 
@@ -2175,7 +2715,7 @@ C<host_track>
 
 =back
 
-=head4 B<version_mix_track> (vmt) - Set the version mix track as the current track
+=head4 B<version_mix_track> (vmt) - Set the version mix track as the current track.
 
 =over 8
 
@@ -2183,7 +2723,7 @@ C<version_mix_track>
 
 =back
 
-=head4 B<play_start_mark> (psm) - Select (and move to) play start mark
+=head4 B<play_start_mark> (psm) - Select (and move to) play start mark of the current edit.
 
 =over 8
 
@@ -2191,7 +2731,7 @@ C<play_start_mark>
 
 =back
 
-=head4 B<rec_start_mark> (rsm) - Select (and move to) rec start mark
+=head4 B<rec_start_mark> (rsm) - Select (and move to) rec start mark of the current edit.
 
 =over 8
 
@@ -2199,7 +2739,7 @@ C<rec_start_mark>
 
 =back
 
-=head4 B<rec_end_mark> (rem) - Select (and move to) rec end mark
+=head4 B<rec_end_mark> (rem) - Select (and move to) rec end mark of the current edit.
 
 =over 8
 
@@ -2207,7 +2747,7 @@ C<rec_end_mark>
 
 =back
 
-=head4 B<set_play_start_mark> (spsm) - Set play_start_mark to current engine position
+=head4 B<set_play_start_mark> (spsm) - Set play_start_mark to the current playback position.
 
 =over 8
 
@@ -2215,7 +2755,7 @@ C<set_play_start_mark>
 
 =back
 
-=head4 B<set_rec_start_mark> (srsm) - Set rec_start_mark to current engine position
+=head4 B<set_rec_start_mark> (srsm) - Set rec_start_mark to the current playback position.
 
 =over 8
 
@@ -2223,7 +2763,7 @@ C<set_rec_start_mark>
 
 =back
 
-=head4 B<set_rec_end_mark> (srem) - Set rec_end_mark to current engine position
+=head4 B<set_rec_end_mark> (srem) - Set rec_end_mark to current playback position.
 
 =over 8
 
@@ -2231,7 +2771,7 @@ C<set_rec_end_mark>
 
 =back
 
-=head4 B<disable_edits> (ded) - Disable editing sub-bus, restore standard track behavior
+=head4 B<disable_edits> (ded) - Turn off the edits for the current track and playback the original. This will exclude the edit sub bus.
 
 =over 8
 
@@ -2239,7 +2779,7 @@ C<disable_edits>
 
 =back
 
-=head4 B<merge_edits> (med) - Mix edits and original into a new host-track WAV version
+=head4 B<merge_edits> (med) - Mix edits and original into a new host-track. this will write a new audio file to disk and the host track will have a new version for this.
 
 =over 8
 
@@ -2249,7 +2789,7 @@ C<merge_edits>
 
 =head2 Track commands
 
-=head4 B<explode_track> - Make track into a sub-bus, with one track for each version
+=head4 B<explode_track> - Make the current track into a sub bus, with one track for each version.
 
 =over 8
 
@@ -2257,15 +2797,22 @@ C<explode_track>
 
 =back
 
-=head4 B<move_to_bus> (mtb) - Move current track to another bus
+=head4 B<move_to_bus> (mtb) - Move the current track to another bus. A new track is always in the Main bus. So to reverse this action use move_to_bus Main .
 
 =over 8
 
 C<move_to_bus> <s_bus_name>
 
+C<asub Drums 
+snare 
+mtb Drums 
+>
+
+
+
 =back
 
-=head4 B<promote_version_to_track> (pvt) - Create a read-only track using specified version of current track
+=head4 B<promote_version_to_track> (pvt) - Create a read-only track using the specified version of the current track.
 
 =over 8
 
@@ -2275,7 +2822,7 @@ C<promote_version_to_track> <i_version_number>
 
 =head2 General commands
 
-=head4 B<read_user_customizations> (ruc) - Re-read user customizations file 'custom.pl'
+=head4 B<read_user_customizations> (ruc) - Re-read the user customizations file 'custom.pl'.
 
 =over 8
 
@@ -2285,15 +2832,15 @@ C<read_user_customizations>
 
 =head2 Setup commands
 
-=head4 B<limit_run_time> (lrt) - Stop recording after last WAV file finishes playing
+=head4 B<limit_run_time> (lr) - Stop recording after the last audio file finishes playing. Can be turned off with limit_run_time_off.
 
 =over 8
 
-C<limit_run_time> [<f_additional_seconds>]
+C<limit_run_time> [ <f_additional_seconds> ]
 
 =back
 
-=head4 B<limit_run_time_off> (lro) - Disable recording stop timer
+=head4 B<limit_run_time_off> (lro) - Disable the recording stop timer.
 
 =over 8
 
@@ -2301,7 +2848,7 @@ C<limit_run_time_off>
 
 =back
 
-=head4 B<offset_run> (ofr) - Record/play from mark position
+=head4 B<offset_run> (ofr) - Record/play from a mark, rather than from the start, i.e. 0.0 seconds.
 
 =over 8
 
@@ -2309,7 +2856,7 @@ C<offset_run> <s_mark_name>
 
 =back
 
-=head4 B<offset_run_off> (ofo) - Clear offset run mode
+=head4 B<offset_run_off> (ofro) - Turn back to starting from 0.
 
 =over 8
 
@@ -2319,7 +2866,7 @@ C<offset_run_off>
 
 =head2 General commands
 
-=head4 B<view_waveform> (wview) - Launch mhwavedit to view/edit waveform of current track/version WAV file
+=head4 B<view_waveform> (wview) - Launch mhwavedit to view/edit waveform of the current track and version. This requires to start Nama on a graphical terminal, like xterm or gterm or from GNOME via alt+F2 .
 
 =over 8
 
@@ -2327,11 +2874,79 @@ C<view_waveform>
 
 =back
 
-=head4 B<edit_waveform> (wedit) - Launch audacity to view/edit waveform of current track/version WAV file
+=head4 B<edit_waveform> (wedit) - Launch audacity to view/edit the waveform of the current track and version. This requires starting Nama on a graphical terminal like xterm or gterm or from GNOME starting Nama using alt+F2 .
 
 =over 8
 
 C<edit_waveform> 
+
+=back
+
+=head2 Setup commands
+
+=head4 B<rerecord> (rerec) - Record as before. This will set all the tracks to record, which have been recorded just before you listened back.
+
+=over 8
+
+C<rerecord> 
+
+C<for piano guitar;rec 
+rerec 
+>
+
+
+
+=back
+
+=head2 General commands
+
+=head4 B<eager> - Output audio as soon as possible. This will start playing or recording, as soon as a working setup is created.
+
+=over 8
+
+C<eager> off | doodle | preview
+
+C<eager doodle 
+eager off 
+>
+
+
+
+=back
+
+=head2 Track commands
+
+=head4 B<analyze_level> (anl) - Print Ecasound amplitude analysis for current track. This will show highest volume and statistics.
+
+=over 8
+
+C<analyze_level> 
+
+=back
+
+=head2 General commands
+
+=head4 B<for> - Execute command(s) for several tracks.
+
+=over 8
+
+C<for> <s_track_name_1> [ <s_track_name_2>} ... ; <s_commands>
+
+C<for piano guitar;vol / 2;pan 75 
+for snare kick toms cymbals;mtb Drums 
+>
+
+
+
+=back
+
+=head2 Project commands
+
+=head4 B<git> - Execute git command in the project directory
+
+=over 8
+
+C<git> <s_command_name> [argument,...]
 
 =back
 

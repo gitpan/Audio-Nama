@@ -22,11 +22,21 @@ sub start_midish {
 	$sel->add(\*MIDISH_ERROR);
 	midish_command( qq(print "Welcome to Nama/Midish!"\n) );
 }
+sub start_midish_transport {
+	my $sync = $mode->{midish_transport_sync};
+	my $start_command;
+	$start_command = 'p' if $sync eq 'play';
+	$start_command = 'r' if $sync eq 'record';
+	defined $start_command 
+		or die "$mode->{midish_transport_sync}: illegal midish_transport_sync mode";
+	midish_command($start_command);
+}
+sub stop_midish_transport { midish_command('s') }
 
 sub midish_command {
 	my $query = shift;
 	print "\n";
-	#$midish_enable or say( qq($query: cannot execute Midish command 
+	#$config->{use_midish} or say( qq($query: cannot execute Midish command 
 #unless you set "midish_enable: 1" in .namarc)), return;
 	#$query eq 'exit' and say("Will exit Midish on closing Nama."), return;
 

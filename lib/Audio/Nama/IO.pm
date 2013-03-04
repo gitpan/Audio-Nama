@@ -1,4 +1,8 @@
+package Audio::Nama;
+our (%tn, $jack, $config);
+
 # ---------- IO -----------
+
 # 
 # IO objects for writing Ecasound chain setup file
 #
@@ -18,7 +22,16 @@
 
 package Audio::Nama::IO;
 use Modern::Perl; use Carp;
+use Data::Dumper::Concise;
 our $VERSION = 1.0;
+
+# provide following vars to all packages
+our ($config, $jack, %tn);
+our (%by_name); # index for $by_name{trackname}->{input} = $object
+use Audio::Nama::Globals qw($config $jack %tn $setup);
+use Try::Tiny;
+
+sub initialize { %by_name = () }
 
 # we will use the following to map from graph node names
 # to IO class names
@@ -28,8 +41,8 @@ our %io_class = qw(
 	null_out				Audio::Nama::IO::to_null
 	soundcard_in 			Audio::Nama::IO::from_soundcard
 	soundcard_out 			Audio::Nama::IO::to_soundcard
-	soundcard_device_in 	Audio::Nama::IO::from_soundcard_device
-	soundcard_device_out 	Audio::Nama::IO::to_soundcard_device
+	soundcard_device_in 	Audio::Nama::IO::from_alsa_soundcard_device
+	soundcard_device_out 	Audio::Nama::IO::to_alsa_soundcard_device
 	wav_in 					Audio::Nama::IO::from_wav
 	wav_out 				Audio::Nama::IO::to_wav
 	loop_source				Audio::Nama::IO::from_loop
@@ -88,8 +101,39 @@ sub new {
 	# so we can pass any value and allow AUTOLOAD to 
 	# check the hash for it.
 	
-	bless {@args}, $class
+	my $self = bless {@args}, $class;
+
+	my $direction = $self->direction; # input or output
+
+	# join IO objects to graph
+	my $name;
+	try{ $name  = $self->name }
+	catch {};  # we do nothing
+
+	{ no warnings 'uninitialized';
+	Audio::Nama::logpkg(__FILE__,__LINE__,'debug',"I belong to track $name\n",
+		sub{Dumper($self)} );
+	}
+	
+	if($name){
+		$by_name{$name}->{$direction} = $self;
+	}
+	$self
 }
+
+# latency stubs
+sub capture_latency {
+	my $self = shift;
+	return unless $self->client;
+	Audio::Nama::jack_port_latency('input', rectified($self->client));
+}
+sub playback_latency {
+	my $self = shift;
+	return unless $self->client;
+	Audio::Nama::jack_port_latency('output', rectified($self->client));
+}
+sub ports {} # no ports by default
+sub client {} # not a JACK client by default
 
 sub ecs_string {
 	my $self = shift;
@@ -98,6 +142,11 @@ sub ecs_string {
 	push @parts, '-'.$self->io_prefix.':'.$self->device_id;
 	join ' ',@parts;
 }
+
+## the format() method generates the correct Ecasound format string,
+## (e.g. -f:f32_le,2,48000) if the _format_template() method
+## returns a signal format template (e.g. f32_le,N,48000)
+
 sub format { 
 	my $self = shift;
 	Audio::Nama::signal_format($self->format_template, $self->width)
@@ -105,6 +154,7 @@ sub format {
 }
 sub _format_template {} # the leading underscore allows override
                         # by a method without the underscore
+
 sub _ecs_extra {}		# allow override
 sub direction { 
 	(ref $_[0]) =~ /::from/ ? 'input' : 'output'  
@@ -120,9 +170,11 @@ sub AUTOLOAD {
 	my $method = "_$call";
 	return $self->{$field} if exists $self->{$field};
 	return $self->$method if $self->can($method);
-	if ( my $track = $Audio::Nama::tn{$self->{track_}} ){
+	{ no warnings 'uninitialized'; 
+	if ( my $track = $tn{$self->{track_}} ){
 		return $track->$call if $track->can($call) 
 		# ->can is reliable here because Track has no AUTOLOAD
+	}
 	}
 	print $self->dump;
 	croak "Autoload fell through. Object type: ", (ref $self), ", illegal method call: $call\n";
@@ -159,23 +211,26 @@ sub _mono_to_stereo{
 sub _playat_output {
 	my $track = shift;
 	return unless $track->adjusted_playat_time;
-	join ',',"playat" , $track->adjusted_playat_time;
+		# or $track->latency_offset;
+	join ',',"playat" , $track->adjusted_playat_time 
+		# + $track->latency_offset
 }
 sub _select_output {
 	my $track = shift;
-	my $start = $track->adjusted_region_start_time + Audio::Nama::hardware_latency();
+	no warnings 'uninitialized';
+	my $start = $track->adjusted_region_start_time + $config->hardware_latency();
 	my $end   = $track->adjusted_region_end_time;
-	return unless Audio::Nama::hardware_latency() or defined $start and defined $end;
-	my $length;
+	return unless $config->hardware_latency() or defined $start and defined $end;
+	my $setup_length;
 	# CASE 1: a region is defined 
 	if ($end) { 
-		$length = $end - $start;
+		$setup_length = $end - $start;
 	}
 	# CASE 2: only hardware latency
 	else {
-		$length = $track->wav_length - $start
+		$setup_length = $track->wav_length - $start
 	}
-	join ',',"select", $start, $length
+	join ',',"select", $start, $setup_length
 }
 ###  utility subroutines
 
@@ -186,20 +241,27 @@ sub get_class {
 	$io_class{$type} or croak "unrecognized IO type: $type"
 }
 sub soundcard_input_type_string {
-	$Audio::Nama::jack_running ? 'jack_multi_in' : 'soundcard_device_in'
+	$jack->{jackd_running} ? 'jack_multi_in' : 'soundcard_device_in'
 }
 sub soundcard_output_type_string {
-	$Audio::Nama::jack_running ? 'jack_multi_out' : 'soundcard_device_out'
+	$jack->{jackd_running} ? 'jack_multi_out' : 'soundcard_device_out'
 }
 sub soundcard_input_device_string {
-	$Audio::Nama::jack_running ? 'system' : $Audio::Nama::alsa_capture_device
+	$jack->{jackd_running} ? 'system' : $config->{alsa_capture_device}
 }
 sub soundcard_output_device_string {
-	$Audio::Nama::jack_running ? 'system' : $Audio::Nama::alsa_playback_device
+	$jack->{jackd_running} ? 'system' : $config->{alsa_playback_device}
 }
 
 sub jack_multi_route {
-	my ($client, $direction, $start, $width)  = @_;
+	my (@ports)  = @_;
+	join q(,),q(jack_multi),
+	map{quote_jack_port($_)} @ports
+}
+
+sub jack_multi_ports {
+	my ($client, $direction, $start, $width, $trackname)  = @_;
+	#say "client $client, $direction $direction, start: $start, width $width";
 	# can we route to these channels?
 	my $end   = $start + $width - 1;
 
@@ -207,19 +269,15 @@ sub jack_multi_route {
 	# non-existent client, and correctly handles
 	# the case of a portname (containing colon)
 	
-	my $count_maybe_ref = $Audio::Nama::jack{$client}{$direction};
-	my $max = ref $count_maybe_ref eq 'ARRAY' 
-		? scalar @$count_maybe_ref 
-		: $count_maybe_ref;
+ 	my $max = scalar @{$jack->{clients}->{$client}{$direction}};
+ 	die qq(track $trackname: JACK client "$client", direction: $direction channel ($end) is out of bounds. $max channels maximum.\n) if $end > $max
+		and $config->{enforce_channel_bounds};
 
-	#my $max = scalar @{$Audio::Nama::jack{$client}{$direction}};
-	die qq(JACK client "$client", direction: $direction
-channel ($end) is out of bounds. $max channels maximum.\n) 
-		if $end > $max;
-	join q(,),q(jack_multi),
-	map{quote_jack_port($_)}
-		@{$Audio::Nama::jack{$client}{$direction}}[$start-1..$end-1];
+		return @{$jack->{clients}->{$client}{$direction}}[$start-1..$end-1]
+		 	if $jack->{clients}->{$client}{$direction};
+
 }
+#sub one_port { $jack->{clients}->{$client}->{$direction}->[$start-1] }
 sub default_jack_ports_list {
 	my ($track_name) = shift;
 	"$track_name.ports"
@@ -228,39 +286,64 @@ sub quote_jack_port {
 	my $port = shift;
 	($port =~ /\s/ and $port !~ /^"/) ? qq("$port") : $port
 }
-
+sub rectified { # client name from number
+	$_[0] !~ /D/ 
+		? 'system' # source_id or send_id matching digit
+		: $_[0]
+}
 
 ### subclass definitions
 
 ### method names with a preceding underscore 
 ### can be overridded by the object constructor
 
+{
 package Audio::Nama::IO::from_null;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub _device_id { 'null' } # 
+sub _device_id { 'null' }  
+}
 
+{
 package Audio::Nama::IO::to_null;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub _device_id { 'null' }  # underscore for testing
+sub _device_id { 'null' }
+}
 
+{
+package Audio::Nama::IO::from_rtnull;
+use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
+sub _device_id { 'rtnull' }  
+}
+
+{
+package Audio::Nama::IO::to_rtnull;
+use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
+sub _device_id { 'rtnull' }  
+}
+
+{
 package Audio::Nama::IO::from_wav;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub device_id { 
-	my $io = shift;
+	my $self = shift;
 	my @modifiers;
-	push @modifiers, $io->playat_output if $io->playat_output;
-	push @modifiers, $io->select_output if $io->select_output;
-	push @modifiers, split " ", $io->modifiers if $io->modifiers;
-	push @modifiers, $io->full_path;
+	push @modifiers, $self->playat_output if $self->playat_output;
+	push @modifiers, $self->select_output if $self->select_output;
+	push @modifiers, split " ", $self->modifiers if $self->modifiers;
+	push @modifiers, $self->full_path;
 	join(q[,],@modifiers);
 }
 sub ecs_extra { $_[0]->mono_to_stereo}
-
+sub client { 'system' if $jack->{jackd_running} } # since we share latency value
+}
+{
 package Audio::Nama::IO::to_wav;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub device_id { $_[0]->full_path }
-sub _format_template { $Audio::Nama::raw_to_disk_format } 
+sub _format_template { $config->{raw_to_disk_format} } 
+}
 
+{
 package Audio::Nama::IO::from_loop;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub new {
@@ -268,9 +351,13 @@ sub new {
 	my %vals = @_;
 	$class->SUPER::new( %vals, device_id => "loop,$vals{endpoint}");
 }
+}
+{
 package Audio::Nama::IO::to_loop;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO::from_loop';
+}
 
+{
 package Audio::Nama::IO::from_soundcard;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub new {
@@ -278,6 +365,8 @@ sub new {
 	my $class = $io_class{Audio::Nama::IO::soundcard_input_type_string()};
 	$class->new(@_);
 }
+}
+{
 package Audio::Nama::IO::to_soundcard;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub new {
@@ -285,52 +374,80 @@ sub new {
 	my $class = $io_class{Audio::Nama::IO::soundcard_output_type_string()};
 	$class->new(@_);
 }
+}
+{
 package Audio::Nama::IO::to_jack_multi;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
+sub client {
+	my $self = shift;
+	my $client = $self->direction eq 'input' 
+		? $self->source_id
+		: $self->send_id;
+}
 sub device_id { 
-	my $io = shift;
+	my $self = shift;
+	Audio::Nama::IO::jack_multi_route($self->ports)
+}
+sub ports {
+	my $self = shift;
 	# maybe source_id is an input number
-	my $client = $io->direction eq 'input' 
-		? $io->source_id
-		: $io->send_id;
+	my $client = $self->client;
 	my $channel = 1;
 	# we want the direction with respect to the client, i.e.  # reversed
-	my $client_direction = $io->direction eq 'input' ? 'output' : 'input';
+	my $client_direction = $self->direction eq 'input' ? 'output' : 'input';
 	if( Audio::Nama::dest_type($client) eq 'soundcard'){
 		$channel = $client;
 		$client = Audio::Nama::IO::soundcard_input_device_string(); # system, okay for output
 	}
-	Audio::Nama::IO::jack_multi_route($client,$client_direction,$channel,$io->width )
+	Audio::Nama::IO::jack_multi_ports($client,$client_direction,$channel,$self->width, Audio::Nama::try{$self->name} );
 }
-# don't need to specify format, since we take all channels
 
+}
+
+{
 package Audio::Nama::IO::from_jack_multi;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO::to_jack_multi';
 sub ecs_extra { $_[0]->mono_to_stereo }
+}
 
+{
 package Audio::Nama::IO::to_jack_port;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub format_template { $Audio::Nama::devices{jack}{signal_format} }
+sub format_template { $config->{devices}->{jack}->{signal_format} }
 sub device_id { 'jack,,'.$_[0]->port_name.'_out' }
+sub ports { "ecasound:".$_[0]->port_name. '_out_1' } # at least this one port
+	# HARDCODED port name
+}
 
+{
 package Audio::Nama::IO::from_jack_port;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO::to_jack_port';
 sub device_id { 'jack,,'.$_[0]->port_name.'_in' }
 sub ecs_extra { $_[0]->mono_to_stereo }
+sub ports { "ecasound:".$_[0]->port_name. '_in_1' } # at least this one port
+	# HARDCODED port name
+}
 
+{
 package Audio::Nama::IO::to_jack_client;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub device_id { "jack," . Audio::Nama::IO::quote_jack_port($_[0]->send_id); }
+sub client { Audio::Nama::IO::rectified($_[0]->send_id) }
+}
 
+{
 package Audio::Nama::IO::from_jack_client;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub device_id { 'jack,'.  Audio::Nama::IO::quote_jack_port($_[0]->source_id); }
 sub ecs_extra { $_[0]->mono_to_stereo}
+sub client { Audio::Nama::IO::rectified($_[0]->source_id) }
+}
 
-package Audio::Nama::IO::from_soundcard_device;
+{
+package Audio::Nama::IO::from_alsa_soundcard_device;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub ecs_extra { join ' ', $_[0]->rec_route, $_[0]->mono_to_stereo }
-sub device_id { $Audio::Nama::devices{$Audio::Nama::alsa_capture_device}{ecasound_id} }
+sub device_id { $config->{devices}->{$config->{alsa_capture_device}}->{ecasound_id} }
 sub input_channel { $_[0]->source_id }
 sub rec_route {
 	# works for mono/stereo only!
@@ -345,10 +462,11 @@ sub rec_route {
 	}
 	return $route;
 }
+}
 {
-package Audio::Nama::IO::to_soundcard_device;
+package Audio::Nama::IO::to_alsa_soundcard_device;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub device_id { $Audio::Nama::devices{$Audio::Nama::alsa_playback_device}{ecasound_id} }
+sub device_id { $config->{devices}->{$config->{alsa_playback_device}}{ecasound_id} }
 sub ecs_extra {route($_[0]->width,$_[0]->output_channel) }
 sub output_channel { $_[0]->send_id }
 sub route2 {
@@ -368,8 +486,10 @@ sub route {
 	$route;
 }
 }
+{
 package Audio::Nama::IO::any;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
+}
 
 
 1;

@@ -1,15 +1,19 @@
 package Audio::Nama::Assign;
+use Modern::Perl;
 our $VERSION = 1.0;
 use 5.008;
+use feature 'state';
 use strict;
 use warnings;
 no warnings q(uninitialized);
-use Carp;
+use Carp qw(carp confess croak cluck);
 use YAML::Tiny;
 use File::Slurp;
 use File::HomeDir;
+use Audio::Nama::Log qw(logsub);
 use Storable qw(nstore retrieve);
-#use Devel::Cycle;
+use JSON::XS;
+use Data::Dumper::Concise;
 
 require Exporter;
 
@@ -18,97 +22,185 @@ our %EXPORT_TAGS = ( 'all' => [ qw(
 		
 		serialize
 		assign
-		assign_vars
+		assign_singletons
 		store_vars
 		yaml_out
 		yaml_in
-		create_dir
-		join_path
-		wav_off
-		strip_all
-		strip_blank_lines
-		strip_comments
-		remove_spaces
-		expand_tilde
-		resolve_path
+		json_in
+		json_out
 		quote_yaml_scalars
+		var_map
+        config_vars
 ) ] );
 
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = ();
 
-
-package Audio::Nama;
-our ($debug, $debug2, $debug3);
-package Audio::Nama::Assign;
-
+our $to_json = JSON::XS->new->utf8->allow_blessed->pretty->canonical(1) ;
 use Carp;
 
+my $logger = Log::Log4perl->get_logger();
+
+{my $var_map = { qw(
+
+	%devices 						$config->{devices}
+	$alsa_playback_device 			$config->{alsa_playback_device}
+	$alsa_capture_device			$config->{alsa_capture_device}
+	$soundcard_channels				$config->{soundcard_channels}
+	%abbreviations					$config->{abbreviations}
+	$mix_to_disk_format 			$config->{mix_to_disk_format}
+	$raw_to_disk_format 			$config->{raw_to_disk_format}
+	$cache_to_disk_format 			$config->{cache_to_disk_format}
+	$mixer_out_format 				$config->{mixer_out_format}
+	$sample_rate					$config->{sample_rate}
+	$ecasound_tcp_port 				$config->{engine_tcp_port}
+	$ecasound_globals_general		$config->{engine_globals_common}
+	$ecasound_globals_realtime 		$config->{engine_globals_realtime}
+	$ecasound_globals_nonrealtime 	$config->{engine_globals_nonrealtime}
+	$ecasound_buffersize_realtime	$config->{engine_buffersize_realtime}
+	$ecasound_buffersize_nonrealtime	$config->{engine_buffersize_nonrealtime}
+	$eq 							$mastering->{fx_eq}
+	$low_pass 						$mastering->{fx_low_pass}
+	$mid_pass						$mastering->{fx_mid_pass}
+	$high_pass						$mastering->{fx_high_pass}
+	$compressor						$mastering->{fx_compressor}
+	$spatialiser					$mastering->{fx_spatialiser}
+	$limiter						$mastering->{fx_limiter}
+	$project_root 	 				$config->{root_dir}
+	$use_group_numbering 			$config->{use_group_numbering}
+	$press_space_to_start_transport $config->{press_space_to_start}
+	$execute_on_project_load 		$config->{execute_on_project_load}
+	$initial_user_mode 				$config->{initial_mode}
+	$midish_enable 					$config->{use_midish}
+	$quietly_remove_tracks 			$config->{quietly_remove_tracks}
+	$use_jack_plumbing 				$config->{use_jack_plumbing}
+	$jack_seek_delay    			$config->{engine_base_jack_seek_delay}
+	$use_monitor_version_for_mixdown $config->{sync_mixdown_and_monitor_version_numbers} 
+	$mixdown_encodings 				$config->{mixdown_encodings}
+	$volume_control_operator 		$config->{volume_control_operator}
+	$serialize_formats  	        $config->{serialize_formats}
+	$use_git						$config->{use_git}
+	$autosave						$config->{autosave}
+	$beep_command 					$config->{beep_command}
+	$use_pager     					$config->{use_pager}
+	$use_placeholders  				$config->{use_placeholders}
+    $edit_playback_end_margin  		$config->{edit_playback_end_margin}
+    $edit_crossfade_time  			$config->{edit_crossfade_time}
+	$default_fade_length 			$config->{engine_fade_default_length}
+	$fade_time 						$config->{engine_fade_length_on_start_stop}
+	$seek_delay    					$config->{engine_jack_seek_delay}
+	%mute_level						$config->{mute_level}
+	%fade_out_level 				$config->{fade_out_level}
+	$fade_resolution 				$config->{fade_resolution}
+	%unity_level					$config->{unity_level}
+	$enforce_channel_bounds    		$config->{enforce_channel_bounds}
+	$midi_input_dev    				$midi->{input_dev}
+	$midi_output_dev   				$midi->{output_dev}
+	$controller_ports				$midi->{controller_ports}
+    $midi_inputs					$midi->{inputs}
+
+) };
+sub var_map {  $var_map } # to allow outside access while keeping
+                          # working lexical
+sub config_vars { grep {$_ ne '**' } keys %$var_map }
+
 sub assign {
-	
-	$debug2 and print "&assign\n";
+  # Usage: 
+  # assign ( 
+  # data 	=> $ref,
+  # vars 	=> \@vars,
+  # var_map => 1,
+  #	class => $class
+  #	);
+
+	logsub("&assign");
 	
 	my %h = @_; # parameters appear in %h
 	my $class;
-	carp "didn't expect scalar here" if ref $h{data} eq 'SCALAR';
-	carp "didn't expect code here" if ref $h{data} eq 'CODE';
+	$logger->logcarp("didn't expect scalar here") if ref $h{data} eq 'SCALAR';
+	$logger->logcarp("didn't expect code here") if ref $h{data} eq 'CODE';
 	# print "data: $h{data}, ", ref $h{data}, $/;
 
 	if ( ref $h{data} !~ /^(HASH|ARRAY|CODE|GLOB|HANDLE|FORMAT)$/){
 		# we guess object
 		$class = ref $h{data}; 
-		$debug and print "I found an object of class $class...\n";
+		$logger->debug("I found an object of class $class");
 	} 
 	$class = $h{class};
  	$class .= "::" unless $class =~ /::$/;  # SKIP_PREPROC
 	my @vars = @{ $h{vars} };
 	my $ref = $h{data};
 	my $type = ref $ref;
-	$debug and print <<ASSIGN;
+	$logger->debug(<<ASSIGN);
 	data type: $type
 	data: $ref
 	class: $class
 	vars: @vars
 ASSIGN
-	#$debug and print yaml_out($ref);
+	#$logger->debug(sub{yaml_out($ref)});
 
+	# index what sigil an identifier should get
+
+	# we need to create search-and-replace strings
+	# sigil-less old_identifier
 	my %sigil;
-	map{ 
-		my ($s, $identifier) = /(.)([\w:]+)/;
-		$sigil{$identifier} = $s;
+	my %ident;
+	map { 
+		my $oldvar = my $var = $_;
+		my ($dummy, $old_identifier) = /^([\$\%\@])([\-\>\w:\[\]{}]+)$/;
+		$var = $var_map->{$var} if $h{var_map} and $var_map->{$var};
+
+		$logger->debug("oldvar: $oldvar, newvar: $var") unless $oldvar eq $var;
+		my ($sigil, $identifier) = $var =~ /([\$\%\@])(\S+)/;
+			$sigil{$old_identifier} = $sigil;
+			$ident{$old_identifier} = $identifier;
 	} @vars;
-	#print yaml_out(\%sigil); exit;
+
+	$logger->debug(sub{"SIGIL\n". yaml_out(\%sigil)});
+	#%ident = map{ @$_ } grep{ $_->[0] ne $_->[1] } map{ [$_, $ident{$_}]  }  keys %ident; 
+	my %ident2 = %ident;
+	while ( my ($k,$v) = each %ident2)
+	{
+		delete $ident2{$k} if $k eq $v
+	}
+	$logger->debug(sub{"IDENT\n". yaml_out(\%ident2)});
+	
 	#print join " ", "Variables:\n", @vars, $/ ;
 	croak "expected hash" if ref $ref !~ /HASH/;
-	my @keys =  keys %{ $ref };
-	$debug and print join " ","found keys: ", keys %{ $ref },"\n---\n";
+	my @keys =  keys %{ $ref }; # identifiers, *no* sigils
+	$logger->debug(sub{ join " ","found keys: ", keys %{ $ref },"\n---\n"});
 	map{  
 		my $eval;
 		my $key = $_;
 		chomp $key;
+		my $sigil = $sigil{$key};
 		my $full_class_path = 
-			$sigil{$key} . ($key =~/:\:/ ? '': $class) . $key;
+ 			$sigil . ($key =~/:\:/ ? '': $class) .  $ident{$key};
 
 			# use the supplied class unless the variable name
 			# contains \:\:
 			
-# 		$debug and print <<DEBUG;
-# key:             $key
-# full_class_path: $full_class_path
-# sigil{key}:      $sigil{$key}
-# DEBUG
-		if ( ! $sigil{$key} ){
-			$debug and carp 
+		$logger->debug(<<DEBUG);
+key:             $key
+sigil:      $sigil
+full_class_path: $full_class_path
+DEBUG
+		if ( ! $sigil ){
+			$logger->debug(sub{
 			"didn't find a match for $key in ", join " ", @vars, $/;
-		} else {
-			my ($sigil, $identifier) = ($sigil{$key}, $key);
+			});
+		} 
+		else 
+		{
+
 			$eval .= $full_class_path;
 			$eval .= q( = );
 
-			my $val = $ref->{$identifier};
+			my $val = $ref->{$key};
 
-			if ($sigil eq '$') { # scalar assignment
+			if (! ref $val or ref $val eq 'SCALAR')  # scalar assignment
+			{
 
 				# extract value
 
@@ -126,151 +218,228 @@ ASSIGN
 
 				$eval .=  $val;  # append to assignment
 
-			} else { # array, hash assignment
-					
-
-				$eval .= qq($sigil\{);
-				$eval .= q($ref->{ );
-				$eval .= qq("$identifier");
-				$eval .= q( } );
-				$eval .= q( } );
+			} 
+			elsif ( ref $val eq 'ARRAY' or ref $val eq 'HASH')
+			{ 
+				if ($sigil eq '$')	# assign reference
+				{				
+					$eval .= q($val) ;
+				}
+				else				# dereference and assign
+				{
+					$eval .= qq($sigil) ;
+					$eval .= q({$val}) ;
+				}
 			}
-			$debug and print $eval, $/; 
+			else { die "unsupported assignment: ".ref $val }
+			$logger->debug("eval string: $eval"); 
 			eval($eval);
-			$debug and $@ and carp "failed to eval $eval: $@\n";
+			$logger->logcarp("failed to eval $eval: $@") if $@;
 		}  # end if sigil{key}
 	} @keys;
 	1;
 }
-
-sub assign_vars {
-	$debug2 and print "&assign_vars\n";
-	
-	my %h = @_;
-	my $source = $h{source};
-	my @vars = @{ $h{vars} };
-	my $class = $h{class};
-	my $format = $h{format};
-	# assigns vars in @var_list to values from $source
-	# $source can be a :
-	#      - filename or
-	#      - string containing YAML data
-	#      - reference to a hash array containing assignments
-	#
-	# returns a $ref containing the retrieved data structure
-	$debug and print "source: ", (ref $source) || $source, "\n";
-	$debug and print "variable list: @vars\n";
-	my $ref;
-
-### figure out what to do with input
-
-	if ($source !~ /\n/ and -f $source){
-		if ( $source =~ /\.yml$/i or $format eq 'yaml'){
-				$debug and print "found a yaml file: $source\n";
-				$ref = yaml_in($source);
-		} elsif ( $source =~ /\.pl$/i or $format eq 'perl'){
-				$debug and print "found a perl file: $source\n";
-				my $code = read_file($source);
-				$ref = eval $code or carp "$source: eval failed: $@\n";
-		} else {
-				$debug and print "assuming Storable file: $source\n";
-				$ref = retrieve($source) # Storable
-		}
-
-	} elsif ( $source =~ /\n/ ){
-		$debug and print "found yaml text\n";
-		$ref = yaml_in($source);
-
-	# pass a hash_ref to the assigner
-	} elsif ( ref $source ) {
-		$debug and print "found a reference\n";
-		$ref = $source;
-	} else { carp "$source: missing data source\n"; }
-
-	assign(data => $ref, 
-			vars => \@vars, 
-			class => $class);
-	1;	
-
 }
 
+# assign_singletons() assigns hash key/value entries
+# rather than a top-level hash reference to avoid
+# clobbering singleton key/value pairs initialized
+# elsewhere.
+ 
+my @singleton_idents = map{ /^.(.+)/; $1 }  # remove leading '$' sigil
+qw(
+$ui
+$mode
+$file
+$graph
+$setup
+$config
+$jack
+$fx
+$fx_cache
+$engine
+$text
+$gui
+$midi
+$help
+$mastering
+$project
+
+);
+sub assign_singletons {
+	logsub('&assign_singletons');
+	my $ref = shift;
+	my $data = $ref->{data} or die "expected data got undefined";
+	my $class = $ref->{class} // 'Audio::Nama';
+	$class .= '::'; # SKIP_PREPROC
+	map {
+		my $ident = $_;
+		if( defined $data->{$ident}){
+			my $type = ref $data->{$ident};
+			$type eq 'HASH' or die "$ident: expect hash, got $type";
+			map{ 
+				my $key = $_;
+				my $cmd = join '',
+					'$',
+					$class,
+					$ident,
+					'->{',
+					$key,
+					'}',
+					' = $data->{$ident}->{$key}';
+				$logger->debug("eval: $cmd");
+				eval $cmd;
+				$logger->logcarp("error during eval: $@") if $@;
+			} keys %{ $data->{$ident} }
+		}
+	} @singleton_idents;  # list of "singleton" variables
+}
+
+our %suffix = 
+	(
+		storable => "bin",
+		perl	 => "pl",
+		json	 => "json",
+		yaml	 => "yml",
+	);
+our %dispatch = 
+	( storable => sub { my($ref, $path) = @_; nstore($ref, $path) },
+	  perl     => sub { my($ref, $path) = @_; write_file($path, Dumper $ref) },
+	  yaml	   => sub { my($ref, $path) = @_; write_file($path, yaml_out($ref))},
+	  json	   => sub { my($ref, $path) = @_; write_file($path, json_out($ref))},
+	);
+
+sub serialize_and_write {
+	my ($ref, $path, $format) = @_;
+	$path .= ".$suffix{$format}" unless $path =~ /\.$suffix{$format}$/;
+	$dispatch{$format}->($ref, $path)
+}
+
+
+{
+	my $parse_re =  		# initialize only once
+			qr/ ^ 			# beginning anchor
+			([\%\@\$]) 		# first character, sigil
+			([\w:]+)		# identifier, possibly perl namespace 
+			(?:->{(\w+)})?  # optional hash key for new hash-singleton vars
+			$ 				# end anchor
+			/x;
 sub serialize {
-	$debug2 and print "&serialize\n";
+	logsub("&serialize");
+
 	my %h = @_;
 	my @vars = @{ $h{vars} };
 	my $class = $h{class};
 	my $file  = $h{file};
-	my $format = $h{format};
- 	$class .= "::" unless $class =~ /::$/; # SKIP_PREPROC
-	$debug and print "file: $file, class: $class\nvariables...@vars\n";
+	my $format = $h{format} // 'perl'; # default to Data::Dumper::Concise
+
+ 	$class //= "Audio::Nama";
+	$class =~ /::$/ or $class .= '::'; # SKIP_PREPROC
+	$logger->debug("file: $file, class: $class\nvariables...@vars");
+
+	# first we marshall data into %state
+
 	my %state;
-	map{ my ($sigil, $identifier) = /(.)([\w:]+)/; 
 
+	map{ 
+		my ($sigil, $identifier, $key) = /$parse_re/;
 
+	$logger->debug("found sigil: $sigil, ident: $identifier, key: $key");
 
-# for  YAML::Reader/Writer
-#
-#  all scalars must contain values, not references
+# note: for  YAML::Reader/Writer  all scalars must contain values, not references
+# more YAML adjustments 
+# restore will break if a null field is not converted to '~'
 
 		#my $value =  q(\\) 
+
+# directly assign scalar, but take hash/array references
+# $state{ident} = $scalar
+# $state{ident} = \%hash
+# $state{ident} = \@array
+
+# in case $key is provided
+# $state{ident}->{$key} = $singleton->{$key};
+#
+			
+
 		my $value =  ($sigil ne q($) ? q(\\) : q() ) 
 
 							. $sigil
 							. ($identifier =~ /:/ ? '' : $class)
-							. $identifier;
+							. $identifier
+							. ($key ? qq(->{$key}) : q());
 
-# more YAML adjustments 
-#
-# restore will break if a null field is not converted to '~'
+		$logger->debug("value: $value");
+
 			
 		 my $eval_string =  q($state{')
 							. $identifier
 							. q('})
+							. ($key ? qq(->{$key}) : q() )
 							. q( = )
 							. $value;
-	$debug and print "attempting to eval $eval_string\n";
-	eval($eval_string) or $debug  and print 
-		"eval returned zero or failed ($@\n)";
-	} @vars;
-	# my $result1 = store \%state, $file; # old method
-	if ( $h{file} ) {
 
-		if ($h{format} eq 'storable') {
-			my $result1 = nstore \%state, $file; # old method
-		} elsif ($h{format} eq 'perl'){
-			$file .= '.pl' unless $file =~ /\.pl$/;
-			#my $pl = dump \%state;
-			#write_file($file, $pl);
-		} elsif ($h{format} eq 'yaml'){
-			$file .= '.yml' unless $file =~ /\.yml$/;
-			#find_cycle(\%state);
-			my $yaml = yaml_out(\%state);
-			write_file($file, $yaml);
-			$debug and print $yaml;
+		if ($identifier){
+			$logger->debug("attempting to eval $eval_string");
+			eval($eval_string) 
+				or $logger->error("eval returned zero or failed ($@)");
 		}
-	} else { yaml_out(\%state) }
+	} @vars;
+	$logger->debug(sub{join $/,'\%state', Dumper \%state});
 
+	# YAML out for screen dumps
+	return( yaml_out(\%state) ) unless $h{file};
+
+	# now we serialize %state
+	
+	my $path = $h{file};
+
+	serialize_and_write(\%state, $path, $format);
+}
+}
+
+sub json_out {
+	logsub("&json_out");
+	my $data_ref = shift;
+	my $type = ref $data_ref;
+	croak "attempting to code wrong data type: $type"
+		if $type !~ /HASH|ARRAY/;
+	$to_json->encode($data_ref);
+}
+
+sub json_in {
+	logsub("&json_in");
+	my $json = shift;
+	my $data_ref = decode_json($json);
+	$data_ref
 }
 
 sub yaml_out {
+	# due to bugs related to YAML::Tiny 
+	# we now provide only JSON output
 	
-	$debug2 and carp "&yaml_out";
+	logsub("&yaml_out");
 	my ($data_ref) = shift; 
+	return json_out($data_ref);
+	#use Devel::Cycle;
+	#use Data::Dumper::Concise;
+	#say(Dumper $data_ref);
+	find_cycle($data_ref);
 	my $type = ref $data_ref;
-	$debug and print "data ref type: $type\n "; 
-	carp "can't yaml-out a Scalar!!\n" if ref $data_ref eq 'SCALAR';
-	croak "attempting to code wrong data type: $type"
+	$logger->debug("data ref type: $type");
+	$logger->logcarp("can't yaml-out a Scalar!!") if ref $data_ref eq 'SCALAR';
+	$logger->logcroak("attempting to code wrong data type: $type")
 		if $type !~ /HASH|ARRAY/;
 	my $output;
-	#$debug and print join $/, keys %$data_ref, $/;
-	$debug and print "about to write YAML as string\n";
+	#$logger->debug(join " ",keys %$data_ref);
+	$logger->debug("about to write YAML as string");
 	my $y = YAML::Tiny->new;
 	$y->[0] = $data_ref;
 	my $yaml = $y->write_string() . "...\n";
 }
 sub yaml_in {
 	
-	# $debug2 and print "&yaml_in\n";
+	# logsub("&yaml_in");
 	my $input = shift;
 	my $yaml = $input =~ /\n/ # check whether file or text
 		? $input 			# yaml text
@@ -285,93 +454,6 @@ sub yaml_in {
 	$y->[0];
 }
 
-## support functions
-
-sub create_dir {
-	my @dirs = @_;
-	map{ my $dir = $_;
-	$debug and print "creating [ $dir ]\n";
-		-e $dir 
-#and (carp "create_dir: '$dir' already exists, skipping...\n") 
-			or system qq( mkdir -p $dir)
-		} @dirs;
-}
-
-sub join_path {
-	
-	my @parts = @_;
-	my $path = join '/', @parts;
-	$path =~ s(/{2,})(/)g;
-	#$debug and print "path: $path\n";
-	$path;
-}
-
-sub wav_off {
-	my $wav = shift;
-	$wav =~ s/\.wav\s*$//i;
-	$wav;
-}
-
-sub strip_all{ strip_trailing_spaces(strip_blank_lines( strip_comments(@_))) }
-
-sub strip_trailing_spaces {
-	map {s/\s+$//} @_;
-	@_;
-}
-sub strip_blank_lines {
-	map{ s/\n(\s*\n)+/\n/sg } @_;
-	map{ s/^\n+//s } @_;
-	@_;
-	 
-}
-
-sub strip_comments { #  
-	map{ s/#.*$//mg; } @_;
-	map{ s/\s+$//mg; } @_;
-
-	@_
-} 
-
-sub remove_spaces {                                                             
-        my $entry = shift;                                                      
-        # remove leading and trailing spaces                                    
-                                                                                
-        $entry =~ s/^\s*//;                                                     
-        $entry =~ s/\s*$//;                                                     
-                                                                                
-        # convert other spaces to underscores                                   
-                                                                                
-        $entry =~ s/\s+/_/g;                                                    
-        $entry;                                                                 
-}                                                                               
-sub resolve_path {
-	my $path = shift;
-	$path = expand_tilde($path);
-	$path = File::Spec::Link->resolve_all($path);
-}
-sub expand_tilde { 
-	my $path = shift; 
-
- 	my $home = File::HomeDir->my_home;
-
-
-	# ~bob -> /home/bob
-	$path =~ s(
-		^ 		# beginning of line
-		~ 		# tilde
-		(\w+) 	# username
-	)
-	(File::HomeDir->users_home($1))ex;
-
-	# ~/something -> /home/bob/something
-	$path =~ s( 
-		^		# beginning of line
-		~		# tilde
-		/		# slash
-	)
-	($home/)x;
-	$path
-}
 sub quote_yaml_scalars {
 	my $yaml = shift;
 	my @modified;

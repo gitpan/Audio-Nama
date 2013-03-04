@@ -1,17 +1,65 @@
 =head1 NAME
 
-Nama - Ecasound-based recorder/mixer
+Nama - digital audio workstation
 
-=head1 DESCRIPTION
+=head DESCRIPTION
 
-B<Nama> is a text-based application for multitrack
-recording, mixing and mastering using the Ecasound
-audio engine developed by Kai Vehmanen.
- 
-Features include tracks, buses, effects, presets,
-sends, inserts, marks and regions. Nama runs under JACK and
-ALSA audio frameworks, automatically detects LADSPA plugins,
-and supports Ladish Level 1 session handling.
+B<Nama> is a lightweight digital audio workstation
+using Kai Vehmanen's Ecasound as the audio engine.
+
+New projects begin with a mixer, can include track, bus,
+effect, send, insert, mark, region and fade objects.
+Facilities are provides for mixdown, and mastering.
+
+=head2 Command language and help system
+
+Nama has its own command language.  Commands have full names
+and shortcuts. A "for" loop allows commands to be repeated
+over multiple tracks, which can be designated as a list, by
+the name of their bus, or by the name of a user-defined
+group. Nama has the concept of a currently selected object.
+At any time, there is usually a current bus, current track
+and current effect. Track commands will act on the current
+track, bus commands will act on the currently selected bus.
+The help system provides searchable access to documentation
+for all Nama commands and shortcuts, and for LADSPA, LV2 and
+Ecasound effects.
+
+=head2 Backend
+
+Nama creates signal processing graphs for the Ecasound
+engine; applies fades, effects and edits to the audio
+streams; and manages successive configure-run cycles.  If
+jackd is running, Nama will automatically map soundcard IO
+via JACK. 
+
+When a user command causes a major configuration change,
+Nama reconfigure the Ecasound engine then manages the
+engine's realtime operation. While the engine is running it
+allows live effect controller inputs from MIDI devices, GUI
+effect sliders, and text commands, as well as preprogrammed
+envelopes.
+
+=head2 User environment
+
+In addition to executing its own commands, Nama will pass
+commands to Ecasound, Midish, the Perl interpreter or the
+shell. 
+
+Nama's optional Tk-based GUI can coexist with the
+terminal. It does not display a waveform, however Nama can
+spawn an Audacity or MHWaveedit instance to view/edit a
+waveform. Nama uses Git to manage project state, which is
+serialized as JSON files.
+
+
+=head2 Project reuse
+
+Three types of templates are available to reuse project
+components: effect chains, effect profiles, and project
+templates. Applying an effect profile creates named tracks,
+each with a list of effects and inserts.  (Nama's mastering
+network is stored as an effect profile.) 
 
 =head1 INSTALLATION
 
@@ -20,16 +68,20 @@ and supports Ladish Level 1 session handling.
 The following command will install Nama, automatically
 pulling in all Perl modules required to run Nama in text mode:
 
+		cpanm Audio::Nama
+
+However if you don't have cpanm, this should still work:
+
 		PERL_MM_USE_DEFAULT=1 cpan Audio::Nama
 
 To use the GUI, you will need to install Tk:
 
-		cpan Tk
+		cpanm Tk
 
 You may optionally install Audio::Ecasound to run Ecasound
 via libecasoundc:
 
-		cpan Audio::Ecasound
+		cpanm Audio::Ecasound
 
 You can browse the sources or download a tarball via:
 
@@ -85,5 +137,21 @@ http://www.ladspa.org/ladspa_sdk/download.html
 In particular the utility program 'analyseplugin' must be
 installed in a directory in your execution PATH.  
 
-Nama's mastering mode uses a number of LADSPA plugins.
-Defaults are specified in the configuration file .namarc. 
+Nama's mastering mode uses a number of LADSPA plugins
+in a reasonably flat starting configuration.
+provided that the user installs the plugins
+listed in the default configuration file .namarc.
+
+Git is required to utilize Nama's source control 
+and undo features. 
+
+=head2 COPYRIGHT
+
+Unless specified otherwise, this code is 
+2003 - 2013, copyright Joel Roth
+
+All rights are reserved except as provided by the Gnu Public
+License, version 3, as detailed in the file COPYING provided
+with this distribution.
+
+

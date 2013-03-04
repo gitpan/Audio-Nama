@@ -2,414 +2,400 @@
 
 
 package Audio::Nama;
-use Modern::Perl;
-use File::Slurp;
-use Audio::Nama::Assign qw(quote_yaml_scalars);
-no warnings 'uninitialized';
+use File::Copy;
+use Modern::Perl; no warnings 'uninitialized';
 
-our (
-
-	$saved_version,
-	$cop_id,
-	%cops,
-	%copp,
-	%copp_exp,
-	$unit,
-	%oid_status,
-	@tracks_data,
-	@bus_data,
-	@groups_data,
-	@marks_data,
-	@fade_data,
-	@edit_data,
-	@inserts_data,
-	@loop_endpoints,
-	$loop_enable,
-	$length,
-	%bunch,
-	@command_history,
-	$mastering_mode,
-	$this_track_name,
-	$this_op,
-
-
-# autosave
-
-	$autosave_interval,
-	%event_id,
-
-);
-
-our (
-	$state_store_file,
-	$effect_chain_file,
-	$effect_profile_file,
-	%effect_chain,
-	%effect_profile,
-	%tn,
-	%ti,
-	%bn,
-	$term,
-	$this_track,
-	$this_bus,
-	@persistent_vars,
-	$ui,
-	$VERSION,
-	%opts,
-	$debug, 
-	$debug2,
-	$debug3
-);
-
+sub git { 
+	$config->{use_git} or warn("@_: git command, but git is not enabled.
+You may want to set use_git: 1 in .namarc"), return;
+	
+	logpkg(__FILE__,__LINE__,'debug',"VCS command: git @_"); 
+	$project->{repo}->run(@_) }
+		
 sub save_state {
-	my $file = shift || $state_store_file; 
-	$debug2 and print "&save_state\n";
-	$saved_version = $VERSION;
+	my $filename = shift;
+	if ($filename)
+	{
 
+		# remove extension if present
+		
+		$filename =~ s/\.json//;
+
+		# append filename if warranted
+		
+		$filename = 
+				$filename =~ m{/} 	
+									? $filename	# as-is if input contains slashes
+									: join_path(project_dir(),$filename) 
+	}
+	my $path = $filename || $file->state_store();
+	logsub("&save_state");
+	$project->{save_file_version_number} = $VERSION;
 
 	# some stuff get saved independently of our state file
 	
-	$debug and print "saving palette\n";
+	logpkg(__FILE__,__LINE__,'debug', "saving palette");
 	$ui->save_palette;
 
 	# do nothing more if only Master and Mixdown
 	
 	if (scalar @Audio::Nama::Track::all == 2 ){
-		print "No user tracks, skipping...\n";
+		throw("No user tracks, skipping...");
 		return;
 	}
 
 	print "\nSaving state as ",
-	save_system_state($file), "\n";
-	save_effect_chains();
-	save_effect_profiles();
+	save_system_state($path), "\n";
+	save_global_effect_chains();
 
 	# store alsa settings
 
-	if ( $opts{a} ) {
-		my $file = $file;
-		$file =~ s/\.yml$//;
+	if ( $config->{opts}->{a} ) {
+		my $filename = $filename;
+		$filename =~ s/\.yml$//;
 		print "storing ALSA settings\n";
-		print qx(alsactl -f $file.alsa store);
+		print qx(alsactl -f $filename.alsa store);
 	}
 }
-sub initialize_serialization_arrays {
+sub initialize_marshalling_arrays {
 	@tracks_data = (); # zero based, iterate over these to restore
 	@bus_data = (); # 
 	@marks_data = ();
 	@fade_data = ();
 	@inserts_data = ();
 	@edit_data = ();
-	@command_history = ();
+	@project_effect_chain_data = ();
+	@global_effect_chain_data = ();
+	$text->{command_history} = {};
+
 }
 
 sub save_system_state {
 
-	my $file = shift;
-
-	# save stuff to state file
-
-	$file = join_path(project_dir(), $file) unless $file =~ m(/); 
-	$file =~ /\.yml$/ or $file .= '.yml';	
+	my $path = shift;
+	my $output_format = shift;
 
 	sync_effect_parameters(); # in case a controller has made a change
+	# we sync read-only parameters, too, but I think that is
+	# harmless
 
-	# remove null keys in %cops and %copp
+	# remove null keys in $fx->{applied} and $fx->{params}
+	# would be better to find where they come from
 	
-	delete $cops{''};
-	delete $copp{''};
+	delete $fx->{applied}->{''};
+	delete $fx->{params}->{''};
 
-	initialize_serialization_arrays();
+	initialize_marshalling_arrays();
 	
 	# prepare tracks for storage
 	
 	$this_track_name = $this_track->name;
 
-	$debug and print "copying tracks data\n";
+	logpkg(__FILE__,__LINE__,'debug', "copying tracks data");
 
-	map { push @tracks_data, $_->hashref } Audio::Nama::Track::all();
+	map { push @tracks_data, $_->as_hash } Audio::Nama::Track::all();
+
 	# print "found ", scalar @tracks_data, "tracks\n";
 
-	# delete unused fields
+	# delete obsolete fields
 	map { my $t = $_;
 				map{ delete $t->{$_} } 
 					qw(ch_r ch_m source_select send_select jack_source jack_send);
 	} @tracks_data;
 
-	$debug and print "copying bus data\n";
 
-	map{ push @bus_data, $_->hashref } Audio::Nama::Bus::all();
+	logpkg(__FILE__,__LINE__,'debug', "copying bus data");
+
+	@bus_data = map{ $_->as_hash } Audio::Nama::Bus::all();
 
 	# prepare inserts data for storage
 	
-	$debug and print "copying inserts data\n";
+	logpkg(__FILE__,__LINE__,'debug', "copying inserts data");
 	
-	while (my $k = each %Audio::Nama::Insert::by_index ){ 
-		push @inserts_data, $Audio::Nama::Insert::by_index{$k}->hashref;
-	}
+	@inserts_data = map{ $_->as_hash } values %Audio::Nama::Insert::by_index;
 
 	# prepare marks data for storage (new Mark objects)
 
-	$debug and print "copying marks data\n";
-	push @marks_data, map{ $_->hashref } Audio::Nama::Mark::all();
+	logpkg(__FILE__,__LINE__,'debug', "copying marks data");
+	@marks_data = map{ $_->as_hash } Audio::Nama::Mark::all();
 
-	push @fade_data,  map{ $_->hashref } values %Audio::Nama::Fade::by_index;
+	@fade_data = map{ $_->as_hash } values %Audio::Nama::Fade::by_index;
 
-	push @edit_data,  map{ $_->hashref } values %Audio::Nama::Edit::by_index;
+	@edit_data = map{ $_->as_hash } values %Audio::Nama::Edit::by_index;
+
+	@project_effect_chain_data = map { $_->as_hash } Audio::Nama::EffectChain::find(project => 1);
 
 	# save history -- 50 entries, maximum
 
-	my @history = $Audio::Nama::term->GetHistory;
+	my @history;
+	@history = $text->{term}->GetHistory if $text->{term};
 	my %seen;
-	map { push @command_history, $_ 
+	$text->{command_history} = [];
+	map { push @{$text->{command_history}}, $_ 
 			unless $seen{$_}; $seen{$_}++ } @history;
-	my $max = scalar @command_history;
+	my $max = scalar @{$text->{command_history}};
 	$max = 50 if $max > 50;
-	@command_history = @command_history[-$max..-1];
-	$debug and print "serializing\n";
+	@{$text->{command_history}} = @{$text->{command_history}}[-$max..-1];
+	logpkg(__FILE__,__LINE__,'debug', "serializing");
+
+	my @formats = $output_format || $config->serialize_formats;
+
+	map{ 	my $format = $_ ;
+			serialize(
+				file => $path,
+				format => $format,
+				vars => \@persistent_vars,
+				class => 'Audio::Nama',
+				);
+
+	} @formats;
 
 	serialize(
-		file => $file, 
-		format => 'yaml',
-		vars => \@persistent_vars,
+		file => $file->untracked_state_store,
+		format => 'json',
+		vars => \@persistent_untracked_vars,
 		class => 'Audio::Nama',
-		);
+	);	
 
-
-	$file
+	"$path.json";
 }
-sub restore_state {
-	$debug2 and print "&restore_state\n";
-	my $file = shift;
-	$file = $file || $state_store_file;
-	$file = join_path(project_dir(), $file)
-		unless $file =~ m(/);
-	$file .= ".yml" unless $file =~ /yml$/;
-	! -f $file and (print "file not found: $file\n"), return;
-	$debug and print "using file: $file\n";
+{
+my %is_legal_suffix = ( 
+		json => 'json', 
+		yml => 'yaml', 
+		pl 	 => 'perl',
+		bin  => 'storable',
+		yaml => 'yaml', # we allow formats as well
+		perl => 'perl',
+		storable => 'storable',
+);
+sub get_newest {
 	
-	my $yaml = read_file($file);
-
-	# remove empty key hash lines # fixes YAML::Tiny bug
-	$yaml = join $/, grep{ ! /^\s*:/ } split $/, $yaml;
-
-	# rewrite obsolete null hash/array substitution
-	$yaml =~ s/~NULL_HASH/{}/g;
-	$yaml =~ s/~NULL_ARRAY/[]/g;
-
-	# rewrite %cops 'owns' field to []
+	# choose the newest
+	#
+	my ($path, $format) = @_;
 	
-	$yaml =~ s/owns: ~/owns: []/g;
-
-	$yaml = quote_yaml_scalars( $yaml );
+	# simply return the file
+	# if filename matches exactly, 
+	# and we know the format
 	
-	# start marshalling with clean slate	
+	return($path, $format) if -f $path and $is_legal_suffix{$format};
+
+	my ($dir, $name) = $path =~ m!^(.*?)([^/]+)$!; 
 	
-	initialize_serialization_arrays();
-
-	# restore persistent variables
-
-	assign_var($yaml, @persistent_vars );
-
-	restore_effect_chains();
-	restore_effect_profiles();
-
-	##  print yaml_out \@groups_data; 
-	# %cops: correct 'owns' null (from YAML) to empty array []
+	# otherwise we glob, sort and filter directory entries
 	
-	# backward compatibility fixes for older projects
-
-	if (! $saved_version ){
-
-		# Tracker group is now called 'Main'
-	
-		map{ $_->{name} = 'Main'} grep{ $_->{name} eq 'Tracker' } @groups_data;
-		
-		for my $t (@tracks_data){
-			$t->{group} =~ s/Tracker/Main/;
-			if( $t->{source_select} eq 'soundcard'){
-				$t->{source_type} = 'soundcard' ;
-				$t->{source_id} = $t->{ch_r}
-			}
-			elsif( $t->{source_select} eq 'jack'){
-				$t->{source_type} = 'jack_client' ;
-				$t->{source_id} = $t->{jack_source}
-			}
-			if( $t->{send_select} eq 'soundcard'){
-				$t->{send_type} = 'soundcard' ;
-				$t->{send_id} = $t->{ch_m}
-			}
-			elsif( $t->{send_select} eq 'jack'){
-				$t->{send_type} = 'jack_client' ;
-				$t->{send_id} = $t->{jack_send}
-			}
-		}
-	}
-	if( $saved_version < 0.9986){
-	
-		map { 	# store insert without intermediate array
-
-				my $t = $_;
-
-				# use new storage format for inserts
-				my $i = $t->{inserts};
-				if($i =~ /ARRAY/){ 
-					$t->{inserts} = scalar @$i ? $i->[0] : {}  }
-				
-				# initialize inserts effect_chain_stack and cache_map
-
-				$t->{inserts} //= {};
-				$t->{effect_chain_stack} //= [];
-				$t->{cache_map} //= {};
-
-				# set class for Mastering tracks
-
-				$t->{class} = 'Audio::Nama::MasteringTrack' if $t->{group} eq 'Mastering';
-				$t->{class} = 'Audio::Nama::SimpleTrack' if $t->{name} eq 'Master';
-
-				# rename 'ch_count' field to 'width'
-				
-				$t->{width} = $t->{ch_count};
-				delete $t->{ch_count};
-
-				# set Mixdown track width to 2
-				
-				$t->{width} = 2 if $t->{name} eq 'Mixdown';
-				
-				# remove obsolete fields
-				
-				map{ delete $t->{$_} } qw( 
-											delay 
-											length 
-											start_position 
-											ch_m 
-											ch_r
-											source_select 
-											jack_source   
-											send_select
-											jack_send);
-		}  @tracks_data;
-	}
-
-	# jack_manual is now called jack_port
-	if ( $saved_version <= 1){
-		map { $_->{source_type} =~ s/jack_manual/jack_port/ } @tracks_data;
-	}
-	if ( $saved_version <= 1.053){ # convert insert data to object
-		my $n = 0;
-		@inserts_data = ();
-		for my $t (@tracks_data){
-			my $i = $t->{inserts};
-			next unless keys %$i;
-			$t->{postfader_insert} = ++$n;
-			$i->{class} = 'Audio::Nama::PostFaderInsert';
-			$i->{n} = $n;
-			$i->{wet_name} = $t->{name} . "_wet";
-			$i->{dry_name} = $t->{name} . "_dry";
-			delete $t->{inserts};
-			delete $i->{tracks};
-			push @inserts_data, $i;
+	my @sorted = 
+		sort{ $a->[1] <=> $b->[1] } 
+		grep{ $is_legal_suffix{$_->[2]} }
+		map 
+		{ 
+			my ($suffix) = m/^$path(?:\.(\w+))?$/;
+			[$_, -M $_, $suffix] 
 		} 
-	}
-	if ( $saved_version <= 1.054){ 
+		glob("$path*");
+	logpkg(__FILE__,__LINE__,'debug', sub{yaml_out \@sorted});
+	($sorted[0]->[0], $sorted[0]->[2]);
+}
+}
 
-		for my $t (@tracks_data){
+{ my %decode = 
+	(
+		json => \&json_in,
+		yaml => sub 
+		{ 
+			my $yaml = shift;
+			# remove empty key hash lines # fixes YAML::Tiny bug
+			$yaml = join $/, grep{ ! /^\s*:/ } split $/, $yaml;
 
-			# source_type 'track' is now  'bus'
-			$t->{source_type} =~ s/track/bus/;
+			# rewrite obsolete null hash/array substitution
+			$yaml =~ s/~NULL_HASH/{}/g;
+			$yaml =~ s/~NULL_ARRAY/[]/g;
 
-			# convert 'null' bus to 'Null' (which is eliminated below)
-			$t->{group} =~ s/null/Null/;
-		}
-
-	}
-
-	if ( $saved_version <= 1.055){ 
-
-	# get rid of Null bus routing
-	
-		map{$_->{group}       = 'Main'; 
-			$_->{source_type} = 'null';
-			$_->{source_id}   = 'null';
-		} grep{$_->{group} eq 'Null'} @tracks_data;
-
-	}
-
-	if ( $saved_version <= 1.064){ 
-		map{$_->{version} = $_->{active};
-			delete $_->{active}}
-			grep{$_->{active}}
-			@tracks_data;
-	}
-
-	$debug and print "inserts data", yaml_out \@inserts_data;
-
-
-	# make sure Master has reasonable output settings
-	
-	map{ if ( ! $_->{send_type}){
-				$_->{send_type} = 'soundcard',
-				$_->{send_id} = 1
-			}
-		} grep{$_->{name} eq 'Master'} @tracks_data;
-
-	if ( $saved_version <= 1.064){ 
-
-		map{ 
-			my $default_list = Audio::Nama::IO::default_jack_ports_list($_->{name});
-
-			if( -e join_path(project_root(),$default_list)){
-				$_->{source_type} = 'jack_ports_list';
-				$_->{source_id} = $default_list;
-			} else { 
-				$_->{source_type} = 'jack_manual';
-				$_->{source_id} = ($_->{target}||$_->{name}).'_in';
-			}
-		} grep{ $_->{source_type} eq 'jack_port' } @tracks_data;
-	}
-	if ( $saved_version <= 1.067){ 
-
-		map{ $_->{current_edit} or $_->{current_edit} = {} } @tracks_data;
-		map{ 
-			delete $_->{active};
-			delete $_->{inserts};
-			delete $_->{prefader_insert};
-			delete $_->{postfader_insert};
+			# rewrite $fx->{applied} 'owns' field to []
 			
-			# eliminate field is_mix_track
-			if ($_->{is_mix_track} ){
-				 $_->{source_type} = 'bus';
-				 $_->{source_id}   = undef;
-			}
-			delete $_->{is_mix_track};
+			# Note: this should be fixed at initialization
+			# however we should leave this code 
+			# for compatibility with past projects.
+			
+			$yaml =~ s/owns: ~/owns: []/g;
 
- 		} @tracks_data;
+			$yaml = quote_yaml_scalars( $yaml );
+
+			yaml_in($yaml);
+		},
+		perl => sub {my $perl_source = shift; eval $perl_source},
+		storable => sub { my $bin = shift; thaw( $bin) },
+	);
+	
+	# allow dispatch by either file format or suffix 
+	@decode{qw(yml pl bin)} = @decode{qw(yaml perl storable)};
+
+sub decode {
+
+	my ($source, $suffix) = @_;
+	$decode{$suffix} 
+		or die qq(key $suffix: expecting one of).join q(,),keys %decode;
+	$decode{$suffix}->($source);
+}
+}
+
+sub git_tag_exists {
+	my $tag = shift;
+	grep { $tag eq $_ } git( 'tag','--list');
+}
+
+sub tag_branch { "$_[0]-branch" }
+
+sub restore_state_from_vcs {
+	logsub("&restore_state_from_vcs");
+	my $name = shift; # tag or branch
+	
+	# checkout branch if matching branch exists
+	
+    if (git_branch_exists($name)){
+		pager3( qq($name: branch exists. Checking out branch $name.) );
+		git_checkout($name);
+		
 	}
-	if ( $saved_version <= 1.068){ 
 
-		# initialize version_comment field
-		map{ $_->{version_comment} or $_->{version_comment} = {} } @tracks_data;
+	# checkout branch diverging at tag if matching that tag
 
-		# convert existing comments to new format
+	elsif ( git_tag_exists($name) ){
+
+		my $tag = $name;
+		my $branch = tag_branch($tag);
+	
+		if (git_branch_exists($branch)){
+			pager3( qq(tag $tag: matching branch exists. Checking out $branch.) );
+			git_checkout($branch);
+		}
+
+		else {
+			pager3( "Creating and checking out branch $branch from tag $tag");
+			git_create_branch($branch, $tag);
+			
+		}
+	}
+ 	else { throw("$name: tag doesn't exist. Cannot checkout."), return  }
+
+	restore_state_from_file();
+}
+ 
+sub restore_state_from_file {
+	logsub("&restore_state_from_file");
+	my $filename = shift;
+	$filename =~ s/\.json$//;
+	$filename = join_path(project_dir(), $filename) 
+		if $filename and not $filename =~ m(/);
+	$filename ||= $file->state_store();
+
+	# get state file, newest if more than one
+	# with same name, differing extensions
+	# i.e. State.json and State.yml
+	initialize_marshalling_arrays();
+
+	my( $path, $suffix ) = get_newest($filename);
+	
+	logpkg(__FILE__,__LINE__,'debug', "using file: $path");
+
+	throw(
+		$path ? "path: == $path.* ==," : "undefined path,"
+			," state file not found"), return if ! -f $path;
+
+	my $source = read_file($path);
+	my $ref = decode($source, $suffix);
+	logpkg(__FILE__,__LINE__,'debug', "suffix: $suffix");	
+	logpkg(__FILE__,__LINE__,'debug', "source: $source");
+
+	
+	( $path, $suffix ) = get_newest($file->untracked_state_store);
+	if ($path)
+	{
+		$source = read_file($path);
+
+		my $ref = decode($source, $suffix);
+		assign(
+				data	=> $ref,	
+				vars   	=> \@persistent_untracked_vars,
+				class 	=> 'Audio::Nama');
+		assign_singletons( { data => $ref });
+	}
+	
+	( $path, $suffix ) = get_newest($file->state_store);
+	if ($path)
+	{
+		$source = read_file($path);
+		$ref = decode($source, $suffix);
+
+		assign(
+					data => $ref,
+					vars   => \@persistent_vars,
+					class => 'Audio::Nama');
+		
+
+		# perform assignments for singleton
+		# hash entries (such as $fx->{applied});
+		# that that assign() misses
+		
+		assign_singletons({ data => $ref });
+
+	}
+	
+	# remove null keyed entry from $fx->{applied},  $fx->{params}
+
+	delete $fx->{applied}->{''};
+	delete $fx->{params}->{''};
+
+
+	my @keys = keys %{$fx->{applied}};
+
+	my @spurious_keys = grep { effect_entry_is_bad($_) } @keys;
+
+	if (@spurious_keys){
+
+		logpkg(__FILE__,__LINE__,'logwarn',"full key list is @keys"); 
+		logpkg(__FILE__,__LINE__,'logwarn',"spurious effect keys found @spurious_keys"); 
+		logpkg(__FILE__,__LINE__,'logwarn',"deleting them..."); 
+		
 		map{ 
-			while ( my($v,$comment) = each %{$_->{version_comment}} )
-			{ 
-				$_->{version_comment}{$v} = { user => $comment }
-			}
-		} grep { $_->{version_comment} } @tracks_data;
+			delete $fx->{applied}->{$_}; 
+			delete $fx->{params}->{$_}  
+		} @spurious_keys;
+
 	}
-	# convert to new MixTrack class
-	if ( $saved_version < 1.069){ 
-		map {
-		 	$_->{was_class} = $_->{class};
-			$_->{class} = $_->{'Audio::Nama::MixTrack'};
-		} 
-		grep { 
-			$_->{source_type} eq 'bus' or 
-		  	$_->{source_id}   eq 'bus'
-		} 
-		@tracks_data;
+
+	restore_global_effect_chains();
+
+	
+	my @vars = qw(
+				@tracks_data
+				@bus_data
+				@groups_data
+				@marks_data
+				@fade_data
+				@edit_data
+				@inserts_data
+	);
+
+	# remove non HASH entries
+	map {
+		my $var = $_;
+		my $eval_text  = qq($var  = grep{ ref =~ /HASH/ } $var );
+		logpkg(__FILE__,__LINE__,'debug', "want to eval: $eval_text "); 
+		eval $eval_text;
+	} @vars;
+
+
+	####### Backward Compatibility ########
+
+	if ( $project->{save_file_version_number} <= 1.100){ 
+		map{ Audio::Nama::EffectChain::move_attributes($_) } 
+			(@project_effect_chain_data, @global_effect_chain_data)
 	}
+
+	#######################################
+
 
 	#  destroy and recreate all buses
 
@@ -419,14 +405,10 @@ sub restore_state {
 
 	# restore user buses
 		
-	map{ my $class = $_->{class}; $class->new( %$_ ) } @bus_data;
-
-	my $main = $bn{Main};
-
-	# bus should know its mix track
+	# Main exists, therefore is not created, stored values 
+	# are lost.  TODO
 	
-	$main->set( send_type => 'track', send_id => 'Master')
-		unless $main->send_type;
+	map{ my $class = $_->{class}; $class->new( %$_ ) } @bus_data;
 
 	# restore user tracks
 	
@@ -435,23 +417,24 @@ sub restore_state {
 	# temporary turn on mastering mode to enable
 	# recreating mastering tracksk
 
-	my $current_master_mode = $mastering_mode;
-	$mastering_mode = 1;
+	my $current_master_mode = $mode->{mastering};
+	$mode->{mastering} = 1;
 
+	map{ $_->{latency_op} = delete $_->{latency} if $_->{latency} } @tracks_data;
 	map{ 
 		my %h = %$_; 
 		my $class = $h{class} || "Audio::Nama::Track";
 		my $track = $class->new( %h );
 	} @tracks_data;
 
-	$mastering_mode = $current_master_mode;
+	$mode->{mastering} = $current_master_mode;
 
 	# restore inserts
 	
 	Audio::Nama::Insert::initialize();
 	
 	map{ 
-		bless $_, $_->{class};
+		bless $_, $_->{class}; # bless directly, bypassing constructor
 		$Audio::Nama::Insert::by_index{$_->{n}} = $_;
 	} @inserts_data;
 
@@ -460,6 +443,7 @@ sub restore_state {
 	$this_track = $tn{$this_track_name} if $this_track_name;
 	set_current_bus();
 
+	
 	map{ 
 		my $n = $_->{n};
 
@@ -469,15 +453,17 @@ sub restore_state {
 		# restore effects
 		
 		for my $id (@{$ti{$n}->ops}){
-			$did_apply++ 
+			$did_apply++  # need to show GUI effect window
 				unless $id eq $ti{$n}->vol
 					or $id eq $ti{$n}->pan;
 			
+			# does this do anything?
 			add_effect({
-						chain => $cops{$id}->{chain},
-						type => $cops{$id}->{type},
-						cop_id => $id,
-						parent_id => $cops{$id}->{belongs_to},
+						chain => $fx->{applied}->{$id}->{chain},
+						type => $fx->{applied}->{$id}->{type},
+						effect_id => $id,
+						owns => $fx->{applied}->{$id}->{owns},
+						parent_id => $fx->{applied}->{$id}->{belongs_to},
 						});
 
 		}
@@ -487,25 +473,25 @@ sub restore_state {
 	#print "\n---\n", $main->dump;  
 	#print "\n---\n", map{$_->dump} Audio::Nama::Track::all();# exit; 
 	$did_apply and $ui->manifest;
-	$debug and print join " ", 
-		(map{ ref $_, $/ } Audio::Nama::Track::all()), $/;
+	logpkg(__FILE__,__LINE__,'debug', sub{ join " ", map{ ref $_, $/ } Audio::Nama::Track::all() });
 
 
 	# restore Alsa mixer settings
-	if ( $opts{a} ) {
-		my $file = $file; 
-		$file =~ s/\.yml$//;
+	if ( $config->{opts}->{a} ) {
+		my $filename = $filename; 
+		$filename =~ s/\.yml$//;
 		print "restoring ALSA settings\n";
-		print qx(alsactl -f $file.alsa restore);
+		print qx(alsactl -f $filename.alsa restore);
 	}
 
 	# text mode marks 
-		
-	map{ 
-		my %h = %$_; 
-		my $mark = Audio::Nama::Mark->new( %h ) ;
-	} @marks_data;
 
+ 	map
+    {
+		my %h = %$_;
+		my $mark = Audio::Nama::Mark->new( %h ) ;
+    } 
+    grep { (ref $_) =~ /HASH/ } @marks_data;
 
 	$ui->restore_time_marks();
 	$ui->paint_mute_buttons;
@@ -518,101 +504,238 @@ sub restore_state {
 	} @fade_data;
 
 	# edits 
+	#
 	
+		# DISABLE EDIT RESTORE FOR CONVERSION XX
 	map{ 
 		my %h = %$_; 
-		my $edit = Audio::Nama::Edit->new( %h ) ;
+#		my $edit = Audio::Nama::Edit->new( %h ) ;
 	} @edit_data;
 
 	# restore command history
 	
-	$term->SetHistory(@command_history);
+	$text->{term}->SetHistory(@{$text->{command_history}})
+		if (ref $text->{command_history}) =~ /ARRAY/;
+
+;
+	# restore effect chains and profiles
+	
+	#say "Project Effect Chain Data\n", json_out( \@project_effect_chain_data);
+ 	map { my $fx_chain = Audio::Nama::EffectChain->new(%$_) } 
+		(@project_effect_chain_data, @global_effect_chain_data)
 } 
-sub assign_var {
-	my ($source, @vars) = @_;
-	assign_vars(
-				source => $source,
-				vars   => \@vars,
-		#		format => 'yaml', # breaks
+sub is_nonempty_hash {
+	my $ref = shift;
+	return if (ref $ref) !~ /HASH/;
+	return (keys %$ref);
+}
+	 
+
+sub save_global_effect_chains {
+
+	@global_effect_chain_data  = map{ $_->as_hash } Audio::Nama::EffectChain::find(global => 1);
+
+	# always save global effect chain data because it contains
+	# incrementing counter
+
+	map{ 	my $format = $_ ;
+			serialize(
+				file => $file->global_effect_chains,
+				format => $format,
+				vars => \@global_effect_chain_vars, 
+				class => 'Audio::Nama',
+			);
+	} $config->serialize_formats;
+
+}
+
+# unneeded after conversion - DEPRECATED
+sub save_project_effect_chains {
+	my $project = shift; # allow to cross multiple projects
+	@project_effect_chain_data = map{ $_->as_hash } Audio::Nama::EffectChain::find(project => $project);
+}
+sub restore_global_effect_chains {
+
+	logsub("&restore_global_effect_chains");
+		my $path =  $file->global_effect_chains;
+		my ($resolved, $format) = get_newest($path);  
+		throw("$resolved: file not found"), return unless $resolved;
+		my $source = read_file($resolved);
+		throw("$resolved: empty file"), return unless $source;
+		logpkg(__FILE__,__LINE__,'debug', "format: $format, source: \n",$source);
+		my $ref = decode($source, $format);
+		logpkg(__FILE__,__LINE__,'debug', sub{Dumper $ref});
+		assign(
+				data => $ref,
+				vars   => \@global_effect_chain_vars, 
 				class => 'Audio::Nama');
 }
-
-sub save_effect_chains { # if they exist
-	my $file = shift || $effect_chain_file;
-	if (keys %effect_chain){
-		serialize (
-			file => join_path(project_root(), $file),
-			format => 'yaml',
-			vars => [ qw( %effect_chain ) ],
-			class => 'Audio::Nama');
-	}
+sub git_snapshot {
+	logsub("&git_snapshot");
+	return unless $config->{use_git};
+	return unless state_changed();
+	my $commit_message = shift() || "no comment";
+	git_commit($commit_message);
 }
-sub save_effect_profiles { # if they exist
-	my $file = shift || $effect_profile_file;
-	if (keys %effect_profile){
-		serialize (
-			file => join_path(project_root(), $file),
-			format => 'yaml',
-			vars => [ qw( %effect_profile ) ],
-			class => 'Audio::Nama');
-	}
+	
+sub git_commit {
+	logsub("&git_commit");
+	my $commit_message = shift;
+	$commit_message = join "\n", 
+		$commit_message,
+		# context for first command
+		"Context:",
+		" + track: $project->{undo_buffer}->[0]->{context}->{track}",
+		" + bus:   $project->{undo_buffer}->[0]->{context}->{bus}",
+		" + op:    $project->{undo_buffer}->[0]->{context}->{op}",
+		# all commands since last commit
+		map{ $_->{command} } @{$project->{undo_buffer}};
+		
+	git( add => $file->git_state_store );
+	git( commit => '--quiet', '--message', $commit_message);
+	$project->{undo_buffer} = [];
 }
-sub restore_effect_chains {
+	
 
-	my $file = join_path(project_root(), $effect_chain_file);
-	return unless -e $file;
-
-	# don't overwrite them if already present
-	assign_var($file, qw(%effect_chain)) unless keys %effect_chain
+sub git_tag { 
+	logsub("&git_tag");
+	return unless $config->{use_git};
+	my ($tag_name,$msg) = @_;
+	my @args = ($tag_name);
+	push(@args, '-m',$msg) if $msg;
+	git( tag => @args);
 }
-sub restore_effect_profiles {
+sub git_checkout {
+	logsub("&git_checkout");
+	my ($branchname, @args) = @_;
+	return unless $config->{use_git};
 
-	my $file = join_path(project_root(), $effect_profile_file);
-	return unless -e $file;
+	my $exist_message = git_branch_exists($branchname)
+				?  undef
+				: "$branchname: branch does not exist.";
+	my $dirty_tree_msg  = !! state_changed() 
+		?  "You have changes to working files.
+You cannot switch branches until you commit
+these changes, or throw them away."
+		: undef;
+		
+	my $conjunction = ($dirty_tree_msg and $exist_message) 
+			? "And by the way, "
+			: undef;
 
-	# don't overwrite them if already present
-	assign_var($file, qw(%effect_profile)) unless keys %effect_profile; 
+	throw( $dirty_tree_msg, 
+			$conjunction, 
+			$exist_message, 
+			"No action taken."), return
+		if $dirty_tree_msg or $exist_message;
+
+	git(checkout => $branchname, @args);
+
+}
+sub git_create_branch {
+	logsub("&git_create_branch");
+	my ($branchname, $branchfrom) = @_;
+	return unless $config->{use_git};
+	# create new branch
+	my @args;
+	my $from_target;
+	$from_target = "from $branchfrom" if $branchfrom;
+	push @args, $branchname;
+	push(@args, $branchfrom) if $branchfrom;
+	pager("Creating branch $branchname $from_target");
+	git(checkout => '-b', @args)
 }
 
-# autosave
-
-sub schedule_autosave { 
-	# one-time timer 
-	my $seconds = (shift || $autosave_interval) * 60;
-	$event_id{autosave} = undef; # cancel any existing timer
-	return unless $seconds;
-	$event_id{autosave} = AE::timer($seconds,0, \&autosave);
+sub state_changed {  
+	logsub("&state_changed");
+	return unless $config->{use_git};
+	git("diff");
 }
+
+sub git_branch_exists { 
+	logsub("&git_branch_exists");
+	return unless $config->{use_git};
+	my $branchname = shift;
+	grep{ $_ eq $branchname } 
+		map{ s/^\s+//; s/^\* //; $_}
+		git("branch");
+}
+
+sub current_branch {
+	logsub("&current_branch");
+	return unless $project->{repo};
+	my ($b) = map{ /\* (\S+)/ } grep{ /\*/ } split "\n", git('branch');
+	$b
+}
+
+sub git_sha {
+	my $commit = shift || 'HEAD';
+		my ($sha) = git(show => $commit) =~ /commit ([0-9a-f]{10})/;
+		$sha
+}
+sub git_branch_display {
+	logsub("&git_branch_display");
+	return unless $config->{use_git};
+	return unless current_branch();
+	"( ".current_branch()." ) "
+}
+sub list_branches {
+	pager3(
+		"---Branches--- (asterisk marks current branch)",
+		$project->{repo}->run('branch'),
+		"",
+		"-----Tags-----",
+		$project->{repo}->run('tag','--list')	
+	);
+}
+
 sub autosave {
-	if (engine_running()){ 
-		schedule_autosave(1); # try again in 60s
-		return;
-	}
- 	my $file = 'State-autosave-' . time_tag();
- 	save_system_state($file);
-	my @saved = autosave_files();
-	my ($next_last, $last) = @saved[-2,-1];
-	schedule_autosave(); # standard interval
-	return unless defined $next_last and defined $last;
-	if(files_are_identical($next_last, $last)){
-		unlink $last;
-		undef; 
-	} else { 
-		$last 
-	}
+	logsub("&autosave");
+	my ($original_branch) = current_branch();
+	my @args = qw(undo --quiet);
+	unshift @args, '-b' if ! git_branch_exists('undo');
+	git(checkout => @args);
+	save_state();
+	git_snapshot();
+	git_checkout($original_branch, '--quiet');
+
 }
-sub autosave_files {
-	sort File::Find::Rule  ->file()
-						->name('State-autosave-*')
-							->maxdepth(1)
-						 	->in( project_dir());
-}
-sub files_are_identical {
-	my ($filea,$fileb) = @_;
-	my $a = read_file($filea);
-	my $b = read_file($fileb);
-	$a eq $b
+
+sub merge_undo_branch {
+	logsub("&merge_undo_branch");
+	my $this_branch = current_branch();
+	autosave();
+	return unless my $diff = git(diff => $this_branch, 'undo');
+	git( qw{ merge --no-ff undo -m}, q{merge autosave commits} );
+	git( qw{ branch -d undo } );
 }
 
 1;
+=comment
+
+VI-like user reponsibility for save
+
+save # serialize commit if autosave
+
+merge undo branch if autosave
+
+save foo: # serialize tag-foo foo.json
+
+
+save foo: tag-foo.1 foo.json
+
+load foo, prefer highest foo,
+but if foo.json is newer, take
+that. 
+
+load foo      # find
+load foo.json # load the file
+load tag foo  # load the tag
+
+
+
+
+
+
+
 __END__

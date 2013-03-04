@@ -5,74 +5,30 @@ use Modern::Perl;
 use Carp;
 use File::Slurp;
 
-our (
-	$debug,
-	$debug2,
-	$ui,
-	$cop_id,
-	%cops,
-	%copp,
-	@input_chains,
-	@output_chains,
-	$preview,
-	$mastering_mode,
-	$saved_version,
-	%bunch,
-	$this_bus,
-	%inputs,
-	%outputs,
-	%wav_info,
-	$offset_run_flag,
-	$this_edit,
-	$project_name,
-	$state_store_file,
-	%opts,
-	%tn,
-	%track_widget,
-	%effects_widget,
-	$markers_armed,
-	@already_muted,
-	$old_snapshot,
-	$initial_user_mode,
-	$project,	
-	$project_root,
-);
-our ( 					# for create_system_buses
-	%is_system_bus,
-	@system_buses,
-	$main,
-	$null,
-);
+# this sub caches the symlink-resolved form of the 
+# project root directory
 
-our ($term, %bn); 		# for project templates
-
-{ # OPTIMIZATION
-
-  # we allow for the (admitted rare) possibility that
-  # $project_root may change
-
-my %proot;
 sub project_root { 
-	$proot{$project_root} ||= resolve_path($project_root)
-}
+	state %proot;
+	$proot{$config->{root_dir}} ||= resolve_path($config->{root_dir})
 }
 
-sub config_file { $opts{f} ? $opts{f} : ".namarc" }
+sub config_file { $config->{opts}->{f} ? $config->{opts}->{f} : ".namarc" }
 
 { # OPTIMIZATION
 my %wdir; 
 sub this_wav_dir {
-	$opts{p} and return $project_root; # cwd
-	$project_name and
-	$wdir{$project_name} ||= resolve_path(
-		join_path( project_root(), $project_name, q(.wav) )  
+	$config->{opts}->{p} and return $config->{root_dir}; # cwd
+	$project->{name} and
+	$wdir{$project->{name}} ||= resolve_path(
+		join_path( project_root(), $project->{name}, q(.wav) )  
 	);
 }
 }
 
 sub project_dir {
-	$opts{p} and return $project_root; # cwd
-	$project_name and join_path( project_root(), $project_name) 
+	$config->{opts}->{p} and return $config->{root_dir}; # cwd
+	$project->{name} and join_path( project_root(), $project->{name}) 
 }
 
 sub list_projects {
@@ -86,30 +42,19 @@ sub list_projects {
 }
 
 sub initialize_project_data {
-	$debug2 and print "&initialize_project_data\n";
+	logsub("&initialize_project_data");
 
 	return if transport_running();
 	$ui->destroy_widgets();
 	$ui->project_label_configure(
-		-text => uc $project_name, 
+		-text => uc $project->{name}, 
 		-background => 'lightyellow',
 		); 
 
-	# effect variables - no object code (yet)
-	
-	$cop_id = "A"; # autoincrement counter
-	%cops	= ();  # effect and controller objects (hashes)
-	%copp   = ();  # chain operator parameters
-	               # indexed by {$id}->[$param_no]
-	               # zero-based {AB}->[0] (parameter 1)
+	$gui->{tracks} = {};
+	$gui->{fx} = {};
 
-	@input_chains = ();
-	@output_chains = ();
-
-	%track_widget = ();
-	%effects_widget = ();
-
-	$markers_armed = 0;
+	$gui->{_markers_armed} = 0;
 
 	map{ $_->initialize() } qw(
 							Audio::Nama::Mark
@@ -119,62 +64,103 @@ sub initialize_project_data {
 							Audio::Nama::Track
 							Audio::Nama::Insert
 							);
-	
-	# volume settings
-	
-	@already_muted = ();
+	initialize_effects_data();
 
 	# $is_armed = 0;
 	
-	$old_snapshot = {};
-	$preview = $initial_user_mode;
-	$mastering_mode = 0;
-	$saved_version = 0; 
+	$setup->{_old_snapshot} = {};
+	$mode->{preview} = $config->{initial_mode};
+	$mode->{mastering} = 0;
+	$project->{save_file_version_number} = 0; 
+	$project->{track_comments} = {};
+	$project->{track_version_comments} = {};
+	$project->{cache_map} = {};
+	$project->{undo_buffer} = [];
 	
-	%bunch = ();	
+	$project->{bunch} = {};	
 	
 	create_system_buses();
 	$this_bus = 'Main';
 
-	%inputs = %outputs = ();
-	
-	%wav_info = ();
+	$setup->{wav_info} = {};
 	
 	clear_offset_run_vars();
-	$offset_run_flag = 0;
+	$mode->{offset_run} = 0;
 	$this_edit = undef;
+	
+	$mode->{preview} = 0;
+
+	Audio::Nama::ChainSetup::initialize();
 
 }
-sub load_project {
-	$debug2 and print "&load_project\n";
-	my %h = @_;
-	$debug and print yaml_out \%h;
-	print("no project name.. doing nothing.\n"),return 
-		unless $h{name} or $project;
-	$project_name = $h{name} if $h{name};
+sub initialize_effects_data {
 
-	if ( ! -d join_path( project_root(), $project_name) ){
-		if ( $h{create} ){
-			map{create_dir($_)} &project_dir, &this_wav_dir ;
-		} else { 
-			print qq(
-Project "$project_name" does not exist. 
-Loading project "untitled".
-);
+	# effect variables - no object code (yet)
+	
+	$fx->{id_counter} = "A"; # autoincrement counter
+	$fx->{applied}	= {};  # effect and controller objects (hashes)
+	$fx->{params}   = {};  # chain operator parameters
+	               # indexed by {$id}->[$param_no]
+	               # zero-based {AB}->[0] (parameter 1)
+
+	# volume settings
+	
+	$fx->{muted} = [];
+
+}
+
+	
+
+sub load_project {
+	logsub("&load_project");
+	my %args = @_;
+	logpkg(__FILE__,__LINE__,'debug', sub{yaml_out \%args});
+	throw("no project name.. doing nothing."),return 
+		unless $args{name} or $project->{name};
+
+	$project->{name} = $args{name} if $args{name};
+
+	if ( ! -d project_dir() )
+	{ 	
+		if ( $args{create} )
+		{ 
+			map{create_dir($_)} project_dir(), this_wav_dir() ;
+		}
+		else 
+		{ Audio::Nama::pager3(
+			qq(Project "$project->{name}" does not exist.\n Loading project "untitled".)
+			);
 			load_project( qw{name untitled create 1} );
 			return;
-		}
-	} 
+		}	
+	}
+
 	# we used to check each project dir for customized .namarc
 	# read_config( global_config() ); 
 	
-	teardown_engine(); # initialize_ecasound_engine; 
+	teardown_engine();
 	initialize_project_data();
 	remove_riff_header_stubs(); 
 	cache_wav_info();
-	rememoize();
+	restart_wav_memoize();
+	
 
-	restore_state( $h{settings} ? $h{settings} : $state_store_file) unless $opts{M} ;
+	if( $config->{use_git} ){
+		my $initializing_repo;
+		Git::Repository->run( init => project_dir()), $initializing_repo++
+			unless -d join_path( project_dir().  '.git');
+		$project->{repo} = Git::Repository->new( work_tree => project_dir() );
+		write_file($file->git_state_store, "{}\n"), $initializing_repo++
+			if ! -e $file->git_state_store and ! $project->{repo}->run( 'branch' );
+
+		if ($initializing_repo){
+			$project->{repo}->run( add => $file->git_state_store );
+			$project->{repo}->run( commit => '--quiet', '--message', "initial commit");
+		}
+	}
+
+	restore_state($args{settings}) unless $config->{opts}->{M} ;
+
 	if (! $tn{Master}){
 
 		Audio::Nama::SimpleTrack->new( 
@@ -183,7 +169,8 @@ Loading project "untitled".
 			send_type => 'soundcard',
 			send_id => 1,
 			width => 2,
-			rw => 'MON',
+			rw => 'REC',
+			rec_defeat => 1,
 			source_type => undef,
 			source_id => undef); 
 
@@ -195,32 +182,43 @@ Loading project "untitled".
 			source_type => undef,
 			source_id => undef); 
 
+
 		#remove_effect($mixdown->vol);
 		#remove_effect($mixdown->pan);
 	}
 
 
-	$opts{M} = 0; # enable 
+	$config->{opts}->{M} = 0; # enable 
 	
-	dig_ruins() unless scalar @Audio::Nama::Track::all > 2;
+	# $args{nodig} allow skip for convert_project_format
+	dig_ruins() unless (scalar @Audio::Nama::Track::all > 2 ) or $args{nodig};
 
 	# possible null if Text mode
 	
-	$ui->global_version_buttons(); 
-	$ui->refresh_group;
+	#$ui->global_version_buttons(); 
+	#$ui->refresh_group;
 
-	$debug and print "project_root: ", project_root(), $/;
-	$debug and print "this_wav_dir: ", this_wav_dir(), $/;
-	$debug and print "project_dir: ", project_dir() , $/;
+	logpkg(__FILE__,__LINE__,'debug', "project_root: ", project_root());
+	logpkg(__FILE__,__LINE__,'debug', "this_wav_dir: ", this_wav_dir());
+	logpkg(__FILE__,__LINE__,'debug', "project_dir: ", project_dir());
 
  1;
 }	
+sub restore_state {
+		my $name = shift;
+
+		if( ! $name  or $name =~ /.json$/ or !  $config->{use_git})
+		{
+			restore_state_from_file($name)
+		}
+		else { restore_state_from_vcs($name)  }
+}
 
 sub dig_ruins { # only if there are no tracks 
 	
-	$debug2 and print "&dig_ruins";
+	logsub("&dig_ruins");
 	return if Audio::Nama::Track::user();
-	$debug and print "looking for WAV files\n";
+	logpkg(__FILE__,__LINE__,'debug', "looking for WAV files");
 
 	# look for wave files
 		
@@ -231,14 +229,14 @@ sub dig_ruins { # only if there are no tracks
 	
 	my @wavs = grep{s/(_\d+)?\.wav//i} readdir $wav;
 
-	closedir $wav;
+	closedir $wav if $wav;
 
 	my %wavs;
 	
 	map{ $wavs{$_}++ } @wavs;
 	@wavs = keys %wavs;
 
-	$debug and print "tracks found: @wavs\n";
+	logpkg(__FILE__,__LINE__,'debug', "tracks found: @wavs");
  
 	$ui->create_master_and_mix_tracks();
 
@@ -251,24 +249,28 @@ sub remove_riff_header_stubs {
 	# 44 byte stubs left by a recording chainsetup that is 
 	# connected by not started
 	
-	$debug2 and print "&remove_riff_header_stubs\n";
+	logsub("&remove_riff_header_stubs");
 	
 
-	$debug and print "this wav dir: ", this_wav_dir(), $/;
+	logpkg(__FILE__,__LINE__,'debug', "this wav dir: ", this_wav_dir());
 	return unless this_wav_dir();
          my @wavs = File::Find::Rule ->name( qr/\.wav$/i )
                                         ->file()
                                         ->size(44)
                                         ->extras( { follow => 1} )
-                                     ->in( this_wav_dir() );
-    $debug and print join $/, @wavs;
+                                     	->in( this_wav_dir() )
+									if -d this_wav_dir();
+    logpkg(__FILE__,__LINE__,'debug', join $/, @wavs);
 
 	map { unlink $_ } @wavs; 
 }
 
 sub create_system_buses {
-	$debug2 and say "&create_system_buses";
+	logsub("&create_system_buses");
 
+	# The following are Audio::Nama::Bus objects, no routing.
+	# They are hidden from the user.
+	
 	my $buses = q(
 			Master		# master fader track
 			Mixdown		# mixdown track
@@ -276,19 +278,29 @@ sub create_system_buses {
 			Insert		# auxiliary tracks for inserts
 			Cooked		# for track caching
 			Temp		# temp tracks while generating setup
-			Main		# default mixer bus, new tracks assigned to Main
 	);
 	($buses) = strip_comments($buses); # need initial parentheses
-	@system_buses = split " ", $buses;
-	map{ $is_system_bus{$_}++ } @system_buses;
-	delete $is_system_bus{Main}; # because we want to display it
-	map{ Audio::Nama::Bus->new(name => $_ ) } @system_buses;
-	
-	# a bus should identify it's mix track
-	$bn{Main}->set( send_type => 'track', send_id => 'Master');
+	my @system_buses = split " ", $buses;
 
-	$main = $bn{Main};
-	$null = $bn{null};
+	# create them
+	
+	map{ Audio::Nama::Bus->new(name => $_ ) } @system_buses;
+
+	# remember to hide them
+	
+	map{ $config->{_is_system_bus}->{$_}++ } @system_buses;
+
+	# create Main bus (the mixer)
+
+	Audio::Nama::MasterBus->new(
+		name 		=> 'Main',
+		send_type 	=> 'track', 
+		send_id => 'Master');
+
+	# create Manual bus (for user routed tracks)
+
+	Audio::Nama::SubBus->new( name => 'Manual');
+	
 }
 
 
@@ -301,7 +313,7 @@ sub new_project_template {
 
 	# skip if project is empty
 
-	say("No user tracks found, aborting.\n",
+	throw("No user tracks found, aborting.\n",
 		"Cannot create template from an empty project."), 
 		return if scalar @tracks < 3;
 
@@ -340,7 +352,7 @@ sub new_project_template {
 
 	# Throw away command history
 	
-	$term->SetHistory();
+	$text->{term}->SetHistory();
 	
 	# Buses needn't set version info either
 	
@@ -359,7 +371,7 @@ sub new_project_template {
 	# recall temp name
 	
  	load_project(  # restore_state() doesn't do the whole job
- 		name     => $project_name,
+ 		name     => $project->{name},
  		settings => $previous_state,
 	);
 
@@ -374,13 +386,13 @@ sub use_project_template {
 
 	# skip if project isn't empty
 
-	say("User tracks found, aborting. Use templates in an empty project."), 
+	throw("User tracks found, aborting. Use templates in an empty project."), 
 		return if scalar @tracks > 2;
 
 	# load template
 	
  	load_project(
- 		name     => $project_name,
+ 		name     => $project->{name},
  		settings => join_path(project_root(),"templates",$name),
 	);
 	save_state();
@@ -392,7 +404,7 @@ sub list_project_templates {
 }
 sub remove_project_template {
 	map{my $name = $_; 
-		say "$name: removing template";
+		pager2("$name: removing template");
 		$name .= ".yml" unless $name =~ /\.yml$/;
 		unlink join_path( project_root(), "templates", $name);
 	} @_;

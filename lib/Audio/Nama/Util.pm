@@ -3,11 +3,14 @@
 # this package is for small subroutines with
 # well-defined interfaces
 
-package Audio::Nama;
-our ( %tn ); 			# rw_set()
-
 package Audio::Nama::Util;
-use Modern::Perl; use Carp;
+use Modern::Perl; 
+use Carp;
+use Data::Dumper::Concise;
+use Audio::Nama::Assign qw(json_out);
+use Audio::Nama::Globals qw(:all);
+use Audio::Nama::Log qw(logit logpkg);
+
 no warnings 'uninitialized';
 
 require Exporter;
@@ -16,21 +19,32 @@ our @ISA = qw(Exporter);
 
 our %EXPORT_TAGS = ( 'all' => [ qw(
 
-rw_set
-freq
-channels
-input_node
-output_node
-signal_format
-process_is_running
-d1
-d2
-dn
-round
-colonize
-time_tag
-heuristic_time
-dest_type
+	rw_set
+	freq
+	channels
+	input_node
+	output_node
+	signal_format
+	process_is_running
+	d1
+	d2
+	dn
+	round
+	colonize
+	time_tag
+	heuristic_time
+	dest_type
+
+	create_dir
+	join_path
+	wav_off
+	strip_all
+	strip_blank_lines
+	strip_comments
+	remove_spaces
+	expand_tilde
+	resolve_path
+	dumper
 
 ) ] );
 
@@ -46,92 +60,60 @@ my %bus_logic = (
 	{
 
 	# setting mix track to REC
-	# set bus to MON (user should set bus to REC)
 	
 		REC => sub
 		{
 			my ($bus, $track) = @_;
 			$track->set_rec;
-			$bus->set(rw => 'MON');
+			$bus->set(rw => 'REC');
 		},
 
-	# setting mix track to MON 
-	# set bus to OFF
+	# setting a mix track to MON 
+	
+	# currently we set feeding bus to OFF
+	
+	# TODO skip connecting forward to
+	# a MON status track.
 	
 		MON => sub
 		{
 			my ($bus, $track) = @_;
 			$track->set_mon;
+
+			
 			$bus->set(rw => 'OFF');
 		},
 		OFF => sub
 		{
 
 	# setting mix track to OFF 
-	# set bus to OFF
 	
 			my ($bus, $track) = @_;
 			$track->set_off;
-			$bus->set(rw => 'OFF');
 		}
 	},
 	member_track =>
 	{
 
 	# setting member track to REC
-	#
-	# - set REC siblings to MON if bus is MON
-	# - set all siblings to OFF if bus is OFF
-	# - set bus to REC
-	# - set mix track to REC/rec_defeat
 	
 		REC => sub 
 		{ 
 			my ($bus, $track) = @_;
-			if ($bus->rw eq 'MON'){
-				
-				# set REC tracks to MON
-				map{$_->set(rw => 'MON')  } 
-				grep{$_->rw eq 'REC'} 
-				map{$tn{$_}}
-				$bus->tracks;
-
-			}
-			if ($bus->rw eq 'OFF'){
-			
-				# set all tracks to OFF 
-				map{$_->set(rw => 'OFF')  } 
-				map{$tn{$_}}
-				$bus->tracks;
-			}
-
-			$track->set_rec;
-
 			$bus->set(rw => 'REC');
+			$track->set_rec;
 			$tn{$bus->send_id}->busify;
+			Audio::Nama::restore_preview_mode();
 			
 		},
 
 	# setting member track to MON 
-	#
-	# - set all siblings to OFF if bus is OFF
-	# - set bus to MON
-	# - set mix track to REC/rec_defeat
 	
 		MON => sub
 		{ 
 			my ($bus, $track) = @_;
-			if ($bus->rw eq 'OFF'){
-			
-				# set all tracks to OFF 
-				map{$_->set(rw => 'OFF')  } 
-				map{$Audio::Nama::tn{$_}}
-				$bus->tracks;
-
-				$bus->set(rw => 'MON');
-			}
+			$bus->set(rw => 'REC') if $bus->rw eq 'OFF';
 			$track->set_mon;
-			#$tn{$bus->send_id}->busify; why needed????
 
 		},
 
@@ -157,6 +139,8 @@ sub freq { [split ',', $_[0] ]->[2] }  # e.g. s16_le,2,44100
 
 sub channels { [split ',', $_[0] ]->[1] }
 	
+# these are the names of loop devices corresponding
+# to pre- and post-fader nodes of a track signal
 sub input_node { $_[0].'_in' }
 sub output_node {$_[0].'_out'}
 
@@ -223,25 +207,116 @@ sub dest_type {
 	my $dest = shift;
 	my $type;
 	given( $dest ){
-		when( undef )       {} # do nothing
+		when( undef )			{ $type = undef}
 
 		# non JACK related
 
-		when('bus')			   { $type = 'bus'             }
-		when('null')           { $type = 'null'            }
-		when(/^loop,/)         { $type = 'loop'            }
-
-		when(! /\D/)           { $type = 'soundcard'       } # digits only
+		when('bus')			 	{ $type = 'bus'			   }
+		when('null')		 	{ $type = 'null'			}
+		when('rtnull')		 	{ $type = 'rtnull'			}
+		when(/^loop,/)		 	{ $type = 'loop'			}
+		when(! /\D/)			{ $type = 'soundcard'	   } # digits only
 
 		# JACK related
 
-		when(/^man/)           { $type = 'jack_manual'     }
-		when('jack')           { $type = 'jack_manual'     }
-		when(/(^\w+\.)?ports/) { $type = 'jack_ports_list' }
-		default                { $type = 'jack_client'     } 
+		when(/^man/)			{ $type = 'jack_manual'	 }
+		when('jack')			{ $type = 'jack_manual'	 }
+		when(/(^\w+\.)?ports/)	{ $type = 'jack_ports_list' }
+		default					{ $type = 'jack_client'	 } 
 
 	}
 	$type
+}
+
+sub create_dir {
+	my @dirs = @_;
+	map{ my $dir = $_;
+	logpkg(__FILE__,__LINE__,'debug',"creating directory [ $dir ]");
+		-e $dir 
+#and (carp "create_dir: '$dir' already exists, skipping...\n") 
+			or system qq( mkdir -p $dir)
+		} @dirs;
+}
+
+sub join_path {
+	
+	my @parts = @_;
+	my $path = join '/', @parts;
+	$path =~ s(/{2,})(/)g;
+	$path;
+}
+
+sub wav_off {
+	my $wav = shift;
+	$wav =~ s/\.wav\s*$//i;
+	$wav;
+}
+
+sub strip_all{ strip_trailing_spaces(strip_blank_lines( strip_comments(@_))) }
+
+sub strip_trailing_spaces {
+	map {s/\s+$//} @_;
+	@_;
+}
+sub strip_blank_lines {
+	map{ s/\n(\s*\n)+/\n/sg } @_;
+	map{ s/^\n+//s } @_;
+	@_;
+	 
+}
+
+sub strip_comments { #  
+	map{ s/#.*$//mg; } @_;
+	map{ s/\s+$//mg; } @_;
+
+	@_
+} 
+
+sub remove_spaces {															 
+		my $entry = shift;													  
+		# remove leading and trailing spaces									
+																				
+		$entry =~ s/^\s*//;													 
+		$entry =~ s/\s*$//;													 
+																				
+		# convert other spaces to underscores								   
+																				
+		$entry =~ s/\s+/_/g;													
+		$entry;																 
+}																			   
+sub resolve_path {
+	my $path = shift;
+	$path = expand_tilde($path);
+	$path = File::Spec::Link->resolve_all($path);
+}
+sub expand_tilde { 
+	my $path = shift; 
+
+ 	my $home = File::HomeDir->my_home;
+
+
+	# ~bob -> /home/bob
+	$path =~ s(
+		^ 		# beginning of line
+		~ 		# tilde
+		(\w+) 	# username
+	)
+	(File::HomeDir->users_home($1))ex;
+
+	# ~/something -> /home/bob/something
+	$path =~ s( 
+		^		# beginning of line
+		~		# tilde
+		/		# slash
+	)
+	($home/)x;
+	$path
+}
+sub dumper { 
+	! defined $_ and "undef"
+	or ! (ref $_) and $_ 
+	#or (ref $_) =~ /HASH|ARRAY/ and Audio::Nama::json_out($_)
+	or ref $_ and Dumper($_)
 }
 
 1;

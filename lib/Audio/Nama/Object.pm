@@ -2,6 +2,52 @@ package Audio::Nama::Object;
 use Modern::Perl;
 use Carp;
 use Audio::Nama::Assign qw(yaml_out); 
+use Data::Dumper::Concise;
+
+=comment
+{
+	package Audio::Nama::Does::Serialize;
+	use Role::Basic;
+	requires 'as_hash';
+	sub as_hash {
+		my $self = shift;
+		my $class = ref $self;
+		bless $self, 'HASH'; # easy magic
+		#print yaml_out $self; return;
+		my %guts = %{ $self };
+		#print join " ", %guts; return;
+		#my @keys = keys %guts;
+		#map{ $output->{$_} or $output->{$_} = '~'   } @keys; 
+		bless $self, $class; # restore
+		return \%guts; # *not* a copy, a risk, but we
+                       # are serializing, not altering 
+	}
+}
+
+Audio::Nama::Does::Persist
+	# later,
+	# for the class, provides an
+	# (possibly filtered, altered) 
+	# array of objects.
+
+
+
+  In a role:
+
+1;
+
+  In your class:
+           
+           package My::Class;
+           use Role::Basic 'with';
+           
+           with qw(
+               Does::Serialize::AsYAML
+           );
+           
+           sub as_hash { ... } # because the role requires it
+
+=cut
 
 no strict; # Enable during dev and testing
 BEGIN {
@@ -12,16 +58,16 @@ BEGIN {
 sub import {
 	return unless shift eq 'Audio::Nama::Object';
 	my $pkg   = caller;
-	my $child = !! @{"${pkg}::ISA"};
+	my $child = 0+@{"${pkg}::ISA"};
 	eval join '',
 		"package $pkg;\n",
 		' use vars qw(%_is_field);   ',
 		' map{ $_is_field{$_}++ } @_;',
-		($child ? () : "\@${pkg}::ISA = 'Audio::Nama::Object';\n"),
+		($child ? () : "\@${pkg}::ISA = Audio::Nama::Object;\n"),
 		map {
 			defined and ! ref and /^[^\W\d]\w*$/s
 			or die "Invalid accessor name '$_'";
-			"sub $_ { return \$_[0]->{$_} }\n"
+			"sub $_ : lvalue { \$_[0]->{$_} }"
 		} @_;
 	die "Failed to generate $pkg" if $@;
 	return 1;
@@ -68,22 +114,14 @@ sub set {
 }
 sub dumpp  {
 	my $self = shift;
-	my $class = ref $self;
-	bless $self, 'HASH'; # easy magic
-	my $output = yaml_out $self;
-	print "Object class: $class\n";
-	print $output, "\n";
-	bless $self, $class; # restore
+	print $self->dump
 }
 sub dump {
 	my $self = shift;
-	my $class = ref $self;
-	bless $self, 'HASH'; # easy magic
-	my $output = yaml_out $self;
-	bless $self, $class; # restore
+	my $output = Dumper($self);
 	return $output;
 }
-sub hashref {
+sub as_hash {
 	my $self = shift;
 	my $class = ref $self;
 	bless $self, 'HASH'; # easy magic

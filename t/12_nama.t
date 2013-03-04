@@ -1,104 +1,39 @@
-# to initialize the environment, we
-
-# 1. use Audio::Nama (pull in the whole application)
-
-# 2. set the current namespace to Audio::Nama 
-#    (so we can put both hands in abdominal cavity)
-
-# 3. declare variables by including the declarations blocks of Nama.pm
-
-package Audio::Nama;
+package Audio::Nama; 
+use Audio::Nama;
 use Test::More qw(no_plan);
-use Audio::Nama::Assign qw(yaml_in yaml_out);
+use File::Path qw(make_path remove_tree);
+use Cwd;
+
 use strict;
 use warnings;
 no warnings qw(uninitialized);
+
 our ($expected_setup_lines);
-use Cwd;
 
-our (
-	$main,
-	$this_track,
-	%opts,
-	$jack_running,
-);
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag ("TESTING $0\n");
 
-BEGIN { use_ok('Audio::Nama') };
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag("working directory: ",cwd);
 
-diag ("TESTING $0\n");
+our $test_dir = "/tmp/nama-test";
 
-# defeat namarc detection to force using $default namarc
+cleanup_dirs();
+setup_dirs();
 
-push @ARGV, qw(-f /dev/null);
+sub cleanup_dirs { 	chdir('..'), remove_tree($test_dir) if -e $test_dir }
+sub setup_dirs{ make_path("$test_dir/test/.wav", "$test_dir/untitled/.wav") }
 
-# set text mode (don't start gui)
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag( qx(find $test_dir) );
 
-push @ARGV, qw(-t); 
+apply_test_harness();
 
-# use cwd as project root
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag "options: @ARGV";
 
-push @ARGV, qw(-d .); 
+bootstrap_environment();
+$config->{use_git} = 0;
 
-# suppress loading Ecasound
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag "Check representative variable from default .namarc";
 
-push @ARGV, q(-E);
-
-# fake jack client data
-
-push @ARGV, q(-J);
-
-# don't initialize terminal
-
-push @ARGV, q(-T);
-
-diag("working directory: ",cwd);
-
-process_options();
-initialize_interfaces();
-diag "Check representative variable from default .namarc";
-
-is( $Audio::Nama::mix_to_disk_format, "s16_le,N,44100,i", "Read mix_to_disk_format");
-=skip
-# Ecasound dependent
-diag "Check static effects data read";
-is( $Audio::Nama::e_bound{cop}{z} > 40, 1, "Verify Ecasound chain operator count");
-
-diag "Check effect hinting and help";
-
-my $want = q(---
-code: epp
-count: 1
-display: scale
-name: Pan
-params:
-  -
-    begin: 0
-    default: 50
-    end: 100
-    name: 'Level %'
-    resolution: 0
-...
-);
-
-
-package Audio::Nama;
-is( yaml_out($effects[$effect_i{epp}]) ,  $want , "Pan hinting");
-
-is( $effects_help[0], 
-	qq(dyn_compress_brutal,  -pn:dyn_compress_brutal:gain-%\n),
-	'Preset help for dyn_compress_brutal');
-
-my @result = Audio::Nama::Fade::spec_to_pairs([0,1,'out']);
-my @expected = ( 0, 1, 0.95, 0.75, 1, 0 );
-
-is_deeply(\@result, \@expected, "Fade::spec_to_pairs - fade-out");
-
-@result = Audio::Nama::Fade::spec_to_pairs([0,1,'in']);
-@expected = ( 0, 0, 0.05, 0.75, 1, 1 );
-
-is_deeply(\@result, \@expected, "Fade::spec_to_pairs - fade-in");
-
-=cut
+is( $config->{mix_to_disk_format}, "s16_le,N,44100,i", "Read mix_to_disk_format");
 
 # object id => type mappings
 #
@@ -120,7 +55,7 @@ while( my($dest,$type) = splice @id_to_type, 0,2){
 }
 
 
-is( ref $main, q(Audio::Nama::Bus), 'Bus initializtion');
+is( ref $bn{Main}, q(Audio::Nama::MasterBus), 'Bus initializtion');
 
 # SKIP: { 
 # my $cs_got = eval_iam('cs');
@@ -133,9 +68,12 @@ my $test_project = 'test';
 
 load_project(name => $test_project, create => 1);
 
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag("project project dir: ".project_dir());
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag("project project wav dir: ".this_wav_dir());
+
 #diag(map{ $_->dump} values %Audio::Nama::Track::by_index );
 
-is( project_dir(), "./$test_project", "establish project directory");
+is( project_dir(), "$test_dir/$test_project", "establish project directory");
 
 force_jack();
 
@@ -154,8 +92,8 @@ my $yaml = q(---
   args:
     name: sax
     width: 1
-    full_path: test_dir/sax_1.wav
-  ecs_string: -f:s16_le,1,44100,i -o:test_dir/sax_1.wav
+    full_path: /foo/.wav/sax_1.wav
+  ecs_string: -f:s16_le,1,44100,i -o:/foo/.wav/sax_1.wav
 -
   class: from_wav
   args:
@@ -175,10 +113,10 @@ my $yaml = q(---
     endpoint: sax_out
   ecs_string: -o:loop,sax_out
 -
-  class: to_soundcard_device
+  class: to_alsa_soundcard_device
   ecs_string: -o:alsa,default
 -
-  class: from_soundcard_device
+  class: from_alsa_soundcard_device
   ecs_string: -i:alsa,default
 -
   class: from_soundcard
@@ -240,7 +178,7 @@ my $i;
 for (@test) {
 	my %t = %$_;
 	$i++;
-	diag "IO.pm unit test $i";
+	$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag "IO.pm unit test $i";
 	my $class = "Audio::Nama::IO::$t{class}";
 	my $io = $class->new(%{$t{args}});
 	my @keys = sort grep{ $_ ne 'class'} keys %t;
@@ -254,19 +192,19 @@ for (@test) {
 
 force_alsa();
 
-command_process('add sax');
+process_command('add sax');
 
 like(ref $this_track, qr/Track/, "track creation"); 
 
 is( $this_track->name, 'sax', "current track assignment");
 
-command_process('source 2');
+process_command('source 2');
 
 
 is( $this_track->source_type, 'soundcard', "set soundcard input");
 is( $this_track->source_id,  2, "set input channel");
 
-command_process('send 5');
+process_command('send 5');
 
 # track sax, source 2, send 5
 
@@ -279,10 +217,10 @@ my $io = Audio::Nama::IO->new(track => 'sax');
 
 like( ref $io, qr/IO$/, 'IO base class object');
 
-$io = Audio::Nama::IO::to_soundcard_device->new(track => 'sax'); 
+$io = Audio::Nama::IO::to_alsa_soundcard_device->new(track => 'sax'); 
 
-is($io->ecs_string, '-o:alsa,default', 'IO to_soundcard_device 1');
-is($io->ecs_extra,  ' -chmove:1,5', 'IO to_soundcard_device 2');
+is($io->ecs_string, '-o:alsa,default', 'IO to_alsa_soundcard_device 1');
+is($io->ecs_extra,  ' -chmove:1,5', 'IO to_alsa_soundcard_device 2');
 
 $io = Audio::Nama::IO::to_soundcard->new(track => 'sax'); 
 
@@ -308,17 +246,17 @@ $io = Audio::Nama::IO::to_null->new(track => 'sax', device_id => 'alsa,default')
 
 is($io->device_id, 'alsa,default', 'value overrides method call');
 
-command_process("sax; source Horgand; gen");
+process_command("sax; source Horgand; gen");
 like( Audio::Nama::ChainSetup::ecasound_chain_setup(), qr/Horgand/, 'set JACK client as input');
-command_process("sax; source jack; gen");
+process_command("sax; source jack; gen");
 like( Audio::Nama::ChainSetup::ecasound_chain_setup(), qr/jack,,sax_in/, 'set JACK port for manual input');
 
-command_process("sax; source 2");
+process_command("sax; source 2");
 
 
 force_alsa();
 
-command_process('3; nosend; gen');
+process_command('3; nosend; gen');
 
 $expected_setup_lines = <<EXPECTED;
 
@@ -334,13 +272,13 @@ $expected_setup_lines = <<EXPECTED;
 
 -a:1 -o:alsa,default
 -a:3 -o:loop,Master_in
--a:R3 -f:s16_le,1,44100,i -o:test/.wav/sax_1.wav
+-a:R3 -f:s16_le,1,44100,i -o:/tmp/nama-test/test/.wav/sax_1.wav
 EXPECTED
 
 check_setup('ALSA basic setup' );
 
 force_jack();
-command_process('gen');
+process_command('gen');
 $expected_setup_lines = <<EXPECTED;
 
 # audio inputs
@@ -356,13 +294,13 @@ $expected_setup_lines = <<EXPECTED;
 
 -a:1 -o:jack_multi,system:playback_1,system:playback_2
 -a:3 -o:loop,Master_in
--a:R3 -f:s16_le,1,44100,i -o:test/.wav/sax_1.wav
+-a:R3 -f:s16_le,1,44100,i -o:/tmp/nama-test/test/.wav/sax_1.wav
 
 EXPECTED
 
 check_setup('JACK basic setup' );
 
-command_process('3;rec_defeat; gen');
+process_command('3;rec_defeat; gen');
 $expected_setup_lines = <<EXPECTED;
 
 -a:1 -i:loop,Master_in
@@ -380,7 +318,7 @@ EXPECTED
 
 check_setup('JACK rec_defeat setup' );
 
-force_alsa(); command_process('gen');
+force_alsa(); process_command('gen');
 $expected_setup_lines = <<EXPECTED;
 
 -a:1 -i:loop,Master_in
@@ -398,7 +336,7 @@ $expected_setup_lines = <<EXPECTED;
 EXPECTED
 
 check_setup('ALSA rec_defeat setup' );
-command_process('Master; send 5;gen');
+process_command('Master; send 5;gen');
 
 $expected_setup_lines = <<EXPECTED;
 
@@ -420,7 +358,7 @@ $expected_setup_lines = <<EXPECTED;
 EXPECTED
 
 check_setup('ALSA send-Master-to-alternate-channel setup' );
-force_jack(); command_process('gen');
+force_jack(); process_command('gen');
 
 $expected_setup_lines = <<EXPECTED;
 -a:1 -i:loop,Master_in
@@ -437,7 +375,7 @@ $expected_setup_lines = <<EXPECTED;
 EXPECTED
 check_setup('JACK send-Master-to-alternate-channel setup' );
 
-command_process('Mixdown; rec; gen');
+process_command('Mixdown; rec; gen');
 $expected_setup_lines = <<EXPECTED;
 
 -a:1 -i:loop,Master_in
@@ -453,7 +391,7 @@ $expected_setup_lines = <<EXPECTED;
 -a:1 -o:loop,Master_out
 -a:3 -o:loop,Master_in
 -a:J1 -o:jack_multi,system:playback_5,system:playback_6
--a:Mixdown -f:s16_le,2,44100,i -o:test/.wav/Mixdown_1.wav
+-a:Mixdown -f:s16_le,2,44100,i -o:/tmp/nama-test/test/.wav/Mixdown_1.wav
 EXPECTED
 
 check_setup('JACK mixdown setup with main out' );
@@ -477,12 +415,12 @@ $expected_setup_lines = <<EXPECTED;
 -a:1 -o:loop,Master_out
 -a:3 -o:loop,Master_in
 -a:J1 -o:alsa,default
--a:Mixdown -f:s16_le,2,44100,i -o:test/.wav/Mixdown_1.wav
+-a:Mixdown -f:s16_le,2,44100,i -o:/tmp/nama-test/test/.wav/Mixdown_1.wav
 EXPECTED
 
 check_setup('ALSA mixdown setup with main out' );
 
-command_process('master_on');
+process_command('master_on');
 $expected_setup_lines = <<EXPECTED;
 -a:1 -i:loop,Master_in
 -a:3 -i:alsa,default
@@ -507,13 +445,13 @@ $expected_setup_lines = <<EXPECTED;
 -a:5,6,7 -o:loop,Boost_in
 -a:8 -o:loop,Boost_out
 -a:J8 -o:alsa,default
--a:Mixdown -f:s16_le,2,44100,i -o:test/.wav/Mixdown_1.wav
+-a:Mixdown -f:s16_le,2,44100,i -o:/tmp/nama-test/test/.wav/Mixdown_1.wav
 EXPECTED
 gen_alsa();
 check_setup('Mixdown in mastering mode - ALSA');
 
 
-command_process('Master; stereo'); # normal output width
+process_command('Master; stereo'); # normal output width
 
 $expected_setup_lines = <<EXPECTED;
 
@@ -536,15 +474,15 @@ $expected_setup_lines = <<EXPECTED;
 -a:5,6,7 -o:loop,Boost_in
 -a:8 -o:loop,Boost_out
 -a:J8 -o:jack_multi,system:playback_5,system:playback_6
--a:Mixdown -f:s16_le,2,44100,i -o:test/.wav/Mixdown_1.wav
+-a:Mixdown -f:s16_le,2,44100,i -o:/tmp/nama-test/test/.wav/Mixdown_1.wav
 EXPECTED
 gen_jack();
 check_setup('Mixdown in mastering mode - JACK');
 
-command_process('mixoff; master_off');
-command_process('for 4 5 6 7 8; remove_track quiet');
-command_process('Master; send 1');
-command_process('asub Horns; sax move_to_bus Horns; sax stereo');
+process_command('mixoff; master_off');
+process_command('for 4 5 6 7 8; remove_track quiet');
+process_command('Master; send 1');
+process_command('asub Horns; sax move_to_bus Horns; sax stereo');
 
 $expected_setup_lines = <<EXPECTED;
 
@@ -579,8 +517,8 @@ $expected_setup_lines = <<EXPECTED;
 EXPECTED
 check_setup('Sub-bus - JACK');
 
-command_process('remove_bus Horns');
-command_process('add_send_bus_cooked Vo 5');
+process_command('remove_bus Horns');
+process_command('add_send_bus_cooked Vo 5');
 $expected_setup_lines = <<EXPECTED;
 
 -a:1,4 -i:loop,sax_out
@@ -594,10 +532,10 @@ $expected_setup_lines = <<EXPECTED;
 EXPECTED
 gen_jack();
 check_setup('Send bus - soundcard - JACK');
-command_process('remove_bus Vo');
-command_process('sax mono');
+process_command('remove_bus Vo');
+process_command('sax mono');
 =comment
-command_process('add_insert post 5');
+process_command('add_insert post 5');
 $expected_setup_lines = <<EXPECTED;
 
 -a:1 -i:loop,Master_in
@@ -618,8 +556,8 @@ $expected_setup_lines = <<EXPECTED;
 EXPECTED
 gen_jack();
 check_setup('Insert via soundcard - JACK');
-command_process('remove_insert'); 
-command_process('add_send_bus_raw Vo 5');
+process_command('remove_insert'); 
+process_command('add_send_bus_raw Vo 5');
 $expected_setup_lines = <<EXPECTED;
 
 -a:1 -i:loop,Master_in
@@ -641,9 +579,28 @@ gen_jack();
 check_setup('Send bus - raw - JACK');
 =cut
 
+###### Timeline tests
+#
+# This table tests how the offset run mode affects
+# other time displacing operations. 
+#
+# If you have a region, the offset could occur
+# before the region, in the middle of the region
+# or after the region. Code for each case
+# is different. There is further an 
+# interaction with playat. 
+#
+# The tests are exhaustive, all possible
+# combinations are covered.
+#
+# The numbers indicate time positions.
+
+# asterisk (*) indicates that no output is available
+# for that specific field
+
 {
 
-diag "Edit mode playat and region endpoints adjustment";
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag "Edit mode playat$ENV{NAMA_VERBOSE_TEST_OUTPUT} region endpoints adjustment";
 my @tests = split "\n",<<TEST_DATA;
 1 12 5 15 4   8  *  *  * 30 out_of_bounds_near region
 2 12 5 15 23 26  *  *  * 30 out_of_bounds_far region
@@ -694,10 +651,10 @@ foreach(@tests){
 }
 }
 
-sub gen_alsa { force_alsa(); command_process('gen')}
-sub gen_jack { force_jack(); command_process('gen')}
-sub force_alsa { $opts{A} = 1; $opts{J} = 0; $jack_running = 0; }
-sub force_jack{ $opts{A} = 0; $opts{J} = 1; $jack_running = 1; }
+sub gen_alsa { force_alsa(); process_command('gen')}
+sub gen_jack { force_jack(); process_command('gen')}
+sub force_alsa { $config->{opts}->{A} = 1; $config->{opts}->{J} = 0; $jack->{jackd_running} = 0; }
+sub force_jack{ $config->{opts}->{A} = 0; $config->{opts}->{J} = 1; $jack->{jackd_running} = 1; }
 sub setup_content {
 	my @lines = split "\n", shift;
 	my %setup;
@@ -715,15 +672,7 @@ sub check_setup {
 		$test_name);
 }
 
-sub cleanup { 	
-		unlink './test/Setup.ecs';
-		rmdir './test/.wav';
-		rmdir './test';
-		rmdir './untitled/.wav';
-		rmdir './untitled';
-		unlink './.effects_cache';
-}
 
-cleanup();
+cleanup_dirs();
 1;
 __END__

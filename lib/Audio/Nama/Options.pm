@@ -3,9 +3,7 @@
 package Audio::Nama;
 use Modern::Perl;
 
-our (%opts);
-
-sub process_options {
+sub process_command_line_options {
 
 	my %options = qw(
 
@@ -31,23 +29,30 @@ sub process_options {
 		execute-command=s			X
 		no-terminal					T
         no-fade-on-transport-start  F
+		log=s                       L
+		no-latency                  O
+		latency                     Q
+		
 );
 
-	map{$opts{$_} = ''} values %options;
+	map{$config->{opts}->{$_} = ''} values %options;
 
 	# long options
 
 	Getopt::Long::Configure ("bundling");	
 	my $getopts = 'GetOptions( ';
-	map{ $getopts .= qq("$options{$_}|$_" => \\\$opts{$options{$_}}, \n)} keys %options;
+	map{ $getopts .= qq("$options{$_}|$_" => \\\$config->{opts}->{$options{$_}}, \n)} keys %options;
 	$getopts .= ' )' ;
 
 	#say $getopts;
 
 	eval $getopts or die "Stopped.\n";
 	
-	if ($opts{h}){
-	say <<HELP; exit; }
+	if ($config->{opts}->{h}){ say $help->{usage}; exit; }
+
+}
+BEGIN {
+$help->{usage} = <<HELP;
 
 USAGE: nama [options] [project_name]
 
@@ -69,20 +74,19 @@ Debugging options:
 --no-static-effects-data, -S     Don't load effects data
 --no-static-effects-cache, -C    Bypass effects data cache
 --no-reconfigure-engine, -R      Don't automatically configure engine
---debugging-output, -D           Emit debugging information
 --fake-jack, -J                  Simulate JACK environment
 --fake-alsa, -A                  Simulate ALSA environment
 --no-ecasound, -E                Don't spawn Ecasound process
 --execute-command, -X            Supply a command to execute
 --no-terminal, -T                Don't initialize terminal
 --no-fades, -F                   No fades on transport start/stop
+--latency, -Q                    Apply latency compensation
+--no-latency, -O                 Don't apply latency compensation
+--log, -L                        Log these (comma separated) categories
 
 HELP
-
-#--no-ecasound, -E                Don't load Ecasound (for testing)
-
-
 }
+
 1;
 __END__
 	

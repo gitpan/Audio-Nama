@@ -1,164 +1,10 @@
-# ------------ Graphical Interface ------------
-
-package Audio::Nama;
-
-our $VERSION = 1.071;
-
-our ( 
-	$attribs,
-	$term,
-	$prompt,
-	$debug,
-	$debug2,
-	$preview,
-	$main,
-	$ui,
-	%ti,
-	%tn,
-	%bn,
-	
-	%effect_i,
-	%effect_j,
-	@effects,
-	%cops,
-	%copp,
-	%copp_exp,
-	%mute_level,
-	%unity_level,
-	%fade_out_level,
-	
-	$project_name,
-	$project_root,
-	$unit,
-
-	%event_id,
-	$soundcard_channels,
-	$tk_input_channels,# for menubutton
-	%e_bound,
-	@ladspa_sorted,
-	%oid_status,	
-	$default_palette_yml, # default GUI colors
-	$palette_file, # where to save selections
-
-	%palette,
-	%nama_palette,
-);
-our (
-	
-	# variables for GUI text input widgets
-
-	$project,		
-	$track_name,
-	$ch_r,			# recording channel assignment
-	$ch_m,			# monitoring channel assignment
-	$save_id,		# name for save file
-
-
-	# Widgets
-	
-	$mw, 			# main window
-	$ew, 			# effects window
-	$canvas, 		# to lay out the effects window
-
-	# each part of the main window gets its own frame
-	# to control the layout better
-
-	$load_frame,
-	$add_frame,
-	$group_frame,
-	$time_frame,
-	$clock_frame,
-	$oid_frame,
-	$track_frame,
-	$effect_frame,
-	$iam_frame,
-	$perl_eval_frame,
-	$transport_frame,
-	$mark_frame,
-	$fast_frame, # forward, rewind, etc.
-
-	## collected widgets (i may need to destroy them)
-
-	%parent, # ->{mw} = $mw; # main window
-			 # ->{ew} = $ew; # effects window
-			 # eventually will contain all major frames
-	$group_label, 
-	$group_rw, # 
-	$group_version, # 
-	%track_widget, # for chains (tracks)
-	%track_widget_remove, # what to destroy by remove_track
-	%effects_widget, # for effects
-	@widget_o, # for templates (oids) 
-	%widget_o, # 
-	%mark_widget, # marks
-
-	@global_version_buttons, # to set the same version for
-						  	#	all tracks
-	$markers_armed, # set true to enable removing a mark
-	$mark_remove,   # a button that sets $markers_armed
-	$time_step,     # widget shows jump multiplier unit (seconds or minutes)
-	$clock, 		# displays clock
-	$setup_length,  # displays setup running time
-
-	$project_label,	# project name
-
-	$sn_label,		# project load/save/quit	
-	$sn_text,
-	$sn_load,
-	$sn_new,
-	$sn_quit,
-	$sn_palette, # configure default master window colors
-	$sn_namapalette, # configure nama-specific master-window colors
-	$sn_effects_palette, # configure effects window colors
-	@palettefields, # set by setPalette method
-	@namafields,    # field names for color palette used by nama
-	%namapalette,     # nama's indicator colors
-	$rec,      # background color
-	$mon,      # background color
-	$off,      # background color
-
-
-	### A separate box for entering IAM (and other) commands
-	$iam_label,
-	$iam_text,
-	$iam, # variable for text entry
-	$iam_execute,
-	$iam_error, # unused
-
-	# add track gui
-	#
-	$build_track_label,
-	$build_track_text,
-	$build_track_add_mono,
-	$build_track_add_stereo,
-	$build_track_rec_label,
-	$build_track_rec_text,
-	$build_track_mon_label,
-	$build_track_mon_text,
-
-	$build_new_take,
-
-	# transport controls
-	
-	$transport_label,
-	$transport_setup_and_connect,
-	$transport_setup, # unused
-	$transport_connect, # unused
-	$transport_disconnect,
-	$transport_new,
-	$transport_start,
-	$transport_stop,
-
-	$old_bg, # initial background color.
-	$old_abg, # initial active background color
-
-	$sn_save_text,# text entry widget
-	$sn_save,	# button to save settings
-	$sn_recall,	# button to recall settings
-);
+# ------------ Graphical User Interface ------------
 
 package Audio::Nama::Graphical;  ## gui routines
 use Modern::Perl; use Carp;
+our $VERSION = 1.071;
+use Audio::Nama::Globals qw($text);
+
 use Module::Load::Conditional qw(can_load);
 use Audio::Nama::Assign qw(:all);
 use Audio::Nama::Util qw(colonize);
@@ -172,10 +18,10 @@ our @ISA = 'Audio::Nama';      ## default to root class
 sub hello {"make a window";}
 sub loop {
 	package Audio::Nama;
-	$attribs->{already_prompted} = 0;
-	$term->tkRunning(1);
+	$text->{term_attribs}->{already_prompted} = 0;
+	$text->{term}->tkRunning(1);
   	while (1) {
-  		my ($user_input) = $term->readline($prompt) ;
+  		my ($user_input) = $text->{term}->readline($prompt) ;
   		Audio::Nama::process_line( $user_input );
   	}
 }
@@ -188,10 +34,16 @@ sub initialize_tk { can_load( modules => { Tk => undef } ) }
 
 package Audio::Nama;
 # gui handling
+
+# in the $gui variable, keys with leading _underscore
+# indicate variables
 #
+# $gui->{_project_name}  # scalar/array/hash var
+# $gui->{mw}             # Tk objects (widgets, frames, etc.)
+
 sub init_gui {
 
-	$debug2 and print "&init_gui\n";
+	logsub("&init_gui");
 
 	init_palettefields(); # keys only
 
@@ -199,255 +51,213 @@ sub init_gui {
 	### 	Tk root window 
 
 	# Tk main window
- 	$mw = MainWindow->new;  
+ 	$gui->{mw} = MainWindow->new;  
 	get_saved_colors();
-	$mw->optionAdd('*font', 'Helvetica 12');
-	$mw->optionAdd('*BorderWidth' => 1);
-	$mw->title("Ecasound/Nama"); 
-	$mw->deiconify;
-	$parent{mw} = $mw;
+	$gui->{mw}->optionAdd('*font', 'Helvetica 12');
+	$gui->{mw}->optionAdd('*BorderWidth' => 1);
+	$gui->{mw}->title("Ecasound/Nama"); 
+	$gui->{mw}->deiconify;
+	$gui->{parents}->{mw} = $gui->{mw};
 
 	### init effect window
 
-	$ew = $mw->Toplevel;
-	$ew->title("Effect Window");
-	$ew->deiconify; 
-#	$ew->withdraw;
-	$parent{ew} = $ew;
+	$gui->{ew} = $gui->{mw}->Toplevel;
+	$gui->{ew}->title("Effect Window");
+	$gui->{ew}->deiconify; 
+#	$gui->{ew}->withdraw;
+	$gui->{parents}->{ew} = $gui->{ew};
 
 	### Exit via Ctrl-C 
 
-	$mw->bind('<Control-Key-c>' => \&cleanup_exit); 
-	$ew->bind('<Control-Key-c>' => \&cleanup_exit);
+	$gui->{mw}->bind('<Control-Key-c>' => \&cleanup_exit); 
+	$gui->{ew}->bind('<Control-Key-c>' => \&cleanup_exit);
 
     ## Press SPACE to start/stop transport
 
-	$mw->bind('<Control-Key- >' => \&toggle_transport); 
-	$ew->bind('<Control-Key- >' => \&toggle_transport); 
+	$gui->{mw}->bind('<Control-Key- >' => \&toggle_transport); 
+	$gui->{ew}->bind('<Control-Key- >' => \&toggle_transport); 
 	
-	$canvas = $ew->Scrolled('Canvas')->pack;
-	$canvas->configure(
+	$gui->{canvas} = $gui->{ew}->Scrolled('Canvas')->pack;
+	$gui->{canvas}->configure(
 		scrollregion =>[2,2,10000,10000],
 		-width => 1200,
 		-height => 700,	
 		);
-	$effect_frame = $canvas->Frame;
-	my $id = $canvas->createWindow(30,30, -window => $effect_frame,
+	$gui->{fx_frame} = $gui->{canvas}->Frame;
+	my $id = $gui->{canvas}->createWindow(30,30, -window => $gui->{fx_frame},
 											-anchor => 'nw');
 
-	$project_label = $mw->Label->pack(-fill => 'both');
+	$gui->{project_head} = $gui->{mw}->Label->pack(-fill => 'both');
 
-	$time_frame = $mw->Frame(
+	$gui->{time_frame} = $gui->{mw}->Frame(
 	#	-borderwidth => 20,
 	#	-relief => 'groove',
 	)->pack(
 		-side => 'bottom', 
 		-fill => 'both',
 	);
-	$mark_frame = $time_frame->Frame->pack(
+	$gui->{mark_frame} = $gui->{time_frame}->Frame->pack(
 		-side => 'bottom', 
 		-fill => 'both');
-	$fast_frame = $time_frame->Frame->pack(
+	$gui->{seek_frame} = $gui->{time_frame}->Frame->pack(
 		-side => 'bottom', 
 		-fill => 'both');
-	$transport_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
-	# $oid_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
-	$clock_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
-	#$group_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
- 	my $track_canvas = $mw->Scrolled('Canvas')->pack(-side => 'bottom', -fill => 'both');
+	$gui->{transport_frame} = $gui->{mw}->Frame->pack(-side => 'bottom', -fill => 'both');
+	# $oid_frame = $gui->{mw}->Frame->pack(-side => 'bottom', -fill => 'both');
+	$gui->{clock_frame} = $gui->{mw}->Frame->pack(-side => 'bottom', -fill => 'both');
+	#$gui->{group_frame} = $gui->{mw}->Frame->pack(-side => 'bottom', -fill => 'both');
+ 	my $track_canvas = $gui->{mw}->Scrolled('Canvas')->pack(-side => 'bottom', -fill => 'both');
  	$track_canvas->configure(
  		-scrollregion =>[2,2,400,9600],
  		-width => 400,
  		-height => 400,	
  		);
-	$track_frame = $track_canvas->Frame; # ->pack(-fill => 'both');
-	#$track_frame = $mw->Frame;
+	$gui->{track_frame} = $track_canvas->Frame; # ->pack(-fill => 'both');
+	#$gui->{track_frame} = $gui->{mw}->Frame;
  	my $id2 = $track_canvas->createWindow(0,0,
-		-window => $track_frame, 
+		-window => $gui->{track_frame}, 
 		-anchor => 'nw');
- 	#$group_label = $group_frame->Menubutton(-text => "GROUP",
+ 	#$gui->{group_label} = $gui->{group_frame}->Menubutton(-text => "GROUP",
  #										-tearoff => 0,
  #										-width => 13)->pack(-side => 'left');
 		
-	$add_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
-	$perl_eval_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
-	$iam_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
-	$load_frame = $mw->Frame->pack(-side => 'bottom', -fill => 'both');
-#	my $blank = $mw->Label->pack(-side => 'left');
+	$gui->{add_frame} = $gui->{mw}->Frame->pack(-side => 'bottom', -fill => 'both');
+	$gui->{perl_frame} = $gui->{mw}->Frame->pack(-side => 'bottom', -fill => 'both');
+	$gui->{iam_frame} = $gui->{mw}->Frame->pack(-side => 'bottom', -fill => 'both');
+	$gui->{load_frame} = $gui->{mw}->Frame->pack(-side => 'bottom', -fill => 'both');
+#	my $blank = $gui->{mw}->Label->pack(-side => 'left');
 
 
 
-	$sn_label = $load_frame->Label(
+	$gui->{project_label} = $gui->{load_frame}->Label(
 		-text => "    Project name: "
 	)->pack(-side => 'left');
-	$sn_text = $load_frame->Entry(
-		-textvariable => \$project,
+	$gui->{project_entry} = $gui->{load_frame}->Entry(
+		-textvariable => \$gui->{_project_name},
 		-width => 25
 	)->pack(-side => 'left');
 
-	$sn_load = $load_frame->Button->pack(-side => 'left');;
-	$sn_new = $load_frame->Button->pack(-side => 'left');;
-	$sn_quit = $load_frame->Button->pack(-side => 'left');
-	$sn_save = $load_frame->Button->pack(-side => 'left');
-	my $sn_save_text = $load_frame->Entry(
-									-textvariable => \$save_id,
+	$gui->{load_project} = $gui->{load_frame}->Button->pack(-side => 'left');;
+	$gui->{new_project} = $gui->{load_frame}->Button->pack(-side => 'left');;
+	$gui->{quit} = $gui->{load_frame}->Button->pack(-side => 'left');
+	$gui->{save_project} = $gui->{load_frame}->Button->pack(-side => 'left');
+	$gui->{savefile_entry} = $gui->{load_frame}->Entry(
+									-textvariable => \$gui->{_save_id},
 									-width => 15
 									)->pack(-side => 'left');
-	$sn_recall = $load_frame->Button->pack(-side => 'left');
-	$sn_palette = $load_frame->Menubutton(-tearoff => 0)
+	$gui->{load_savefile} = $gui->{load_frame}->Button->pack(-side => 'left');
+	$gui->{palette} = $gui->{load_frame}->Menubutton(-tearoff => 0)
 		->pack( -side => 'left');
-	$sn_namapalette = $load_frame->Menubutton(-tearoff => 0)
+	$gui->{nama_palette} = $gui->{load_frame}->Menubutton(-tearoff => 0)
 		->pack( -side => 'left');
-	#$sn_effects_palette = $load_frame->Menubutton(-tearoff => 0)
+	#$gui->{fx_palette} = $gui->{load_frame}->Menubutton(-tearoff => 0)
 	#	->pack( -side => 'left');
-	# $sn_dump = $load_frame->Button->pack(-side => 'left');
+	# $sn_dump = $gui->{load_frame}->Button->pack(-side => 'left');
 
-	$build_track_label = $add_frame->Label(
+	$gui->{add_track}->{label} = $gui->{add_frame}->Label(
 		-text => "New track name: ")->pack(-side => 'left');
-	$build_track_text = $add_frame->Entry(
-		-textvariable => \$track_name, 
+	$gui->{add_track}->{text_entry} = $gui->{add_frame}->Entry(
+		-textvariable => \$gui->{_track_name}, 
 		-width => 12
 	)->pack(-side => 'left');
-# 	$build_track_mon_label = $add_frame->Label(
-# 		-text => "Aux send: (channel/client):",
-# 		-width => 18
-# 	)->pack(-side => 'left');
-# 	$build_track_mon_text = $add_frame->Entry(
-# 		-textvariable => \$ch_m, 
-# 		-width => 10
-# 	)->pack(-side => 'left');
-	$build_track_rec_label = $add_frame->Label(
+	$gui->{add_track}->{rec_label} = $gui->{add_frame}->Label(
 		-text => "Input channel or client:"
 	)->pack(-side => 'left');
-	$build_track_rec_text = $add_frame->Entry(
-		-textvariable => \$ch_r, 
+	$gui->{add_track}->{rec_text} = $gui->{add_frame}->Entry(
+		-textvariable => \$gui->{_chr}, 
 		-width => 10
 	)->pack(-side => 'left');
-	$build_track_add_mono = $add_frame->Button->pack(-side => 'left');;
-	$build_track_add_stereo  = $add_frame->Button->pack(-side => 'left');;
+	$gui->{add_track}->{add_mono} = $gui->{add_frame}->Button->pack(-side => 'left');;
+	$gui->{add_track}->{add_stereo}  = $gui->{add_frame}->Button->pack(-side => 'left');;
 
-	$sn_load->configure(
+	$gui->{load_project}->configure(
 		-text => 'Load',
 		-command => sub{ load_project(
-			name => remove_spaces($project),
+			name => remove_spaces($gui->{_project_name}),
 			)});
-	$sn_new->configure( 
+	$gui->{new_project}->configure( 
 		-text => 'Create',
 		-command => sub{ load_project(
-							name => remove_spaces($project),
+							name => remove_spaces($gui->{_project_name}),
 							create => 1)});
-	$sn_save->configure(
+	$gui->{save_project}->configure(
 		-text => 'Save settings',
-		-command => #sub { print "save_id: $save_id\n" });
-		 sub {save_state($save_id) });
-	$sn_recall->configure(
+		-command => #sub { print "save_id: $gui->{_save_id}\n" });
+		 sub {save_state($gui->{_save_id}) });
+	$gui->{load_savefile}->configure(
 		-text => 'Recall settings',
- 		-command => sub {load_project (name => $project_name, 
- 										settings => $save_id)},
+ 		-command => sub {load_project (name => $project->{name},  # current project 
+ 										settings => $gui->{_save_id})},
 				);
-	$sn_quit->configure(-text => "Quit",
+	$gui->{quit}->configure(-text => "Quit",
 		 -command => sub { 
 				return if transport_running();
-				save_state($save_id);
+				save_state($gui->{_save_id});
 				print "Exiting... \n";		
-				#$term->tkRunning(0);
-				#$ew->destroy;
-				#$mw->destroy;
-				#Audio::Nama::Text::command_process('quit');
+				#$text->{term}->tkRunning(0);
+				#$gui->{ew}->destroy;
+				#$gui->{mw}->destroy;
+				#Audio::Nama::process_command('quit');
 				exit;
 				 });
-	$sn_palette->configure(
+	$gui->{palette}->configure(
 		-text => 'Palette',
 		-relief => 'raised',
 	);
-	$sn_namapalette->configure(
+	$gui->{nama_palette}->configure(
 		-text => 'Nama palette',
 		-relief => 'raised',
 	);
-# 	$sn_effects_palette->configure(
-# 		-text => 'Effects palette',
-# 		-relief => 'raised',
-# 	);
 
 my @color_items = map { [ 'command' => $_, 
 							-command  => colorset('mw', $_ ) ]
-						} @palettefields;
-$sn_palette->AddItems( @color_items);
+						} @{$gui->{_palette_fields}};
+$gui->{palette}->AddItems( @color_items);
 
 @color_items = map { [ 'command' => $_, 
 							-command  => namaset( $_ ) ]
-						} @namafields;
+						} @{$gui->{_nama_fields}};
 
-# $sn_effects_palette->AddItems( @color_items);
-# 
-# @color_items = map { [ 'command' => $_, 
-# 						-command  => namaset($_, $namapalette{$_})]
-# 						} @namafields;
-$sn_namapalette->AddItems( @color_items);
-
-	$build_track_add_mono->configure( 
+	$gui->{add_track}->{add_mono}->configure( 
 			-text => 'Add Mono Track',
 			-command => sub { 
-					return if $track_name =~ /^\s*$/;	
-			add_track(remove_spaces($track_name)) }
+					return if $gui->{_track_name} =~ /^\s*$/;	
+			add_track(remove_spaces($gui->{_track_name})) }
 	);
-	$build_track_add_stereo->configure( 
+	$gui->{add_track}->{add_stereo}->configure( 
 			-text => 'Add Stereo Track',
 			-command => sub { 
-								return if $track_name =~ /^\s*$/;	
-								add_track(remove_spaces($track_name));
-								Audio::Nama::Text::command_process('stereo');
+								return if $gui->{_track_name} =~ /^\s*$/;	
+								add_track(remove_spaces($gui->{_track_name}));
+								process_command('stereo');
 	});
 
 	my @labels = 
 		qw(Track Name Version Status Source Send Volume Mute Unity Pan Center Effects);
 	my @widgets;
-	map{ push @widgets, $track_frame->Label(-text => $_)  } @labels;
+	map{ push @widgets, $gui->{track_frame}->Label(-text => $_)  } @labels;
 	$widgets[0]->grid(@widgets[1..$#widgets]);
 
 
-#  unified command processing by command_process 
-# 	
- 	$iam_label = $iam_frame->Label(
-# 	-text => "         Command: "
- 		)->pack(-side => 'left');;
-# 	$iam_text = $iam_frame->Entry( 
-# 		-textvariable => \$iam, -width => 45)
-# 		->pack(-side => 'left');;
-# 	$iam_execute = $iam_frame->Button(
-# 			-text => 'Execute',
-# 			-command => sub { Audio::Nama::Text::command_process( $iam ) }
-# 			
-# 		)->pack(-side => 'left');;
-# 
-# 			#join  " ",
-# 			# grep{ $_ !~ add fxa afx } split /\s*;\s*/, $iam) 
-		
 }
 
 sub transport_gui {
 	my $ui = shift;
-	$debug2 and print "&transport_gui\n";
+	logsub("&transport_gui");
 
-	$transport_label = $transport_frame->Label(
+	$gui->{engine_label} = $gui->{transport_frame}->Label(
 		-text => 'TRANSPORT',
 		-width => 12,
 		)->pack(-side => 'left');;
-	# disable Arm button
-	# $transport_setup_and_connect  = $transport_frame->Button->pack(-side => 'left');;
-	$transport_start = $transport_frame->Button->pack(-side => 'left');
-	$transport_stop = $transport_frame->Button->pack(-side => 'left');
-	#$transport_setup = $transport_frame->Button->pack(-side => 'left');;
-	#$transport_connect = $transport_frame->Button->pack(-side => 'left');;
-	#$transport_disconnect = $transport_frame->Button->pack(-side => 'left');;
-	# $transport_new = $transport_frame->Button->pack(-side => 'left');;
+	$gui->{engine_start} = $gui->{transport_frame}->Button->pack(-side => 'left');
+	$gui->{engine_stop} = $gui->{transport_frame}->Button->pack(-side => 'left');
 
-	$transport_stop->configure(-text => "Stop",
+	$gui->{engine_stop}->configure(-text => "Stop",
 	-command => sub { 
 					stop_transport();
 				}
 		);
-	$transport_start->configure(
+	$gui->{engine_start}->configure(
 		-text => "Start",
 		-command => sub { 
 		return if transport_running();
@@ -455,135 +265,104 @@ sub transport_gui {
 		$ui->project_label_configure(-background => $color);
 		start_transport();
 				});
-# 	$transport_setup_and_connect->configure(
-# 			-text => 'Arm',
-# 			-command => sub {arm()}
-# 						 );
 
-# preview_button();
+#preview_button();
 #mastering_button();
 
 }
 sub time_gui {
 	my $ui = shift;
-	$debug2 and print "&time_gui\n";
+	logsub("&time_gui");
 
-	my $time_label = $clock_frame->Label(
+	my $time_label = $gui->{clock_frame}->Label(
 		-text => 'TIME', 
 		-width => 12);
-	#print "bg: $namapalette{ClockBackground}, fg:$namapalette{ClockForeground}\n";
-	$clock = $clock_frame->Label(
+	#print "bg: $gui->{_nama_palette}->{ClockBackground}, fg:$gui->{_nama_palette}->{ClockForeground}\n";
+	$gui->{clock} = $gui->{clock_frame}->Label(
 		-text => '0:00', 
 		-width => 8,
-		-background => $namapalette{ClockBackground},
-		-foreground => $namapalette{ClockForeground},
+		-background => $gui->{_nama_palette}->{ClockBackground},
+		-foreground => $gui->{_nama_palette}->{ClockForeground},
 		);
-	my $length_label = $clock_frame->Label(
+	my $length_label = $gui->{clock_frame}->Label(
 		-text => 'LENGTH',
 		-width => 10,
 		);
-	$setup_length = $clock_frame->Label(
+	$gui->{setup_length} = $gui->{clock_frame}->Label(
 	#	-width => 8,
 		);
 
-	for my $w ($time_label, $clock, $length_label, $setup_length) {
+	for my $w ($time_label, $gui->{clock}, $length_label, $gui->{setup_length}) {
 		$w->pack(-side => 'left');	
 	}
 
-	$mark_frame = $time_frame->Frame->pack(
+	$gui->{mark_frame} = $gui->{time_frame}->Frame->pack(
 		-side => 'bottom', 
 		-fill => 'both');
-	my $fast_frame = $time_frame->Frame->pack(
+	$gui->{seek_frame} = $gui->{time_frame}->Frame->pack(
 		-side => 'bottom', 
 		-fill => 'both');
 	# jump
 
-	my $jump_label = $fast_frame->Label(-text => q(JUMP), -width => 12);
+	my $jump_label = $gui->{seek_frame}->Label(-text => q(JUMP), -width => 12);
 	my @pluses = (1, 5, 10, 30, 60);
 	my @minuses = map{ - $_ } reverse @pluses;
-	my @fw = map{ my $d = $_; $fast_frame->Button(
+	my @fw = map{ my $d = $_; $gui->{seek_frame}->Button(
 			-text => $d,
 			-command => sub { jump($d) },
 			)
 		}  @pluses ;
-	my @rew = map{ my $d = $_; $fast_frame->Button(
+	my @rew = map{ my $d = $_; $gui->{seek_frame}->Button(
 			-text => $d,
 			-command => sub { jump($d) },
 			)
 		}  @minuses ;
-	my $beg = $fast_frame->Button(
+	my $beg = $gui->{seek_frame}->Button(
 			-text => 'Beg',
 			-command => \&to_start,
 			);
-	my $end = $fast_frame->Button(
+	my $end = $gui->{seek_frame}->Button(
 			-text => 'End',
 			-command => \&to_end,
 			);
 
-	$time_step = $fast_frame->Button( 
+	$gui->{seek_unit} = $gui->{seek_frame}->Button( 
 			-text => 'Sec',
 			);
-		for my $w($jump_label, @rew, $beg, $time_step, $end, @fw){
+		for my $w($jump_label, @rew, $beg, $gui->{seek_unit}, $end, @fw){
 			$w->pack(-side => 'left')
 		}
 
-	$time_step->configure (-command => sub { &toggle_unit; &show_unit });
+	$gui->{seek_unit}->configure (-command => sub { &toggle_unit; &show_unit });
 
 	# Marks
 	
-	my $mark_label = $mark_frame->Label(
+	my $mark_label = $gui->{mark_frame}->Label(
 		-text => q(MARK), 
 		-width => 12,
 		)->pack(-side => 'left');
 		
-	my $drop_mark = $mark_frame->Button(
+	my $drop_mark = $gui->{mark_frame}->Button(
 		-text => 'Place',
 		-command => \&drop_mark,
 		)->pack(-side => 'left');	
 		
-	$mark_remove = $mark_frame->Button(
+	$gui->{mark_remove} = $gui->{mark_frame}->Button(
 		-text => 'Remove',
 		-command => \&arm_mark_toggle,
 	)->pack(-side => 'left');	
 
 }
 sub toggle_unit {
-	if ($unit == 1){
-		$unit = 60;
+	if ($gui->{_seek_unit} == 1){
+		$gui->{_seek_unit} = 60;
 		
-	} else{ $unit = 1; }
+	} else{ $gui->{_seek_unit} = 1; }
 }
-sub show_unit { $time_step->configure(
-	-text => ($unit == 1 ? 'Sec' : 'Min') 
+sub show_unit { $gui->{seek_unit}->configure(
+	-text => ($gui->{_seek_unit} == 1 ? 'Sec' : 'Min') 
 )}
 
-#  the following is based on previous code for multiple buttons
-#  needs cleanup
-
-sub preview_button {  
-	$debug2 and print "&preview\n";
-	my $ui = shift;
-	#my $outputs = $oid_frame->Label(-text => 'OUTPUTS', -width => 12);
-	my $oid_button = $transport_frame->Button( );
-	$oid_button->configure(
-		-text => 'Preview',
-		-command => sub { 
-			if ($preview ){ # set normal
-			} else { # set preview 
-			}
-			$oid_button->configure( 
-		-background => 
-				$preview ? $old_bg : $namapalette{Preview} ,
-		-text => 
-				$preview ? 'Preview' : 'PREVIEW MODE'
-					
-					);
-			});
-		push @widget_o, $oid_button;
-		
-	map { $_ -> pack(-side => 'left') } (@widget_o);
-	
-}
 sub paint_button {
 	my $ui = shift;
 	my ($button, $color) = @_;
@@ -593,12 +372,12 @@ sub paint_button {
 
 sub engine_mode_color {
 		if ( user_rec_tracks()  ){ 
-				$rec  					# live recording
+				$gui->{_nama_palette}->{RecBackground} # live recording 
 		} elsif ( Audio::Nama::ChainSetup::really_recording() ){ 
-				$namapalette{Mixdown}	# mixdown only 
+				$gui->{_nama_palette}->{Mixdown}	# mixdown only 
 		} elsif ( user_mon_tracks() ){  
-				$namapalette{Play}; 	# just playback
-		} else { $old_bg } 
+				$gui->{_nama_palette}->{Play}; 	# just playback
+		} else { $gui->{_old_bg} } 
 }
 sub user_rec_tracks { some_user_tracks('REC') }
 sub user_mon_tracks { some_user_tracks('MON') }
@@ -616,99 +395,100 @@ sub some_user_tracks {
 sub flash_ready {
 
 	my $color = engine_mode_color();
-	$debug and print "flash color: $color\n";
+	logpkg(__FILE__,__LINE__,'debug', "flash color: $color");
 	$ui->length_display(-background => $color);
-	$ui->project_label_configure(-background => $color) unless $preview;
- 	$event_id{heartbeat} = AE::timer(5, 0, \&reset_engine_mode_color_display);
+	$ui->project_label_configure(-background => $color) unless $mode->{preview};
+ 	$engine->{events}->{heartbeat} = AE::timer(5, 0, \&reset_engine_mode_color_display);
 }
-sub reset_engine_mode_color_display { $ui->project_label_configure(-background => $off) }
+sub reset_engine_mode_color_display { $ui->project_label_configure(
+	-background => $gui->{_nama_palette}->{OffBackground} )
+}
 sub set_engine_mode_color_display { $ui->project_label_configure(-background => engine_mode_color()) }
 sub group_gui {  
 	my $ui = shift;
-	my $group = $main; 
-	my $dummy = $track_frame->Label(-text => ' '); 
-	$group_label = 	$track_frame->Label(
+	my $group = $bn{Main}; 
+	my $dummy = $gui->{track_frame}->Label(-text => ' '); 
+	$gui->{group_label} = 	$gui->{track_frame}->Label(
 			-text => "G R O U P",
-			-foreground => $namapalette{GroupForeground},
-			-background => $namapalette{GroupBackground},
+			-foreground => $gui->{_nama_palette}->{GroupForeground},
+			-background => $gui->{_nama_palette}->{GroupBackground},
 
  );
-	$group_version = $track_frame->Menubutton( 
+	$gui->{group_version} = $gui->{track_frame}->Menubutton( 
 		-text => q( ), 
 		-tearoff => 0,
-		-foreground => $namapalette{GroupForeground},
-		-background => $namapalette{GroupBackground},
+		-foreground => $gui->{_nama_palette}->{GroupForeground},
+		-background => $gui->{_nama_palette}->{GroupBackground},
 );
-	$group_rw = $track_frame->Menubutton( 
+	$gui->{group_rw} = $gui->{track_frame}->Menubutton( 
 		-text    => $group->rw,
 	 	-tearoff => 0,
-		-foreground => $namapalette{GroupForeground},
-		-background => $namapalette{GroupBackground},
+		-foreground => $gui->{_nama_palette}->{GroupForeground},
+		-background => $gui->{_nama_palette}->{GroupBackground},
 );
 
 
 		
-		$group_rw->AddItems([
+		$gui->{group_rw}->AddItems([
 			'command' => 'REC',
-			-background => $old_bg,
+			-background => $gui->{_old_bg},
 			-command => sub { 
 				return if Audio::Nama::eval_iam("engine-status") eq 'running';
 				$group->set(rw => 'REC');
-				$group_rw->configure(-text => 'REC');
+				$gui->{group_rw}->configure(-text => 'REC');
 				refresh();
 				Audio::Nama::reconfigure_engine()
 				}
 			],[
 			'command' => 'MON',
-			-background => $old_bg,
+			-background => $gui->{_old_bg},
 			-command => sub { 
 				return if Audio::Nama::eval_iam("engine-status") eq 'running';
 				$group->set(rw => 'MON');
-				$group_rw->configure(-text => 'MON');
+				$gui->{group_rw}->configure(-text => 'MON');
 				refresh();
 				Audio::Nama::reconfigure_engine()
 				}
 			],[
 			'command' => 'OFF',
-			-background => $old_bg,
+			-background => $gui->{_old_bg},
 			-command => sub { 
 				return if Audio::Nama::eval_iam("engine-status") eq 'running';
 				$group->set(rw => 'OFF');
-				$group_rw->configure(-text => 'OFF');
+				$gui->{group_rw}->configure(-text => 'OFF');
 				refresh();
 				Audio::Nama::reconfigure_engine()
 				}
 			]);
-			$dummy->grid($group_label, $group_version, $group_rw);
-			$ui->global_version_buttons;
+			$dummy->grid($gui->{group_label}, $gui->{group_version}, $gui->{group_rw});
+			#$ui->global_version_buttons;
 
 }
 sub global_version_buttons {
-	local $debug = 0;
-	my $version = $group_version;
+	my $version = $gui->{group_version};
 	$version and map { $_->destroy } $version->children;
 		
-	$debug and print "making global version buttons range:",
-		join ' ',1..$main->last, " \n";
+	logpkg(__FILE__,__LINE__,'debug', "making global version buttons range: " ,
+		join ' ',1..$bn{Main}->last);
 
 			$version->radiobutton( 
 
 				-label => (''),
 				-value => 0,
 				-command => sub { 
-					$main->set(version => 0); 
+					$bn{Main}->set(version => 0); 
 					$version->configure(-text => " ");
 					Audio::Nama::reconfigure_engine();
 					refresh();
 					}
 			);
 
- 	for my $v (1..$main->last) { 
+ 	for my $v (1..$bn{Main}->last) { 
 
 	# the highest version number of all tracks in the
-	# $main group
+	# $bn{Main} group
 	
-	my @user_track_indices = grep { $_ > 2 } map {$_->n} Audio::Nama::Track::all;
+	my @user_track_indices = grep { $_ > 2 } map {$_->n} Audio::Nama::Track::all();
 	
 		next unless grep{  grep{ $v == $_ } @{ $ti{$_}->versions } }
 			@user_track_indices;
@@ -719,7 +499,7 @@ sub global_version_buttons {
 				-label => ($v ? $v : ''),
 				-value => $v,
 				-command => sub { 
-					$main->set(version => $v); 
+					$bn{Main}->set(version => $v); 
 					$version->configure(-text => $v);
 					Audio::Nama::reconfigure_engine();
 					refresh();
@@ -729,12 +509,12 @@ sub global_version_buttons {
  	}
 }
 sub track_gui { 
-	$debug2 and print "&track_gui\n";
+	logsub("&track_gui");
 	my $ui = shift;
 	my $n = shift;
 	return if $ti{$n}->hide;
 	
-	$debug and print "found index: $n\n";
+	logpkg(__FILE__,__LINE__,'debug', "found index: $n");
 	my @rw_items = @_ ? @_ : (
 			[ 'command' => "REC",
 				-foreground => 'red',
@@ -743,7 +523,7 @@ sub track_gui {
 					$ti{$n}->set(rw => "REC");
 					
 					$ui->refresh_track($n);
-					refresh_group();
+					#refresh_group();
 					Audio::Nama::reconfigure_engine();
 			}],
 			[ 'command' => "MON",
@@ -751,7 +531,7 @@ sub track_gui {
 					return if Audio::Nama::eval_iam("engine-status") eq 'running';
 					$ti{$n}->set(rw => "MON");
 					$ui->refresh_track($n);
-					refresh_group();
+					#refresh_group();
 					Audio::Nama::reconfigure_engine();
 			}],
 			[ 'command' => "OFF", 
@@ -759,19 +539,19 @@ sub track_gui {
 					return if Audio::Nama::eval_iam("engine-status") eq 'running';
 					$ti{$n}->set(rw => "OFF");
 					$ui->refresh_track($n);
-					refresh_group();
+					#refresh_group();
 					Audio::Nama::reconfigure_engine();
 			}],
 		);
 	my ($number, $name, $version, $rw, $ch_r, $ch_m, $vol, $mute, $solo, $unity, $pan, $center);
-	$number = $track_frame->Label(-text => $n,
+	$number = $gui->{track_frame}->Label(-text => $n,
 									-justify => 'left');
 	my $stub = " ";
 	$stub .= $ti{$n}->version;
-	$name = $track_frame->Label(
+	$name = $gui->{track_frame}->Label(
 			-text => $ti{$n}->name,
 			-justify => 'left');
-	$version = $track_frame->Menubutton( 
+	$version = $gui->{track_frame}->Menubutton( 
 					-text => $stub,
 					# -relief => 'sunken',
 					-tearoff => 0);
@@ -797,12 +577,12 @@ sub track_gui {
 					);
 	}
 
-	$ch_r = $track_frame->Menubutton(
+	$ch_r = $gui->{track_frame}->Menubutton(
 					# -relief => 'groove',
 					-tearoff => 0,
 				);
 	my @range;
-	push @range, 1..$soundcard_channels if $n > 2; # exclude Master/Mixdown
+	push @range, 1..$config->{soundcard_channels} if $n > 2; # exclude Master/Mixdown
 	
 	for my $v (@range) {
 		$ch_r->radiobutton(
@@ -818,9 +598,9 @@ sub track_gui {
 	@range = ();
 
 	push @range, "off" if $n > 2;
-	push @range, 1..$soundcard_channels if $n != 2; # exclude Mixdown
+	push @range, 1..$config->{soundcard_channels} if $n != 2; # exclude Mixdown
 
-	$ch_m = $track_frame->Menubutton(
+	$ch_m = $gui->{track_frame}->Menubutton(
 					-tearoff => 0,
 					# -relief => 'groove',
 				);
@@ -836,7 +616,7 @@ sub track_gui {
  						}
 				 		)
 				}
-	$rw = $track_frame->Menubutton(
+	$rw = $gui->{track_frame}->Menubutton(
 		-text => $ti{$n}->rw,
 		-tearoff => 0,
 		# -relief => 'groove',
@@ -851,55 +631,52 @@ sub track_gui {
 
 		my $vol_id = $ti{$n}->vol;
 
-		local $debug = 0;
-
-
-		$debug and print "vol cop_id: $vol_id\n";
-		my %p = ( 	parent => \$track_frame,
+		logpkg(__FILE__,__LINE__,'debug', "vol effect_id: $vol_id");
+		my %p = ( 	parent => \$gui->{track_frame},
 				chain  => $n,
 				type => 'ea',
-				cop_id => $vol_id,
+				effect_id => $vol_id,
 				p_num		=> $p_num,
 				length => 300, 
 				);
 
 
-		 $debug and do {my %q = %p; delete $q{parent}; print
-		 "=============\n%p\n",yaml_out(\%q)};
+		 logpkg(__FILE__,__LINE__,'debug',sub{my %q = %p; delete $q{parent}; print
+		 "=============\n%p\n",yaml_out(\%q)});
 
 		$vol = make_scale ( \%p );
 		# Mute
 
-		$mute = $track_frame->Button(
+		$mute = $gui->{track_frame}->Button(
 			-command => sub { 
-				if ($copp{$vol_id}->[0] != $mute_level{$cops{$vol_id}->{type}} and
-					$copp{$vol_id}->[0] != $fade_out_level{$cops{$vol_id}->{type}}
+				if ($fx->{params}->{$vol_id}->[0] != $config->{mute_level}->{$fx->{applied}->{$vol_id}->{type}} and
+					$fx->{params}->{$vol_id}->[0] != $config->{fade_out_level}->{$fx->{applied}->{$vol_id}->{type}}
 				) {  # non-zero volume
 					$ti{$n}->mute;
-					$mute->configure(-background => $namapalette{Mute});
+					$mute->configure(-background => $gui->{_nama_palette}->{Mute});
 				}
 				else {
 					$ti{$n}->unmute;
-					$mute->configure(-background => $off);
+					$mute->configure(-background => $gui->{_nama_palette}->{OffBackground})
 				}
 			}	
 		  );
 
 		# Unity
 
-		$unity = $track_frame->Button(
+		$unity = $gui->{track_frame}->Button(
 				-command => sub { 
 					Audio::Nama::effect_update_copp_set(
 						$vol_id, 
 						0, 
-						$unity_level{$cops{$vol_id}->{type}});
+						$config->{unity_level}->{$fx->{applied}->{$vol_id}->{type}});
 				}
 		  );
 	} else {
 
-		$vol = $track_frame->Label;
-		$mute = $track_frame->Label;
-		$unity = $track_frame->Label;
+		$vol = $gui->{track_frame}->Label;
+		$mute = $gui->{track_frame}->Label;
+		$unity = $gui->{track_frame}->Label;
 
 	}
 
@@ -909,72 +686,72 @@ sub track_gui {
 		
 		my $pan_id = $ti{$n}->pan;
 		
-		$debug and print "pan cop_id: $pan_id\n";
+		logpkg(__FILE__,__LINE__,'debug', "pan effect_id: $pan_id");
 		$p_num = 0;           # first parameter
-		my %q = ( 	parent => \$track_frame,
+		my %q = ( 	parent => \$gui->{track_frame},
 				chain  => $n,
 				type => 'epp',
-				cop_id => $pan_id,
+				effect_id => $pan_id,
 				p_num		=> $p_num,
 				);
-		# $debug and do { my %q = %p; delete $q{parent}; print "x=============\n%p\n",yaml_out(\%q) };
+		# logpkg(__FILE__,__LINE__,'debug',sub{ my %q = %p; delete $q{parent}; print "x=============\n%p\n",yaml_out(\%q) });
 		$pan = make_scale ( \%q );
 
 		# Center
 
-		$center = $track_frame->Button(
+		$center = $gui->{track_frame}->Button(
 			-command => sub { 
 				Audio::Nama::effect_update_copp_set($pan_id, 0, 50);
 			}
 		  );
 	} else { 
 
-		$pan = $track_frame->Label;
-		$center = $track_frame->Label;
+		$pan = $gui->{track_frame}->Label;
+		$center = $gui->{track_frame}->Label;
 	}
 	
-	my $effects = $effect_frame->Frame->pack(-fill => 'both');;
+	my $effects = $gui->{fx_frame}->Frame->pack(-fill => 'both');;
 
 	# effects, held by track_widget->n->effects is the frame for
 	# all effects of the track
 
-	@{ $track_widget{$n} }{qw(name version rw ch_r ch_m mute effects)} 
+	@{ $gui->{tracks}->{$n} }{qw(name version rw ch_r ch_m mute effects)} 
 		= ($name,  $version, $rw, $ch_r, $ch_m, $mute, \$effects);#a ref to the object
-	#$debug and print "=============\n\%track_widget\n",yaml_out(\%track_widget);
+	#logpkg(__FILE__,__LINE__,'debug', "=============$gui->{tracks}\n",sub{yaml_out($gui->{tracks})});
 	my $independent_effects_frame 
-		= ${ $track_widget{$n}->{effects} }->Frame->pack(-fill => 'x');
+		= ${ $gui->{tracks}->{$n}->{effects} }->Frame->pack(-fill => 'x');
 
 
 	my $controllers_frame 
-		= ${ $track_widget{$n}->{effects} }->Frame->pack(-fill => 'x');
+		= ${ $gui->{tracks}->{$n}->{effects} }->Frame->pack(-fill => 'x');
 	
 	# parents are the independent effects
 	# children are controllers for various paramters
 
-	$track_widget{$n}->{parents} = $independent_effects_frame;
+	$gui->{tracks}->{$n}->{parents} = $independent_effects_frame;
 
-	$track_widget{$n}->{children} = $controllers_frame;
+	$gui->{tracks}->{$n}->{children} = $controllers_frame;
 	
 	$independent_effects_frame
 		->Label(-text => uc $ti{$n}->name )->pack(-side => 'left');
 
-	#$debug and print( "Number: $n\n"),MainLoop if $n == 2;
+	#logpkg(__FILE__,__LINE__,'debug',"Number: $n"),MainLoop if $n == 2;
 	my @tags = qw( EF P1 P2 L1 L2 L3 L4 );
-	my @starts =   ( $e_bound{cop}{a}, 
-					 $e_bound{preset}{a}, 
-					 $e_bound{preset}{b}, 
-					 $e_bound{ladspa}{a}, 
-					 $e_bound{ladspa}{b}, 
-					 $e_bound{ladspa}{c}, 
-					 $e_bound{ladspa}{d}, 
+	my @starts =   ( $fx_cache->{split}->{cop}{a}, 
+					 $fx_cache->{split}->{preset}{a}, 
+					 $fx_cache->{split}->{preset}{b}, 
+					 $fx_cache->{split}->{ladspa}{a}, 
+					 $fx_cache->{split}->{ladspa}{b}, 
+					 $fx_cache->{split}->{ladspa}{c}, 
+					 $fx_cache->{split}->{ladspa}{d}, 
 					);
-	my @ends   =   ( $e_bound{cop}{z}, 
-					 $e_bound{preset}{b}, 
-					 $e_bound{preset}{z}, 
-					 $e_bound{ladspa}{b}-1, 
-					 $e_bound{ladspa}{c}-1, 
-					 $e_bound{ladspa}{d}-1, 
-					 $e_bound{ladspa}{z}, 
+	my @ends   =   ( $fx_cache->{split}->{cop}{z}, 
+					 $fx_cache->{split}->{preset}{b}, 
+					 $fx_cache->{split}->{preset}{z}, 
+					 $fx_cache->{split}->{ladspa}{b}-1, 
+					 $fx_cache->{split}->{ladspa}{c}-1, 
+					 $fx_cache->{split}->{ladspa}{d}-1, 
+					 $fx_cache->{split}->{ladspa}{z}, 
 					);
 	my @add_effect;
 
@@ -982,7 +759,7 @@ sub track_gui {
 	
 	$number->grid($name, $version, $rw, $ch_r, $ch_m, $vol, $mute, $unity, $pan, $center, @add_effect);
 
-	$track_widget_remove{$n} = [
+	$gui->{tracks_remove}->{$n} = [
 		grep{ $_ } (
 			$number, 
 			$name, 
@@ -1007,23 +784,23 @@ sub track_gui {
 sub remove_track_gui {
  	my $ui = shift;
  	my $n = shift;
-	$debug2 and say "&remove_track_gui";
-	return unless $track_widget_remove{$n};
- 	map {$_->destroy  } @{ $track_widget_remove{$n} };
-	delete $track_widget_remove{$n};
-	delete $track_widget{$n};
+	logsub("&remove_track_gui");
+	return unless $gui->{tracks_remove}->{$n};
+ 	map {$_->destroy  } @{ $gui->{tracks_remove}->{$n} };
+	delete $gui->{tracks_remove}->{$n};
+	delete $gui->{tracks}->{$n};
 }
 
 sub paint_mute_buttons {
-	map{ $track_widget{$_}{mute}->configure(
-			-background 		=> $namapalette{Mute},
+	map{ $gui->{tracks}->{$_}{mute}->configure(
+			-background 		=> $gui->{_nama_palette}->{Mute},
 
 			)} grep { $ti{$_}->old_vol_level}# muted tracks
-				map { $_->n } Audio::Nama::Track::all;  # track numbers
+				map { $_->n } Audio::Nama::Track::all();  # track numbers
 }
 
 sub create_master_and_mix_tracks { 
-	$debug2 and print "&create_master_and_mix_tracks\n";
+	logsub("&create_master_and_mix_tracks");
 
 
 	my @rw_items = (
@@ -1045,67 +822,67 @@ sub create_master_and_mix_tracks {
 
 	$ui->track_gui( $tn{Mixdown}->n); 
 
-	$ui->group_gui('Main');
+	#$ui->group_gui('Main');
 }
 
 sub update_version_button {
 	my $ui = shift;
 	my ($n, $v) = @_;
 	carp ("no version provided \n") if ! $v;
-	my $w = $track_widget{$n}->{version};
+	my $w = $gui->{tracks}->{$n}->{version};
 					$w->radiobutton(
 						-label => $v,
 						-value => $v,
 						-command => 
-		sub { $track_widget{$n}->{version}->configure(-text=>$v) 
+		sub { $gui->{tracks}->{$n}->{version}->configure(-text=>$v) 
 				unless $ti{$n}->rec_status eq "REC" }
 					);
 }
 
 sub add_effect_gui {
-		$debug2 and print "&add_effect_gui\n";
+		logsub("&add_effect_gui");
 		my $ui = shift;
 		my %p 			= %{shift()};
 		my ($n,$code,$id,$parent_id,$parameter) =
-			@p{qw(chain type cop_id parent_id parameter)};
-		my $i = $effect_i{$code};
+			@p{qw(chain type effect_id parent_id parameter)};
+		my $i = $fx_cache->{full_label_to_index}->{$code};
 
-		$debug and print yaml_out(\%p);
+		logpkg(__FILE__,__LINE__,'debug', sub{yaml_out(\%p)});
 
-		$debug and print "cop_id: $id, parent_id: $parent_id\n";
-		# $id is determined by cop_add, which will return the
-		# existing cop_id if supplied
+		logpkg(__FILE__,__LINE__,'debug', "effect_id: $id, parent_id: $parent_id");
+		# $id is determined by effect_init, which will return the
+		# existing effect_id if supplied
 
 		# check display format, may be 'scale' 'field' or 'hidden'
 		
-		my $display_type = $cops{$id}->{display}; # individual setting
-		defined $display_type or $display_type = $effects[$i]->{display}; # template
-		$debug and print "display type: $display_type\n";
+		my $display_type = $fx->{applied}->{$id}->{display}; # individual setting
+		defined $display_type or $display_type = $fx_cache->{registry}->[$i]->{display}; # template
+		logpkg(__FILE__,__LINE__,'debug', "display type: $display_type");
 
 		return if $display_type eq q(hidden);
 
 		my $frame ;
 		if ( ! $parent_id ){ # independent effect
-			$frame = $track_widget{$n}->{parents}->Frame->pack(
+			$frame = $gui->{tracks}->{$n}->{parents}->Frame->pack(
 				-side => 'left', 
 				-anchor => 'nw',)
 		} else {                 # controller
-			$frame = $track_widget{$n}->{children}->Frame->pack(
+			$frame = $gui->{tracks}->{$n}->{children}->Frame->pack(
 				-side => 'top', 
 				-anchor => 'nw')
 		}
 
-		$effects_widget{$id} = $frame; 
+		$gui->{fx}->{$id} = $frame; 
 		# we need a separate frame so title can be long
 
 		# here add menu items for Add Controller, and Remove
 
-		my $parentage = $effects[ $effect_i{ $cops{$parent_id}->{type}} ]
+		my $parentage = $fx_cache->{registry}->[ $fx_cache->{full_label_to_index}->{ $fx->{applied}->{$parent_id}->{type}} ]
 			->{name};
 		$parentage and $parentage .=  " - ";
-		$debug and print "parentage: $parentage\n";
+		logpkg(__FILE__,__LINE__,'debug', "parentage: $parentage");
 		my $eff = $frame->Menubutton(
-			-text => $parentage. $effects[$i]->{name}, -tearoff => 0,);
+			-text => $parentage. $fx_cache->{registry}->[$i]->{name}, -tearoff => 0,);
 
 		$eff->AddItems([
 			'command' => "Remove",
@@ -1117,30 +894,30 @@ sub add_effect_gui {
 
 		# make widgets
 
-		for my $p (0..$effects[$i]->{count} - 1 ) {
+		for my $p (0..$fx_cache->{registry}->[$i]->{count} - 1 ) {
 		my @items;
-		#$debug and print "p_first: $p_first, p_last: $p_last\n";
-		for my $j ($e_bound{ctrl}{a}..$e_bound{ctrl}{z}) {   
+		#logpkg(__FILE__,__LINE__,'debug', "p_first: $p_first, p_last: $p_last");
+		for my $j ($fx_cache->{split}->{ctrl}{a}..$fx_cache->{split}->{ctrl}{z}) {   
 			push @items, 				
-				[ 'command' => $effects[$j]->{name},
+				[ 'command' => $fx_cache->{registry}->[$j]->{name},
 					-command => sub { add_effect ({
 							parent_id => $id,
 							chain => $n,
-							parameter  => $p,
-							type => $effects[$j]->{code} } )  }
+							values => [ $p  + 1 ],
+							type => $fx_cache->{registry}->[$j]->{code} } )  }
 				];
 
 		}
 		push @labels, $frame->Menubutton(
-				-text => $effects[$i]->{params}->[$p]->{name},
+				-text => $fx_cache->{registry}->[$i]->{params}->[$p]->{name},
 				-menuitems => [@items],
 				-tearoff => 0,
 		);
-			$debug and print "parameter name: ",
-				$effects[$i]->{params}->[$p]->{name},"\n";
+			logpkg(__FILE__,__LINE__,'debug', "parameter name: ",
+				$fx_cache->{registry}->[$i]->{params}->[$p]->{name});
 			my $v =  # for argument vector 
 			{	parent => \$frame,
-				cop_id => $id, 
+				effect_id => $id, 
 				p_num  => $p,
 			};
 			push @sliders,make_scale($v);
@@ -1156,68 +933,67 @@ sub add_effect_gui {
 
 sub project_label_configure{ 
 	my $ui = shift;
-	$project_label->configure( @_ ) }
+	$gui->{project_head}->configure( @_ ) }
 
 sub length_display{ 
 	my $ui = shift;
-	$setup_length->configure(@_)};
+	$gui->{setup_length}->configure(@_)};
 
 sub clock_config { 
 	my $ui = shift;
-	$clock->configure( @_ )}
+	$gui->{clock}->configure( @_ )}
 
-sub manifest { $ew->deiconify() }
+sub manifest { $gui->{ew}->deiconify() }
 
 sub destroy_widgets {
 
-	map{ $_->destroy } map{ $_->children } $effect_frame;
-	#my @children = $group_frame->children;
+	map{ $_->destroy } map{ $_->children } $gui->{fx_frame};
+	#my @children = $gui->{group_frame}->children;
 	#map{ $_->destroy  } @children[1..$#children];
-	my @children = $track_frame->children;
+	my @children = $gui->{track_frame}->children;
 	# leave field labels (first row)
 	map{ $_->destroy  } @children[11..$#children]; # fragile
-	%mark_widget and map{ $_->destroy } values %mark_widget;
+	%{$gui->{marks}} and map{ $_->destroy } values %{$gui->{marks}};
 }
 sub remove_effect_gui { 
 	my $ui = shift;
-	$debug2 and print "&remove_effect_gui\n";
+	logsub("&remove_effect_gui");
 	my $id = shift;
-	my $n = $cops{$id}->{chain};
-	$debug and print "id: $id, chain: $n\n";
+	my $n = $fx->{applied}->{$id}->{chain};
+	logpkg(__FILE__,__LINE__,'debug', "id: $id, chain: $n");
 
-	$debug and print "i have widgets for these ids: ", join " ",keys %effects_widget, "\n";
-	$debug and print "preparing to destroy: $id\n";
-	return unless defined $effects_widget{$id};
-	$effects_widget{$id}->destroy();
-	delete $effects_widget{$id}; 
+	logpkg(__FILE__,__LINE__,'debug', "i have widgets for these ids: ", join " ",keys %{$gui->{fx}});
+	logpkg(__FILE__,__LINE__,'debug', "preparing to destroy: $id");
+	return unless defined $gui->{fx}->{$id};
+	$gui->{fx}->{$id}->destroy();
+	delete $gui->{fx}->{$id}; 
 
 }
 
 sub effect_button {
-	local $debug = 0;	
-	$debug2 and print "&effect_button\n";
+	logsub("&effect_button");
 	my ($n, $label, $start, $end) = @_;
-	$debug and print "chain $n label $label start $start end $end\n";
+	logpkg(__FILE__,__LINE__,'debug', "chain $n label $label start $start end $end");
 	my @items;
 	my $widget;
 	my @indices = ($start..$end);
-	if ($start >= $e_bound{ladspa}{a} and $start <= $e_bound{ladspa}{z}){
+	if ($start >= $fx_cache->{split}->{ladspa}{a} and $start <= $fx_cache->{split}->{ladspa}{z}){
 		@indices = ();
-		@indices = @ladspa_sorted[$start..$end];
-		$debug and print "length sorted indices list: ".scalar @indices. "\n";
-	$debug and print "Indices: @indices\n";
+		@indices = @{$fx_cache->{ladspa_sorted}}[$start..$end];
+		logpkg(__FILE__,__LINE__,'debug', "length sorted indices list: ",scalar @indices );
+	logpkg(__FILE__,__LINE__,'debug', "Indices: @indices");
 	}
 		
 		for my $j (@indices) { 
 		push @items, 				
-			[ 'command' => "$effects[$j]->{count} $effects[$j]->{name}" ,
+			[ 'command' => "$fx_cache->{registry}->[$j]->{count} $fx_cache->{registry}->[$j]->{name}" ,
 				-command  => sub { 
-					 add_effect( {chain => $n, type => $effects[$j]->{code} } ); 
-					$ew->deiconify; # display effects window
+					 add_effect( {chain => $n, type => $fx_cache->{registry}->[$j]->{code} } ); 
+					$gui->{ew}->deiconify; # display effects window
 					} 
 			];
 	}
-	$widget = $track_frame->Menubutton(
+	$widget = $gui->{track_frame}->Menubutton(
 		-text => $label,
 		-tearoff =>0,
 		# -relief => 'raised',
@@ -1228,35 +1004,35 @@ sub effect_button {
 
 sub make_scale {
 	
-	$debug2 and print "&make_scale\n";
+	logsub("&make_scale");
 	my $ref = shift;
 	my %p = %{$ref};
 # 	%p contains following:
-# 	cop_id   => operator id, to access dynamic effect params in %copp
+# 	effect_id   => operator id, to access dynamic effect params in %{$fx->{params}}
 # 	parent => parent widget, i.e. the frame
 # 	p_num      => parameter number, starting at 0
 # 	length       => length widget # optional 
-	my $id = $p{cop_id};
-	my $n = $cops{$id}->{chain};
-	my $code = $cops{$id}->{type};
+	my $id = $p{effect_id};
+	my $n = $fx->{applied}->{$id}->{chain};
+	my $code = $fx->{applied}->{$id}->{type};
 	my $p  = $p{p_num};
-	my $i  = $effect_i{$code};
+	my $i  = $fx_cache->{full_label_to_index}->{$code};
 
-	$debug and print "id: $id code: $code\n";
+	logpkg(__FILE__,__LINE__,'debug', "id: $id code: $code");
 	
 
 	# check display format, may be text-field or hidden,
 
-	$debug and  print "i: $i code: $effects[$i]->{code} display: $effects[$i]->{display}\n";
-	my $display_type = $cops{$id}->{display};
-	defined $display_type or $display_type = $effects[$i]->{display};
-	$debug and print "display type: $display_type\n";
+	logpkg(__FILE__,__LINE__,'debug',"i: $i code: $fx_cache->{registry}->[$i]->{code} display: $fx_cache->{registry}->[$i]->{display}");
+	my $display_type = $fx->{applied}->{$id}->{display};
+	defined $display_type or $display_type = $fx_cache->{registry}->[$i]->{display};
+	logpkg(__FILE__,__LINE__,'debug', "display type: $display_type");
 	return if $display_type eq q(hidden);
 
 
-	$debug and print "to: ", $effects[$i]->{params}->[$p]->{end}, "\n";
-	$debug and print "p: $p code: $code\n";
-	$debug and print "is_log_scale: ".is_log_scale($i,$p), "\n";
+	logpkg(__FILE__,__LINE__,'debug', "to: ", $fx_cache->{registry}->[$i]->{params}->[$p]->{end}) ;
+	logpkg(__FILE__,__LINE__,'debug', "p: $p code: $code");
+	logpkg(__FILE__,__LINE__,'debug', "is_log_scale: ".is_log_scale($i,$p));
 
 	# set display type to individually specified value if it exists
 	# otherwise to the default for the controller class
@@ -1274,14 +1050,15 @@ sub make_scale {
 		my $log_display;
 		
 		my $controller = $frame->Scale(
-			-variable => \$copp{$id}->[$p],
+			-variable => \$fx->{params}->{$id}->[$p],
 			-orient => 'horizontal',
-			-from   =>  $effects[$i]->{params}->[$p]->{begin},
-			-to     =>  $effects[$i]->{params}->[$p]->{end},
+			-from   =>  $fx_cache->{registry}->[$i]->{params}->[$p]->{begin},
+			-to     =>  $fx_cache->{registry}->[$i]->{params}->[$p]->{end},
 			-resolution => resolution($i, $p),
 		  -width => 12,
 		  -length => $p{length} ? $p{length} : 100,
-		  -command => sub { Audio::Nama::effect_update($id, $p, $copp{$id}->[$p]) }
+		  -command => sub { Audio::Nama::effect_update($id, $p, $fx->{params}->{$id}->[$p]) },
+			-state => is_read_only($id,$p) ? 'disabled' : 'normal',
 		  );
 
 		# auxiliary field for logarithmic display
@@ -1289,19 +1066,19 @@ sub make_scale {
 		#	or $code eq 'ea') 
 			{
 			my $log_display = $frame->Label(
-				-text => exp $effects[$i]->{params}->[$p]->{default},
+				-text => exp $fx_cache->{registry}->[$i]->{params}->[$p]->{default},
 				-width => 5,
 				);
 			$controller->configure(
-				-variable => \$copp_exp{$id}->[$p],
+				-variable => \$fx->{params_log}->{$id}->[$p],
 		  		-command => sub { 
-					$copp{$id}->[$p] = exp $copp_exp{$id}->[$p];
-					Audio::Nama::effect_update($id, $p, $copp{$id}->[$p]);
+					$fx->{params}->{$id}->[$p] = exp $fx->{params_log}->{$id}->[$p];
+					Audio::Nama::effect_update($id, $p, $fx->{params}->{$id}->[$p]);
 					$log_display->configure(
 						-text => 
-						$effects[$i]->{params}->[$p]->{name} =~ /hz|frequency/i
-							? int $copp{$id}->[$p]
-							: dn($copp{$id}->[$p], 1)
+						$fx_cache->{registry}->[$i]->{params}->[$p]->{name} =~ /hz|frequency/i
+							? int $fx->{params}->{$id}->[$p]
+							: dn($fx->{params}->{$id}->[$p], 1)
 						);
 					}
 				);
@@ -1318,9 +1095,9 @@ sub make_scale {
 	 	# then return field type controller widget
 
 		return ${ $p{parent} }->Entry(
-			-textvariable =>\$copp{$id}->[$p],
+			-textvariable =>\$fx->{params}->{$id}->[$p],
 			-width => 6,
-	#		-command => sub { Audio::Nama::effect_update($id, $p, $copp{$id}->[$p]) },
+	#		-command => sub { Audio::Nama::effect_update($id, $p, $fx->{params}->{$id}->[$p]) },
 			# doesn't work with Entry widget
 			);	
 
@@ -1331,26 +1108,25 @@ sub make_scale {
 
 sub is_log_scale {
 	my ($i, $p) = @_;
-	$effects[$i]->{params}->[$p]->{hint} =~ /logarithm/ 
+	$fx_cache->{registry}->[$i]->{params}->[$p]->{hint} =~ /logarithm/ 
 }
 sub resolution {
 	my ($i, $p) = @_;
-	my $res = $effects[$i]->{params}->[$p]->{resolution};
+	my $res = $fx_cache->{registry}->[$i]->{params}->[$p]->{resolution};
 	return $res if $res;
-	my $end = $effects[$i]->{params}->[$p]->{end};
-	my $beg = $effects[$i]->{params}->[$p]->{begin};
+	my $end = $fx_cache->{registry}->[$i]->{params}->[$p]->{end};
+	my $beg = $fx_cache->{registry}->[$i]->{params}->[$p]->{begin};
 	return 1 if abs($end - $beg) > 30;
 	return abs($end - $beg)/100
 }
 
 sub arm_mark_toggle { 
-	if ($markers_armed) {
-		$markers_armed = 0;
-		$mark_remove->configure( -background => $off);
-	}
-	else{
-		$markers_armed = 1;
-		$mark_remove->configure( -background => $namapalette{MarkArmed});
+	if ($gui->{_markers_armed}) {
+		$gui->{_markers_armed} = 0;
+		$gui->{mark_remove}->configure( -background => $gui->{_nama_palette}->{OffBackground});
+	 } else{
+		$gui->{_markers_armed} = 1;
+		$gui->{mark_remove}->configure( -background => $gui->{_nama_palette}->{MarkArmed});
 	}
 }
 sub marker {
@@ -1359,55 +1135,56 @@ sub marker {
 	#print "mark is ", ref $mark, $/;
 	my $pos = $mark->time;
 	#print $pos, " ", int $pos, $/;
-		$mark_widget{$pos} = $mark_frame->Button( 
+		$gui->{marks}->{$pos} = $gui->{mark_frame}->Button( 
 			-text => (join " ",  colonize( int $pos ), $mark->name),
-			-background => $off,
+			-background => $gui->{_nama_palette}->{OffBackground},
 			-command => sub { Audio::Nama::mark($mark) },
 		)->pack(-side => 'left');
 }
 
 sub restore_time_marks {
 	my $ui = shift;
-# 	map {$_->dumpp} Audio::Nama::Mark::all(); 
-#	Audio::Nama::Mark::all() and 
 	map{ $ui->marker($_) } Audio::Nama::Mark::all() ; 
-	$time_step->configure( -text => $unit == 1 ? q(Sec) : q(Min) )
+	$gui->{seek_unit}->configure( -text => $gui->{_seek_unit} == 1 ? q(Sec) : q(Min) )
 }
 sub destroy_marker {
 	my $ui = shift;
 	my $pos = shift;
-	$mark_widget{$pos}->destroy; 
+	$gui->{marks}->{$pos}->destroy; 
 }
 
 
 sub get_saved_colors {
-	$debug2 and print "&get_saved_colors\n";
+	logsub("&get_saved_colors");
 
 	# aliases
 	
-	*Audio::Nama::old_bg = \$palette{mw}{background};
-	*Audio::Nama::old_abg = \$palette{mw}{activeBackground};
-	$old_bg = '#d915cc1bc3cf' unless $old_bg;
-	#print "pb: $palette{mw}{background}\n";
+	$gui->{_old_bg} = $gui->{_palette}{mw}{background};
+	$gui->{_old_abg} = $gui->{_palette}{mw}{activeBackground};
+	$gui->{_old_bg} //= '#d915cc1bc3cf';
+	#print "pb: $gui->{_palette}{mw}{background}\n";
 
 
-	my $pal = join_path($project_root, $palette_file);
-	-f $pal or $pal = $default_palette_yml;
-	Audio::Nama::assign_var( $pal, qw[%palette %namapalette]);
+	my $pal = $file->gui_palette;
+	$pal .= '.yml';
+	say "pal $pal";
+	$pal = -f $pal 
+			? scalar read_file($pal)
+			: get_data_section('default_palette_yml');
+	my $ref = decode($pal, 'yaml');
+	#say "palette file",yaml_out($ref);
+
+	assign_singletons({ data => $ref });
 	
-	*Audio::Nama::rec = \$namapalette{RecBackground};
-	*Audio::Nama::mon = \$namapalette{MonBackground};
-	*Audio::Nama::off = \$namapalette{OffBackground};
-	
-	$old_abg = $palette{mw}{activeBackground};
-	$old_abg = $project_label->cget('-activebackground') unless $old_abg;
-	#print "1palette: \n", yaml_out( \%palette );
-	#print "\n1namapalette: \n", yaml_out(\%namapalette);
+	$gui->{_old_abg} = $gui->{_palette}->{mw}{activeBackground};
+	$gui->{_old_abg} = $gui->{project_head}->cget('-activebackground') unless $gui->{_old_abg};
+	#print "1palette: \n", yaml_out( $gui->{_palette} );
+	#print "\n1namapalette: \n", yaml_out($gui->{_nama_palette});
 	my %setformat;
-	map{ $setformat{$_} = $palette{mw}{$_} if $palette{mw}{$_}  } 
-		keys %{$palette{mw}};	
+	map{ $setformat{$_} = $gui->{_palette}->{mw}{$_} if $gui->{_palette}->{mw}{$_}  } 
+		keys %{$gui->{_palette}->{mw}};	
 	#print "\nsetformat: \n", yaml_out(\%setformat);
-	$mw->setPalette( %setformat );
+	$gui->{mw}->setPalette( %setformat );
 }
 sub colorset {
 	my ($widgetid, $field) = @_;
@@ -1418,7 +1195,7 @@ sub colorset {
 			if( defined $new_color ){
 				
 				# install color in palette listing
-				$palette{$widgetid}{$field} = $new_color;
+				$gui->{_palette}->{$widgetid}{$field} = $new_color;
 
 				# set the color
 				my @fields =  ($field => $new_color);
@@ -1433,25 +1210,25 @@ sub colorset {
 sub namaset {
 	my ($field) = @_;
 	sub { 	
-			#print "f: $field np: $namapalette{$field}\n";
-			my $color = colorchooser($field,$namapalette{$field});
+			#print "f: $field np: $gui->{_nama_palette}->{$field}\n";
+			my $color = colorchooser($field,$gui->{_nama_palette}->{$field});
 			if ($color){ 
 				# install color in palette listing
-				$namapalette{$field} = $color;
+				$gui->{_nama_palette}->{$field} = $color;
 
 				# set those objects who are not
 				# handled by refresh
-	*rec = \$namapalette{RecBackground};
-	*mon = \$namapalette{MonBackground};
-	*off = \$namapalette{OffBackground};
+	*rec = \$gui->{_nama_palette}->{RecBackground};
+	*mon = \$gui->{_nama_palette}->{MonBackground};
+	*off = \$gui->{_nama_palette}->{OffBackground};
 
-				$clock->configure(
-					-background => $namapalette{ClockBackground},
-					-foreground => $namapalette{ClockForeground},
+				$gui->{clock}->configure(
+					-background => $gui->{_nama_palette}->{ClockBackground},
+					-foreground => $gui->{_nama_palette}->{ClockForeground},
 				);
-				$group_label->configure(
-					-background => $namapalette{GroupBackground},
-					-foreground => $namapalette{GroupForeground},
+				$gui->{group_label}->configure(
+					-background => $gui->{_nama_palette}->{GroupBackground},
+					-foreground => $gui->{_nama_palette}->{GroupForeground},
 				);
 				refresh();
 			}
@@ -1460,11 +1237,10 @@ sub namaset {
 }
 
 sub colorchooser { 
-	#print "colorchooser\n";
-	#my $debug = 1;
+	logsub("&colorchooser");
 	my ($field, $initialcolor) = @_;
-	$debug and print "field: $field, initial color: $initialcolor\n";
-	my $new_color = $mw->chooseColor(
+	logpkg(__FILE__,__LINE__,'debug', "field: $field, initial color: $initialcolor");
+	my $new_color = $gui->{mw}->chooseColor(
 							-title => $field,
 							-initialcolor => $initialcolor,
 							);
@@ -1472,7 +1248,7 @@ sub colorchooser {
 	$new_color;
 }
 sub init_palettefields {
-	@palettefields = qw[ 
+	@{$gui->{_palette_fields}} = qw[ 
 		foreground
 		background
 		activeForeground
@@ -1487,7 +1263,7 @@ sub init_palettefields {
 		troughColor
 	];
 
-	@namafields = qw [
+	@{$gui->{_nama_fields}} = qw [
 		RecForeground
 		RecBackground
 		MonForeground
@@ -1512,30 +1288,28 @@ sub init_palettefields {
 
 sub save_palette {
  	serialize (
- 		file => join_path(project_root(), $palette_file),
+ 		file => $file->gui_palette,
 		format => 'yaml',
- 		vars => [ qw( %palette %namapalette ) ],
+ 		vars => [ qw( $gui->{_palette} $gui->{_nama_palette} ) ],
  		class => 'Audio::Nama')
 }
 
 ### end
 
 
+
 ## refresh functions
 
 sub set_widget_color {
 	my ($widget, $status) = @_;
-	my %rw_foreground = (	REC  => $namapalette{RecForeground},
-						 	MON => $namapalette{MonForeground},
-						 	OFF => $namapalette{OffForeground},
+	my %rw_foreground = (	REC  => $gui->{_nama_palette}->{RecForeground},
+						 	MON => $gui->{_nama_palette}->{MonForeground},
+						 	OFF => $gui->{_nama_palette}->{OffForeground},
 						);
 
-	my %rw_background =  (	REC  => $rec,
-							MON  => $mon,
-							OFF  => $off );
-		
-	#print "namapalette:\n",yaml_out( \%namapalette);
-	#print "rec: $rec, mon: $mon, off: $off\n";
+	my %rw_background =  (	REC  => $gui->{_nama_palette}->{RecBackground},
+							MON  => $gui->{_nama_palette}->{MonBackground},
+							OFF  => $gui->{_nama_palette}->{OffBackground});
 
 	$widget->configure( -background => $rw_background{$status} );
 	$widget->configure( -foreground => $rw_foreground{$status} );
@@ -1545,19 +1319,19 @@ sub set_widget_color {
 	
 sub refresh_group { 
 	# main group, in this case we want to skip null group
-	$debug2 and print "&refresh_group\n";
+	logsub("&refresh_group");
 	
 	
 		my $status;
 		if ( 	grep{ $_->rec_status eq 'REC'} 
 				map{ $tn{$_} }
-				$main->tracks ){
+				$bn{Main}->tracks ){
 
 			$status = 'REC'
 
 		}elsif(	grep{ $_->rec_status eq 'MON'} 
 				map{ $tn{$_} }
-				$main->tracks ){
+				$bn{Main}->tracks ){
 
 			$status = 'MON'
 
@@ -1565,50 +1339,50 @@ sub refresh_group {
 		
 			$status = 'OFF' }
 
-$debug and print "group status: $status\n";
+logit(__LINE__,'Audio::Nama::Refresh','debug', "group status: $status");
 
-	set_widget_color($group_rw, $status); 
+	set_widget_color($gui->{group_rw}, $status); 
 
 
 
 	croak "some crazy status |$status|\n" if $status !~ m/rec|mon|off/i;
-		#$debug and print "attempting to set $status color: ", $take_color{$status},"\n";
+		#logit(__LINE__,'Audio::Nama::Refresh','debug', "attempting to set $status color: ", $take_color{$status});
 
-	set_widget_color( $group_rw, $status) if $group_rw;
+	set_widget_color( $gui->{group_rw}, $status) if $gui->{group_rw};
 }
 sub refresh_track {
 	
 	my $ui = shift;
 	my $n = shift;
-	$debug2 and print "&refresh_track\n";
+	logsub("&refresh_track");
 	
 	my $rec_status = $ti{$n}->rec_status;
-	$debug and print "track: $n rec_status: $rec_status\n";
+	logit(__LINE__,'Audio::Nama::Refresh','debug', "track: $n rec_status: $rec_status");
 
-	return unless $track_widget{$n}; # hidden track
+	return unless $gui->{tracks}->{$n}; # hidden track
 	
 	# set the text for displayed fields
 
-	$track_widget{$n}->{rw}->configure(-text => $rec_status);
-	$track_widget{$n}->{ch_r}->configure( -text => 
+	$gui->{tracks}->{$n}->{rw}->configure(-text => $rec_status);
+	$gui->{tracks}->{$n}->{ch_r}->configure( -text => 
 				$n > 2
 					? $ti{$n}->source
 					:  q() );
-	$track_widget{$n}->{ch_m}->configure( -text => $ti{$n}->send);
-	$track_widget{$n}->{version}->configure(-text => $ti{$n}->current_version || "");
+	$gui->{tracks}->{$n}->{ch_m}->configure( -text => $ti{$n}->send);
+	$gui->{tracks}->{$n}->{version}->configure(-text => $ti{$n}->current_version || "");
 	
-	map{ set_widget_color( 	$track_widget{$n}->{$_}, 
+	map{ set_widget_color( 	$gui->{tracks}->{$n}->{$_}, 
 							$rec_status)
 	} qw(name rw );
 	
-	set_widget_color( 	$track_widget{$n}->{ch_r},
+	set_widget_color( 	$gui->{tracks}->{$n}->{ch_r},
 				
  							($rec_status eq 'REC'
 								and $n > 2 )
  								? 'REC'
  								: 'OFF');
 	
-	set_widget_color( $track_widget{$n}->{ch_m},
+	set_widget_color( $gui->{tracks}->{$n}->{ch_m},
 							$rec_status eq 'OFF' 
 								? 'OFF'
 								: $ti{$n}->send 
@@ -1618,22 +1392,48 @@ sub refresh_track {
 
 sub refresh {  
 	Audio::Nama::remove_riff_header_stubs();
- 	$ui->refresh_group(); 
+ 	#$ui->refresh_group(); 
 	#map{ $ui->refresh_track($_) } map{$_->n} grep{!  $_->hide} Audio::Nama::Track::all();
 	#map{ $ui->refresh_track($_) } grep{$remove_track_widget{$_} map{$_->n}  Audio::Nama::Track::all();
 	map{ $ui->refresh_track($_) } map{$_->n}  Audio::Nama::Track::all();
 }
-sub refresh_oids{ # OUTPUT buttons
-	map{ $widget_o{$_}->configure( # uses hash
-			-background => 
-				$oid_status{$_} ?  'AntiqueWhite' : $old_bg,
-			-activebackground => 
-				$oid_status{$_} ? 'AntiqueWhite' : $old_bg
-			) } keys %widget_o;
-}
-
 ### end
 
 
 1;
+__DATA__
+@@ default_palette_yml
+---
+gui:
+  _nama_palette:
+    Capture: '#f22c92f088d3'
+    ClockBackground: '#998ca489b438'
+    ClockForeground: '#000000000000'
+    GroupBackground: '#998ca489b438'
+    GroupForeground: '#000000000000'
+    MarkArmed: '#d74a811f443f'
+    Mixdown: '#bf67c5a1491f'
+    MonBackground: '#9420a9aec871'
+    MonForeground: Black
+    Mute: '#a5a183828382'
+    OffBackground: '#998ca489b438'
+    OffForeground: Black
+    Play: '#68d7aabf755c'
+    RecBackground: '#d9156e866335'
+    RecForeground: Black
+    SendBackground: '#9ba79cbbcc8a'
+    SendForeground: Black
+    SourceBackground: '#f22c92f088d3'
+    SourceForeground: Black
+  _palette:
+    ew:
+      background: '#d915cc1bc3cf'
+      foreground: black
+    mw:
+      activeBackground: '#81acc290d332'
+      background: '#998ca489b438'
+      foreground: black
+...
+
+
 __END__

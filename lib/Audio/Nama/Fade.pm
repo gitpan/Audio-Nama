@@ -7,8 +7,11 @@ use Carp;
 use warnings;
 no warnings qw(uninitialized);
 our @ISA;
-use vars qw($n %by_index $fade_down_fraction
-$fade_time1_fraction $fade_time2_fraction $fader_op);
+use vars qw($n %by_index);
+use Audio::Nama::Globals qw(:singletons %tn @fade_data); 
+use Audio::Nama::Log qw(logsub logpkg);
+use Audio::Nama::Effects qw(remove_effect add_effect owns effect_update_copp_set);
+# we don't import 'type' as it would clobber our $fade->type attribute
 use Audio::Nama::Object qw( 
 				 n
 				 type
@@ -31,7 +34,7 @@ initialize();
 
 sub initialize { 
 	%by_index = (); 
-	@Audio::Nama::fade_data = (); # for save/restore
+	@fade_data = (); # for save/restore
 }
 sub next_n {
 	my $n = 1;
@@ -46,18 +49,18 @@ sub new {
 	my $object = bless 
 	{ 
 #		class => $class,  # not needed yet
-		n => next_n(), 
+		n => next_n(),    
 		relation => 'fade_from_mark',
 		@_	
 	}, $class;
 
 	$by_index{$object->n} = $object;
 
-	#print "object class: $class, object type: ", ref $object, $/;
+	logpkg(__FILE__,__LINE__,'debug',"object class: $class, object type: ", ref $object);
 
 	my $id = add_fader($object->track);	# only when necessary
 	
-	my $track = $Audio::Nama::tn{$object->track};
+	my $track = $tn{$object->track};
 
 	# add linear envelope controller -klg if needed
 	
@@ -70,14 +73,17 @@ sub new {
 
 sub refresh_fade_controller {
 	my $track = shift;
-	my %mute_level = (ea => 0, 	eadb => -256); 
-	my $operator  = $Audio::Nama::cops{$track->fader}->{type};
-	my $off_level = $mute_level{$operator};
-	my $on_level  = $Audio::Nama::unity_level{$operator};
-
-	# remove controller if present
-	if( $track->fader and my ($old) = @{$Audio::Nama::cops{$track->fader}{owns}})
-		{ Audio::Nama::remove_effect($old) }
+	my $operator  = Audio::Nama::type($track->fader);
+	my $off_level = $config->{mute_level}->{$operator};
+	my $on_level  = $config->{unity_level}->{$operator};
+	my $controller;
+	($controller) = @{owns($track->fader)} if $track->fader;
+	if( $controller )
+	{
+		logpkg(__FILE__,__LINE__,'debug',$track->name, ": existing controller: $controller");
+		logpkg(__FILE__,__LINE__,'debug',"removing fade controller");
+		remove_effect($controller);
+	}
 
 	return unless
 		my @pairs = fader_envelope_pairs($track); 
@@ -87,21 +93,26 @@ sub refresh_fade_controller {
 	add_fader($track->name);	
 
 	# add controller
-	Audio::Nama::Text::t_add_ctrl($track->fader,  # parent
-					 'klg',	  		 # Ecasound controller
-					 [1,				 # Ecasound parameter 1
-					 $off_level,
-					 $on_level,
-					 @pairs,
-					 ]
-	);
+	logpkg(__FILE__,__LINE__,'debug',"applying fade controller");
+
+	# we try to re-use the controller ID
+	add_effect({
+		effect_id		=> $controller,
+		parent_id 	=> $track->fader,
+		type		=> 'klg',	  		 # Ecasound controller
+		values		=> [	1,				 # Ecasound parameter 1
+					 		$off_level,
+					 		$on_level,
+					 		@pairs,
+					 	]
+	});
 
 	# set fader to correct initial value
 	# 	first fade is type 'in'  : 0
 	# 	first fade is type 'out' : 100%
 	
 	 
-	Audio::Nama::effect_update_copp_set($track->fader,0, initial_level($track->name))
+	effect_update_copp_set($track->fader,0, initial_level($track->name))
 }
 
 
@@ -114,11 +125,11 @@ sub fades {
 	# get fades within playable region
 	
 	my $track_name = shift;
-	my $track = $Audio::Nama::tn{$track_name};
+	my $track = $tn{$track_name};
 	my @fades = all_fades($track_name);
 
 	
-	if($Audio::Nama::offset_run_flag){
+	if($mode->{offset_run}){
 
 		# get end time
 		
@@ -185,7 +196,7 @@ sub final_pair {   # duration: .... to length
 	my $track_name = shift;
 	my $exit_level = exit_level($track_name);
 	defined $exit_level or return ();
-	my $track = $Audio::Nama::tn{$track_name};
+	my $track = $tn{$track_name};
 	(
 		$track->adjusted_playat_time + $track->wav_length,
 		$exit_level
@@ -212,18 +223,17 @@ sub fader_envelope_pairs {
 				$marktime1 -= $fade->duration
 			} 
 		else { $fade->dumpp; die "fade processing failed" }
-		#say "marktime1: $marktime1";
-		#say "marktime2: $marktime2";
+		logpkg(__FILE__,__LINE__,'debug',"marktime1: $marktime1, marktime2: $marktime2");
 		push @specs, 
 		[ 	$marktime1, 
 			$marktime2, 
 			$fade->type, 
-			$Audio::Nama::cops{$track->fader}->{type},
+			Audio::Nama::type($track->fader),
 		];
 }
-	# sort fades # already done! XXX
+	# sort fades -  may not need this
 	@specs = sort{ $a->[0] <=> $b->[0] } @specs;
-	#say( Audio::Nama::yaml_out( \@specs));
+	logpkg(__FILE__,__LINE__,'debug',sub{Audio::Nama::yaml_out( \@specs)});
 
 	my @pairs = map{ spec_to_pairs($_) } @specs;
 
@@ -249,7 +259,7 @@ sub fader_envelope_pairs {
 
 sub spec_to_pairs {
 	my ($from, $to, $type, $op) = @{$_[0]};
-	$Audio::Nama::debug and say "from: $from, to: $to, type: $type";
+	logpkg(__FILE__,__LINE__,'debug',"from: $from, to: $to, type: $type");
 	my $cutpos;
 	my @pairs;
 
@@ -258,11 +268,11 @@ sub spec_to_pairs {
 	
 	if ($op eq 'eadb'){
 		if ( $type eq 'out' ){
-			$cutpos = $from + $fade_time1_fraction * ($to - $from);
-			push @pairs, ($from, 1, $cutpos, $fade_down_fraction, $to, 0);
+			$cutpos = $from + $config->{fade_time1_fraction} * ($to - $from);
+			push @pairs, ($from, 1, $cutpos, $config->{fade_down_fraction}, $to, 0);
 		} elsif( $type eq 'in' ){
-			$cutpos = $from + $fade_time2_fraction * ($to - $from);
-			push @pairs, ($from, 0, $cutpos, $fade_down_fraction, $to, 1);
+			$cutpos = $from + $config->{fade_time2_fraction} * ($to - $from);
+			push @pairs, ($from, 0, $cutpos, $config->{fade_down_fraction}, $to, 1);
 		}
 	}
 
@@ -298,7 +308,7 @@ sub remove_by_index {
 
 sub remove { 
 	my $fade = shift;
-	my $track = $Audio::Nama::tn{$fade->track};
+	my $track = $tn{$fade->track};
 	my $i = $fade->n;
 	
 	# remove object from index
@@ -308,30 +318,43 @@ sub remove {
 	
 	my @track_fades = all_fades($fade->track);
 	if ( ! @track_fades ){ 
-		Audio::Nama::remove_effect($track->fader);
-		$Audio::Nama::tn{$fade->track}->set(fader => undef);
+		remove_effect($track->fader);
+		$tn{$fade->track}->set(fader => undef);
 	}
 	else { refresh_fade_controller($track) }
 }
 sub add_fader {
 	my $name = shift;
-	my $track = $Audio::Nama::tn{$name};
+	my $track = $tn{$name};
 
 	my $id = $track->fader;
 
-	# create a fader if necessary
+	# create a fader if necessary, place before first effect
+	# if it exists
 	
 	if (! $id){	
-		
 		my $first_effect = $track->ops->[0];
-		if ( $first_effect ){
-			$id = Audio::Nama::Text::t_insert_effect($first_effect, $fader_op, [0]);
-		} else { 
-			$id = Audio::Nama::Text::t_add_effect($fader_op, [0]) 
-		}
+		$id = add_effect({
+				before 	=> $first_effect, 
+				track	=> $track,
+				type	=> $config->{fader_op}, 
+				values	=> [0],
+		});
 		$track->set(fader => $id);
 	}
 	$id
 }
+
+package Audio::Nama;
+
+sub apply_fades { 
+	# use info from Fade objects in %Audio::Nama::Fade::by_name
+	# applying to tracks that are part of current
+	# chain setup
+	map{ Audio::Nama::Fade::refresh_fade_controller($_) }
+	grep{$_->{fader} }  # only if already exists
+	Audio::Nama::ChainSetup::engine_tracks();
+}
+	
 
 1;

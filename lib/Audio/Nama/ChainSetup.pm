@@ -1,34 +1,26 @@
 # ---------- ChainSetup-----------
-#
-# variables in the main namespace we need to access
-
-package Audio::Nama;
-use Modern::Perl; use Carp;
-
-# these variables are globals that 
-# are touched in creating chain setups
-our (	$debug,
-		$debug2,
-		$debug3,
-		$preview,
-		%tn,
-		$main,
-		$mastering_mode,
-		$mix_to_disk_format,
-		$ecasound_globals_default,
-		$ecasound_globals_realtime,
-);		 	
 
 package Audio::Nama::ChainSetup;
-
+use Audio::Nama::Globals qw($file $config $jack $setup $engine %tn %bn $mode);
+use Audio::Nama::Log qw(logsub);
 use Modern::Perl;
+use Data::Dumper::Concise;
+use Storable qw(dclone);
 no warnings 'uninitialized';
 use Audio::Nama::Util qw(signal_format input_node output_node);
 use Audio::Nama::Assign qw(yaml_out);
 
 our (
 
-	$g,  # routing graph object
+	$g,  # routing graph object - 
+
+		# based on project data 
+		# the routing graph is generated,
+		# then traversed over, and integrated
+		# with track data to generate
+		# Audio::Nama::IO objects. Audio::Nama::IO objects are iterated
+		# over to generate 
+		# the Ecasound chain setup text (c.f. chains command)
 
 	@io, # IO objects corresponding to chain setup
 
@@ -49,11 +41,24 @@ our (
 	@pre_output, 	# pre-output chain operators
 
 	$chain_setup,	# final result as string
+	$logger,
 	);
 
 
+sub remove_temporary_tracks {
+	logsub("&remove_temporary_tracks");
+	map { $_->remove  } grep{ $_->group eq 'Temp'} Audio::Nama::Track::all();
+}
 sub initialize {
+
+	remove_temporary_tracks();# start clean
+	$logger = Log::Log4perl->get_logger();
+	Audio::Nama::Graph::initialize_logger();
+	delete $setup->{latency_graph};
+	delete $setup->{final_graph};
+	$setup->{audio_length} = 0;  
 	@io = (); 			# IO object list
+	Audio::Nama::IO::initialize();
 	$g = Graph->new(); 	
 	%inputs = %outputs = %post_input = %pre_output = ();
 	%is_ecasound_chain = ();
@@ -61,7 +66,7 @@ sub initialize {
 	undef $chain_setup;
 	Audio::Nama::disable_length_timer();
 	reset_aux_chain_counter();
-	{no autodie; unlink Audio::Nama::setup_file()}
+	{no autodie; unlink $file->chain_setup}
 	$g;
 }
 sub ecasound_chain_setup { $chain_setup } 
@@ -87,7 +92,8 @@ sub engine_wav_out_tracks {
 }
 # return file output entries, including Mixdown 
 sub really_recording { 
-	map{ /-o:(.+?\.wav)$/} grep{ /-o:/ and /\.wav$/} split "\n", $chain_setup
+	my @files = map{ /-o:(.+?\.wav)$/} grep{ /-o:/ and /\.wav$/} split "\n", $chain_setup;
+	wantarray() ? @files : scalar @files;
 }
 	
 sub show_io {
@@ -96,218 +102,112 @@ sub show_io {
 }
 
 sub generate_setup_try {  # TODO: move operations below to buses
-	$debug2 and print "&generate_setup_try\n";
+	logsub("&generate_setup_try");
+
+	my $extra_setup_code = shift;
 
 	# in an ideal CS world, all of the following routing
 	# routines (add_paths_for_*) would be accomplished by
-	# the track or bus itself, rather than the Hand of God, as
-	# appears below.
-	#
-	# On the other hand (or Hand!), one can't complain if
-	# the Hand of God happens to be doing exactly the
-	# right things. :-)
+	# the track or bus itself, rather than handcoded below.
+	
+	# start with bus routing
+	
+	map{ $_->apply($g) } Audio::Nama::Bus::all();
 
-	my $automix = shift; # route Master to null_out if present
-	add_paths_for_main_tracks();
-	$debug and say "The graph is:\n$g";
-	add_paths_for_recording();
-	$debug and say "The graph is:\n$g";
+	$logger->debug("Graph after bus routing:\n$g");
+	
+	# now various manual routing
+
 	add_paths_for_aux_sends();
-	$debug and say "The graph is:\n$g";
-	map{ $_->apply($g) } grep{ (ref $_) =~ /Send|Sub/ } Audio::Nama::Bus::all();
-	$debug and say "The graph is:\n$g";
-	add_paths_from_Master(); # do they affect automix?
-	$debug and say "The graph is:\n$g";
+	$logger->debug("Graph after aux sends:\n$g");
 
-	# re-route Master to null for automix
-	if( $automix){
-		$g->delete_edges(map{@$_} $g->edges_from('Master')); 
-		$g->add_edge(qw[Master null_out]);
-		$debug and say "The graph is:\n$g";
-	}
+	add_paths_from_Master();
+	$logger->debug("Graph with paths from Master:\n$g");
+
 	add_paths_for_mixdown_handling();
-	$debug and say "The graph is:\n$g";
+	$logger->debug("Graph with mixdown mods:\n$g");
+	
+	# run extra setup
+	
+	$extra_setup_code->($g) if $extra_setup_code;
+
 	prune_graph();
-	$debug and say "The graph is:\n$g";
+	$setup->{latency_graph} = dclone($g);
+	$logger->debug("Graph after pruning unterminated branches:\n$g");
 
 	Audio::Nama::Graph::expand_graph($g); 
 
-	$debug and say "The expanded graph is:\n$g";
+	$logger->debug("Graph after adding loop devices:\n$g");
 
 	# insert handling
 	Audio::Nama::Graph::add_inserts($g);
 
-	$debug and say "The expanded graph with inserts is\n$g";
+	$logger->debug("Graph with inserts:\n$g");
+
+	Audio::Nama::Graph::add_jack_io($g);
+	$setup->{final_graph} = dclone($g);
+
+	
+
+	# Mix tracks to mono if Master is mono
+	# (instead of just throwing away right channel)
+
+	if ($g->has_vertex('Master') and $tn{Master}->width == 1)
+	{
+		$g->set_vertex_attribute('Master', 'ecs_extra' => '-chmix:1')
+	}
+	$logger->debug(sub{"Graph object dump:\n",Dumper($g)});
 
 	# create IO lists %inputs and %outputs
 
 	if ( process_routing_graph() ){
 		write_chains(); 
+		set_buffersize();
 		1
 	} else { 
 		say("No tracks to record or play.");
 		0
 	}
 }
-sub add_paths_for_main_tracks {
-	$debug2 and say "&add_paths_for_main_tracks";
-	map{ 
-
-		# connect signal sources to tracks
-		
-		my @path = $_->input_path;
-		#say "Main bus track input path: @path";
-		$g->add_path(@path) if @path;
-
-		# connect tracks to Master
-		
-		$g->add_edge($_->name, 'Master'); 
-
-	} 	
-		grep{ 1 unless $preview eq 'doodle'
-			 and $_->rec_status eq 'MON' } # exclude MON tracks in doodle mode	
-		grep{ $_->rec_status ne 'OFF' }    # exclude OFF tracks
-		map{$tn{$_}} 	                   # convert to Track objects
-		$main->tracks;                     # list of Track names
-
-}
-
-sub add_paths_for_recording {
-	$debug2 and say "&add_paths_for_recording";
-	return if $preview; # don't record during preview modes
-
-	# get list of REC-status tracks to record
-	
-	my @tracks = grep{ 
-			(ref $_) !~ /Slave/  						# don't record slave tracks
-			and not $_->group =~ /null|Mixdown|Temp/ 	# nor these groups
-			and not $_->rec_defeat        				# nor rec-defeat tracks
-			and $_->rec_status eq 'REC' 
-	} Audio::Nama::Track::all();
-	map{ 
-
-		# Track input from a WAV, JACK client, or soundcard
-		#
-		# We record 'raw' signal, as per docs and design
-
-		if( $_->source_type !~ /track|bus|loop/ ){
-		
-			# create temporary track for rec_file chain
-
-			# we do this because the path doesn't
-			# include the original track.
-			#
-			# but why not supply the track as 
-			# an edge attribute, then the source
-			# and output info can be provided 
-			# that way.
-
-			# Later, we will rewrite it that way
-
-			$debug and say "rec file link for $_->name";	
-			my $name = $_->name . '_rec_file';
-			my $anon = Audio::Nama::SlaveTrack->new( 
-				target => $_->name,
-				rw => 'OFF',
-				group => 'Temp',
-				name => $name);
-
-			# connect IO
-			
-			$g->add_path(input_node($_->source_type), $name, 'wav_out');
-
-			# set chain_id to R3 (if original track is 3) 
-			$g->set_vertex_attributes($name, { 
-				chain_id => 'R'.$_->n,
-				mono_to_stereo => '', # override 
-			});
-
-		} elsif ($_->source_type =~ /bus|track/) {
-
-			# for tracks with identified (track|bus) input
-
-			# cache_tracks/merge_edits has its own logic
-			# therefore these connections (triggered from
-			# generate_setup()) will not affect AFAIK
-			# any other recording scenario
-
-			# special case, record 'cooked' signal
-
-			# generally a sub bus 
-			# - has 'rec_defeat' set (therefore doesn't reach here)
-			# - receives a stereo input
-			# - mix track width is set to stereo (default)
-
-			my @edge = ($_->name, 'wav_out'); # cooked signal
-
-			$g->add_path(@edge); 
-
-			# set chain_id to R3 (if original track is 3) 
-
-			$g->set_edge_attributes(@edge, { 
-				chain_id => 'R'.$_->n,
-			});
-			
-			# if this path is left unconnected, 
-			# i.e. track gets no input		
-			# it will be removed by prune_graph()
-			
-			# to record raw:
-			
-			# source_type: loop
-			# source_id:   loop,track_name_in
-
-			# but for WAV to contain content, 
-			# we need to guarantee that track_name as
-			# an input
-		}
-
-
-	} @tracks;
-}
-
 
 sub add_paths_for_aux_sends {
-	$debug2 and say "&add_paths_for_aux_sends";
 
-	map {  add_path_for_one_aux_send( $_ ) } 
+	# currently this routing is track-oriented 
+
+	# we could add this to the Audio::Nama::Bus base class
+	# then suppress it in Mixdown and Master groups
+
+	logsub("&add_paths_for_aux_sends");
+
+	map {  Audio::Nama::Graph::add_path_for_aux_send($g, $_ ) } 
 	grep { (ref $_) !~ /Slave/ 
 			and $_->group !~ /Mixdown|Master/
 			and $_->send_type 
 			and $_->rec_status ne 'OFF' } Audio::Nama::Track::all();
 }
-sub add_path_for_one_aux_send {
-	my $track = shift;
-		my @e = ($track->name, output_node($track->send_type));
-		$g->add_edge(@e);
-		 $g->set_edge_attributes(@e,
-			  {	track => $track->name,
-				# force stereo output width
-				width => 2,
-				chain_id => 'S'.$track->n,});
-}
+
 
 sub add_paths_from_Master {
-	$debug2 and say "&add_paths_from_Master";
+	logsub("&add_paths_from_Master");
 
-	if ($mastering_mode){
+	if ($mode->{mastering}){
 		$g->add_path(qw[Master Eq Low Boost]);
 		$g->add_path(qw[Eq Mid Boost]);
 		$g->add_path(qw[Eq High Boost]);
 	}
-	$g->add_path($mastering_mode ?  'Boost' : 'Master',
-			output_node($tn{Master}->send_type)) if $tn{Master}->rw ne 'OFF'
- 
+	my $final_leg_origin = $mode->{mastering} ?  'Boost' : 'Master';
+	$g->add_path($final_leg_origin, output_node($tn{Master}->send_type)) 
+		if $tn{Master}->rw ne 'OFF'
 
 }
 sub add_paths_for_mixdown_handling {
-	$debug2 and say "&add_paths_for_mixdown_handling";
+	logsub("&add_paths_for_mixdown_handling");
 
 	if ($tn{Mixdown}->rec_status eq 'REC'){
-		my @p = (($mastering_mode ? 'Boost' : 'Master'), ,'Mixdown', 'wav_out');
+		my @p = (($mode->{mastering} ? 'Boost' : 'Master'), ,'Mixdown', 'wav_out');
 		$g->add_path(@p);
 		$g->set_vertex_attributes('Mixdown', {
-		  	format		=> signal_format($mix_to_disk_format,$tn{Mixdown}->width),
+		  	format		=> signal_format($config->{mix_to_disk_format},$tn{Mixdown}->width),
 		  	chain_id	=> "Mixdown" },
 		); 
 		# no effects will be applied because effects are on chain 2
@@ -325,7 +225,7 @@ sub add_paths_for_mixdown_handling {
 	}
 }
 sub prune_graph {
-	$debug2 and say "&prune_graph";
+	logsub("&prune_graph");
 	# prune graph: remove tracks lacking inputs or outputs
 	Audio::Nama::Graph::remove_out_of_bounds_tracks($g) if Audio::Nama::edit_mode();
 	Audio::Nama::Graph::recursively_remove_inputless_tracks($g);
@@ -334,17 +234,35 @@ sub prune_graph {
 # new object based dispatch from routing graph
 	
 sub process_routing_graph {
-	$debug2 and say "&process_routing_graph";
+	logsub("&process_routing_graph");
+
+	# generate a set of IO objects from edges
 	@io = map{ dispatch($_) } $g->edges;
-	$debug and map $_->dumpp, @io;
+	
+	$logger->debug( sub{ join "\n",map $_->dump, @io });
+
+	# sort chain_ids by attached input object
+	# one line will show all with that one input
+	# -a:3,5,6 -i:foo
+	
 	map{ $inputs{$_->ecs_string} //= [];
 		push @{$inputs{$_->ecs_string}}, $_->chain_id;
+
+	# supplemental post-input modifiers
+	
 		$post_input{$_->chain_id} = $_->ecs_extra if $_->ecs_extra;
 	} grep { $_->direction eq 'input' } @io;
+
+	# sort chain_ids by output
+
 	map{ $outputs{$_->ecs_string} //= [];
 		push @{$outputs{$_->ecs_string}}, $_->chain_id;
+
+	# pre-output modifers
+	
 		$pre_output{$_->chain_id} = $_->ecs_extra if $_->ecs_extra;
 	} grep { $_->direction eq 'output' } @io;
+
 	no warnings 'numeric';
 	my @in_keys = values %inputs;
 	my @out_keys = values %outputs;
@@ -403,12 +321,12 @@ sub non_track_dispatch {
 	
 	
 	my $edge = shift;
-	$debug and say "non-track dispatch: ",join ' -> ',@$edge;
+	$logger->debug("non-track IO dispatch:",join ' -> ',@$edge);
 	my $eattr = $g->get_edge_attributes(@$edge) // {};
-	$debug and say "found edge attributes: ",yaml_out($eattr) if $eattr;
+	$logger->debug("found edge attributes: ",yaml_out($eattr)) if $eattr;
 
 	my $vattr = $g->get_vertex_attributes($edge->[0]) // {};
-	$debug and say "found vertex attributes: ",yaml_out($vattr) if $vattr;
+	$logger->debug("found vertex attributes: ",yaml_out($vattr)) if $vattr;
 
 	if ( ! $eattr->{chain_id} and ! $vattr->{chain_id} ){
 		my $n = $eattr->{n} || $vattr->{n};
@@ -420,8 +338,7 @@ sub non_track_dispatch {
 		my $class = Audio::Nama::IO::get_class($_, $direction);
 		my $attrib = {%$vattr, %$eattr};
 		$attrib->{endpoint} //= $_ if Audio::Nama::Graph::is_a_loop($_); 
-		$debug and say "non-track: $_, class: $class, chain_id: $attrib->{chain_id},",
- 			"device_id: $attrib->{device_id}";
+		$logger->debug("non-track: $_, class: $class, chain_id: $attrib->{chain_id},","device_id: $attrib->{device_id}");
 		$class->new($attrib ? %$attrib : () ) } @$edge;
 		# we'd like to $class->new(override($edge->[0], $edge)) } @$edge;
 }
@@ -452,9 +369,9 @@ sub jumper_count {
 sub dispatch { # creates an IO object from a graph edge
 my $edge = shift;
 	return non_track_dispatch($edge) if not grep{ $tn{$_} } @$edge ;
-	$debug and say 'dispatch: ',join ' -> ',  @$edge;
+	$logger->debug('dispatch: ',join ' -> ',  @$edge);
 	my($name, $endpoint, $direction) = decode_edge($edge);
-	$debug and say "name: $name, endpoint: $endpoint, direction: $direction";
+	$logger->debug("name: $name, endpoint: $endpoint, direction: $direction");
 	my $track = $tn{$name};
 	my $class = Audio::Nama::IO::get_class( $endpoint, $direction );
 		# we need the $direction because there can be 
@@ -479,7 +396,7 @@ sub override {
 	# data from edges has priority over data from vertexes
 	# we specify $name, because it could be left or right 
 	# vertex
-	$debug2 and say "&override";
+	logsub("&override");
 	my ($name, $edge) = @_;
 	(override_from_vertex($name), override_from_edge($edge))
 }
@@ -499,20 +416,28 @@ sub override_from_edge {
 							
 sub write_chains {
 
-	$debug2 and print "&write_chains\n";
+	logsub("&write_chains");
 
 	## write general options
 	
-	my $globals = $ecasound_globals_default;
+	my $globals = $config->{engine_globals_common};
+	$globals .=  setup_requires_realtime()
+			? join " ", " -b:$config->{engine_buffersize_realtime}", 
+				$config->{engine_globals_realtime}
+			: join " ", " -b:$config->{engine_buffersize_nonrealtime}", 
+				$config->{engine_globals_nonrealtime};
 
 	# use realtime globals if they exist and we are
 	# recording to a non-mixdown file
 	
-	$globals = $ecasound_globals_realtime
-		if $ecasound_globals_realtime 
+	$globals = $config->{engine_globals_realtime}
+		if $config->{engine_globals_realtime} 
 			and grep{ ! /Mixdown/} really_recording();
 			# we assume there exists latency-sensitive monitor output 
 			# when recording
+	
+	my $format = signal_format($config->{devices}->{jack}->{signal_format},2);
+	$globals .= " -f:$format" if $jack->{jackd_running};
 			
 	my $ecs_file = join "\n\n", 
 					"# ecasound chainsetup file",
@@ -529,12 +454,24 @@ sub write_chains {
 	$ecs_file .= join "\n\n", 
 					"# audio outputs",
 					join("\n", @output_chains), "";
-	$debug and print "ECS:\n",$ecs_file;
-	open my $fh, ">", Audio::Nama::setup_file();
+	$logger->debug("Chain setup:\n",$ecs_file);
+	open my $fh, ">", $file->chain_setup;
 	print $fh $ecs_file;
 	close $fh;
 	$chain_setup = $ecs_file;
 
+}
+sub setup_requires_realtime {
+	my @fields = qw(soundcard jack_client jack_manual jack_ports_list);
+	grep { has_vertex("$_\_in") } @fields 
+		or grep { has_vertex("$_\_out") } @fields
+
+}
+sub has_vertex { $g->has_vertex($_[0]) }
+
+sub set_buffersize { 
+	my $buffer_type = setup_requires_realtime() ? "realtime" : "nonrealtime";
+	$engine->{buffersize} = $config->{"engine_buffersize_$buffer_type"}	;
 }
 
 1;

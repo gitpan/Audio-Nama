@@ -1,17 +1,8 @@
-# -------- TrackCache ------
-
+# -------- CacheTrack ------
+# TODO: wisely handle uncaching a sub-bus mix track 
 package Audio::Nama;
 use Modern::Perl;
-
-our (
-	$debug,
-	%bn,
-	$length,
-	$ui,
-	$this_track,
-	$cache_to_disk_format,
-	%event_id,
-);
+use Audio::Nama::Globals qw(:all);
 
 # some common variables for cache_track and merge_track
 # related routines
@@ -23,10 +14,28 @@ our (
 		$processing_time, 
 		$orig_version, 
 		$complete_caching_ref,
-		$output_wav);
+		$output_wav,
+		$orig_volume,
+		$orig_pan);
+
+sub initialize_caching_vars {
+	map{ undef $_ } ($track, 
+					$additional_time, 
+					$processing_time, 
+					$orig_version, 
+					$complete_caching_ref,
+					$output_wav,
+					$orig_volume,
+					$orig_pan);
+}
 
 sub cache_track { # launch subparts if conditions are met
+
+	local $this_track;
+	initialize_caching_vars();
+
 	($track, $additional_time) = @_;
+	$additional_time //= 0;
 	say $track->name, ": preparing to cache.";
 	
 	# abort if sub-bus mix track and bus is OFF 
@@ -46,11 +55,28 @@ sub cache_track { # launch subparts if conditions are met
 				or $track->has_insert
 				or $bn{$track->name};
 
-	prepare_to_cache()
-		or say("Empty routing graph. Aborting."), return;
-	cache_engine_run();
-	$output_wav
+	if ( prepare_to_cache() )
+	{ 
+		deactivate_vol_pan();
+		cache_engine_run();
+		reactivate_vol_pan();
+		return $output_wav
+	}
+	else
+	{ 
+		say("Empty routing graph. Aborting."); 
+		return;
+	}
 
+}
+
+sub deactivate_vol_pan {
+	unity($track, 'save_old_vol');
+	pan_check($track, 50);
+}
+sub reactivate_vol_pan {
+	pan_back($track);
+	vol_back($track);
 }
 
 sub prepare_to_cache {
@@ -59,25 +85,32 @@ sub prepare_to_cache {
  	my $g = Audio::Nama::ChainSetup::initialize();
 	$orig_version = $track->monitor_version;
 
-	# create a temporary track to represent the output file
+	#   We route the signal thusly:
+	#
+	#   Target track --> CacheRecTrack --> wav_out
+	#
+	#   CacheRecTrack slaves to target target
+	#     - same name
+	#     - increments track version by one
 	
-	my $cooked_name = $track->name . '_cooked';
 	my $cooked = Audio::Nama::CacheRecTrack->new(
-		name => $cooked_name,
-		group => 'Temp',
+		name   => $track->name . '_cooked',
+		group  => 'Temp',
 		target => $track->name,
+		hide   => 1,
 	);
-	$output_wav = $cooked->current_wav;
 
-	# connect the temporary track's output path
-	
 	$g->add_path($track->name, $cooked->name, 'wav_out');
 
-	# set the correct output parameters in the graph
+	# save the output file name to return later
+	
+	$output_wav = $cooked->current_wav;
+
+	# set WAV output format
 	
 	$g->set_vertex_attributes(
 		$cooked->name, 
-		{ format => signal_format($cache_to_disk_format,$cooked->width),
+		{ format => signal_format($config->{cache_to_disk_format},$cooked->width),
 		}
 	); 
 
@@ -87,9 +120,8 @@ sub prepare_to_cache {
 	{
 		# set the input path
 		$g->add_path('wav_in',$track->name);
-		$debug and say "The graph0 is:\n$g";
+		logpkg(__FILE__,__LINE__,'debug', "The graph after setting input path:\n$g");
 
-		# update cache map to enable 'uncache' command
 		$complete_caching_ref = \&update_cache_map;
 	}
 
@@ -101,23 +133,32 @@ sub prepare_to_cache {
 		map{ $_->apply($g) } grep{ (ref $_) =~ /Sub/ } Audio::Nama::Bus::all()
 	}
 
-	$debug and say "The graph1 is:\n$g";
+	logpkg(__FILE__,__LINE__,'debug', "The graph after bus routing:\n$g");
 	Audio::Nama::ChainSetup::prune_graph();
-	$debug and say "The graph2 is:\n$g";
+	logpkg(__FILE__,__LINE__,'debug', "The graph after pruning:\n$g");
 	Audio::Nama::Graph::expand_graph($g); 
-	$debug and say "The graph3 is:\n$g";
+	logpkg(__FILE__,__LINE__,'debug', "The graph after adding loop devices:\n$g");
 	Audio::Nama::Graph::add_inserts($g);
-	$debug and say "The graph4 is:\n$g";
+	logpkg(__FILE__,__LINE__,'debug', "The graph with inserts:\n$g");
 	my $success = Audio::Nama::ChainSetup::process_routing_graph();
-	Audio::Nama::ChainSetup::write_chains();
-	remove_temporary_tracks();
+	if ($success) 
+	{ 
+		Audio::Nama::ChainSetup::write_chains();
+		Audio::Nama::ChainSetup::remove_temporary_tracks();
+	}
 	$success
 }
 sub cache_engine_run { # uses shared lexicals
 
 	connect_transport('quiet')
 		or say("Couldn't connect engine! Aborting."), return;
-	$processing_time = $length + $additional_time;
+
+	# remove fades from target track
+	
+	Audio::Nama::Effects::remove_op($track->fader) if defined $track->fader;
+
+	$processing_time = $setup->{audio_length} + $additional_time;
+	# ??? where is $setup->{audio_length} set??
 
 	say $/,$track->name,": processing time: ". d2($processing_time). " seconds";
 	print "Starting cache operation. Please wait.";
@@ -130,7 +171,7 @@ sub cache_engine_run { # uses shared lexicals
 	eval_iam("start");
 
 	# ensure that engine stops at completion time
- 	$event_id{poll_engine} = AE::timer(1, 0.5, \&poll_cache_progress);
+ 	$engine->{events}->{poll_engine} = AE::timer(1, 0.5, \&poll_cache_progress);
 
 	# complete_caching() contains the remainder of the caching code.
 	# It is triggered by stop_polling_cache_progress()
@@ -142,7 +183,6 @@ sub complete_caching {
 	my @files = grep{/$name/} new_files_were_recorded();
 	if (@files ){ 
 		
-		# update cache map 
 		&$complete_caching_ref if defined $complete_caching_ref;
 		post_cache_processing();
 
@@ -150,28 +190,32 @@ sub complete_caching {
 }
 sub update_cache_map {
 
-		$debug and say "updating track cache_map";
-		#say "cache map",yaml_out($track->cache_map);
-		my $cache_map = $track->cache_map;
-		$cache_map->{$track->last} = { 
-			original 			=> $orig_version,
-			effect_chain	=> push_effect_chain($track), # bypass
-		};
-		pop @{$track->effect_chain_stack}; # we keep it elsewhere
-		if (my @inserts = grep{$_}(
-				$track->prefader_insert, 
-				$track->postfader_insert)
-		){
-			say "removing insert... ";
-			say "if you want it again you will need to replace it yourself";
-			say "this is what it was";
-			map{ say $_->dump; $_->remove } 
-				map{ $Audio::Nama::Insert::by_index{$_} } 
-				@inserts;
-		}
-		#say "cache map",yaml_out($track->cache_map);
+		logpkg(__FILE__,__LINE__,'debug', "updating track cache_map");
+		logpkg(__FILE__,__LINE__,'debug',
+			sub {
+				join "\n","cache map", 
+				map{json_out($_)} Audio::Nama::EffectChain::find(track_cache => 1)
+			});
+		my @inserts_list = Audio::Nama::Insert::get_inserts($track->name);
+		my @ops_list = $track->fancy_ops;
+		if ( @inserts_list or @ops_list )
+		{
+			my $ec = Audio::Nama::EffectChain->new(
+				track_cache => 1,
+				track_name	=> $track->name,
+				track_version_original => $orig_version,
+				track_version_result => $track->last,
+				project => 1,
+				system => 1,
+				ops_list => \@ops_list,
+				inserts_data => \@inserts_list,
+			);
+			map{ remove_effect($_) } @ops_list;
+			map{ $_->remove        } @inserts_list;
+
 		say qq(Saving effects for cached track "), $track->name, '".';
 		say qq('uncache' will restore effects and set version $orig_version\n);
+		}
 }
 
 sub post_cache_processing {
@@ -187,7 +231,6 @@ sub post_cache_processing {
 		$ui->global_version_buttons(); # recreate
 		$ui->refresh();
 		reconfigure_engine();
-		$this_track = $track; # why do we need this?
 		revise_prompt("default"); 
 }
 sub poll_cache_progress {
@@ -196,20 +239,20 @@ sub poll_cache_progress {
 	my $status = eval_iam('engine-status'); 
 	my $here   = eval_iam("getpos");
 	update_clock_display();
-	$debug and say "engine time:   ", d2($here);
-	$debug and say "engine status: ", $status;
+	logpkg(__FILE__,__LINE__,'debug', "engine time:   ". d2($here));
+	logpkg(__FILE__,__LINE__,'debug', "engine status:  $status");
 
 	return unless 
 		   $status =~ /finished|error|stopped/ 
 		or $here > $processing_time;
 
 	say "Done.";
-	$debug and say engine_status(current_position(),2,1);
+	logpkg(__FILE__,__LINE__,'debug', engine_status(current_position(),2,1));
 	#revise_prompt();
 	stop_polling_cache_progress();
 }
 sub stop_polling_cache_progress {
-	$event_id{poll_engine} = undef; 
+	$engine->{events}->{poll_engine} = undef; 
 	$ui->reset_engine_mode_color_display();
 	complete_caching();
 
@@ -218,34 +261,48 @@ sub stop_polling_cache_progress {
 
 sub uncache_track { 
 	my $track = shift;
+	local $this_track;
 	# skip unless MON;
-	my $cache_map = $track->cache_map;
+	throw($track->name, ": cannot uncache unless track is set to MON"), return
+		unless $track->rec_status eq 'MON';
 	my $version = $track->monitor_version;
-	if(is_cached($track)){
+	my ($ec) = is_cached($track, $version);
+	defined $ec or throw($track->name, ": version $version is not cached"),
+		return;
+
 		# blast away any existing effects, TODO: warn or abort	
-		say $track->name, ": removing effects (except vol/pan)" if $track->fancy_ops;
+		say $track->name, ": removing user effects" if $track->fancy_ops;
 		map{ remove_effect($_)} $track->fancy_ops;
 
-		# original WAV -> WAV case: reset version 
-		if ( $cache_map->{$version}{original} ){ 
-			$track->set(version => $cache_map->{$version}{original});
-			print $track->name, ": setting uncached version ", $track->version, $/;
+	# CASE 1: an ordinary track, 
+	#
+	# * toggle to the old version
+	# * load the effect chain 
+	#
+			$track->set(version => $ec->track_version_original);
+			print $track->name, ": setting uncached version ", $track->version, 
+$/;
+	# CASE 2: a sub-bus mix track, set to REC for caching operation.
 
-		# assume a sub-bus mix track, i.e. REC -> WAV: set to REC
-		} else { 
+	if( my $bus = $bn{$track->name}){
 			$track->set(rw => 'REC') ;
 			say $track->name, ": setting sub-bus mix track to REC";
-		} 
+	}
 
-		add_effect_chain($track, $cache_map->{$version}{effect_chain})
-			if $cache_map->{$version}{effect_chain};
-	} 
-	else { print $track->name, ": version $version is not cached\n"}
+		$ec->add($track) if defined $ec;
 }
 sub is_cached {
-	my $track = shift;
-	my $cache_map = $track->cache_map;
-	$cache_map->{$track->monitor_version}
+	my ($track, $version) = @_;
+	my @results = Audio::Nama::EffectChain::find(
+		project 				=> 1, 
+		track_cache 			=> 1,
+		track_name 				=> $track->name, 
+		track_version_result 	=> $version,
+	);
+	scalar @results > 1 
+		and warn ("more than one EffectChain matching query!, found", 
+			map{ json_out($_) } @results);
+	$results[-1]
 }
 1;
 __END__

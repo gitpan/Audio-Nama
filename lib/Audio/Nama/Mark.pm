@@ -1,5 +1,6 @@
 
 # ----------- Mark ------------
+
 package Audio::Nama::Mark;
 our $VERSION = 1.0;
 use Carp;
@@ -7,6 +8,8 @@ use warnings;
 no warnings qw(uninitialized);
 our @ISA;
 use vars qw($n %by_name @all);
+use Audio::Nama::Log qw(logpkg);
+use Audio::Nama::Globals qw(:all);
 use Audio::Nama::Object qw( 
 				 name 
                  time
@@ -17,6 +20,7 @@ sub initialize {
 	map{ $_->remove} Audio::Nama::Mark::all();
 	@all = ();	
 	%by_name = ();	# return ref to Mark by name
+	$by_name{Here} = bless {}, 'Audio::Nama::HereMark';
 	@Audio::Nama::marks_data = (); # for save/restore
 }
 sub new {
@@ -64,12 +68,12 @@ sub set_name {
 
 sub jump_here {
 	my $mark = shift;
-	Audio::Nama::eval_iam( "setpos " . $mark->time);
+	Audio::Nama::set_position($mark->time);
 	$Audio::Nama::this_mark = $mark;
 }
 sub adjusted_time {  # for marks within current edit
 	my $mark = shift;
-	return $mark->time unless $Audio::Nama::offset_run_flag;
+	return $mark->time unless $mode->{offset_run};
 	my $time = $mark->time - Audio::Nama::play_start_time();
 	$time > 0 ? $time : 0
 }
@@ -78,7 +82,7 @@ sub remove {
 	if ( $mark->name ) {
 		delete $by_name{$mark->name};
 	}
-	$Audio::Nama::debug and warn "marks found: ",scalar @all, $/;
+	logpkg(__FILE__,__LINE__,'debug', "marks found: ",scalar @all);
 	# @all = (), return if scalar @all
 	@all = grep { $_->time != $mark->time } @all;
 
@@ -98,13 +102,13 @@ sub all { sort { $a->{time} <=> $b->{time} }@all }
 
 sub loop_start { 
 	my @points = sort { $a <=> $b } 
-	grep{ $_ } map{ mark_time($_)} @Audio::Nama::loop_endpoints[0,1];
+	grep{ $_ } map{ mark_time($_)} @{$setup->{loop_endpoints}}[0,1];
 	#print "points @points\n";
 	$points[0];
 }
 sub loop_end {
 	my @points =sort { $a <=> $b } 
-		grep{ $_ } map{ mark_time($_)} @Audio::Nama::loop_endpoints[0,1];
+		grep{ $_ } map{ mark_time($_)} @{$setup->{loop_endpoints}}[0,1];
 	$points[1];
 }
 sub unadjusted_mark_time {
@@ -140,31 +144,20 @@ sub mark_time {
 {
 package Audio::Nama;
 use Modern::Perl;
-our (
-	$debug,
-	$debug2,
-	$ui,
-	$this_mark,
-	$unit,
-	$length,
-	$jack_running,
-	$seek_delay,
-	$markers_armed,
-);
-
+use Audio::Nama::Globals qw(:all);
 
 sub drop_mark {
-	$debug2 and print "drop_mark()\n";
+	logsub("&drop_mark");
 	my $name = shift;
 	my $here = eval_iam("getpos");
 
 	if( my $mark = $Audio::Nama::Mark::by_name{$name}){
-		say "$name: a mark with this name exists already at: ", 
-			colonize($mark->time);
+		pager2("$name: a mark with this name exists already at: ", 
+			colonize($mark->time));
 		return
 	}
 	if( my ($mark) = grep { $_->time == $here} Audio::Nama::Mark::all()){
-		say q(This position is already marked by "),$mark->name,q(");
+		pager2( q(This position is already marked by "),$mark->name,q(") );
 		 return 
 	}
 
@@ -174,10 +167,10 @@ sub drop_mark {
 	$ui->marker($mark); # for GUI
 }
 sub mark { # GUI_CODE
-	$debug2 and print "mark()\n";
+	logsub("&mark");
 	my $mark = shift;
 	my $pos = $mark->time;
-	if ($markers_armed){ 
+	if ($gui->{_markers_armed}){ 
 			$ui->destroy_marker($pos);
 			$mark->remove;
 		    arm_mark_toggle(); # disarm
@@ -189,28 +182,29 @@ sub mark { # GUI_CODE
 }
 
 sub next_mark {
-	my $jumps = shift;
+	logsub("&next_mark");
+	my $jumps = shift || 0;
 	$jumps and $jumps--;
 	my $here = eval_iam("cs-get-position");
 	my @marks = Audio::Nama::Mark::all();
 	for my $i ( 0..$#marks ){
 		if ($marks[$i]->time - $here > 0.001 ){
-			$debug and print "here: $here, future time: ",
-			$marks[$i]->time, $/;
-			eval_iam("setpos " .  $marks[$i+$jumps]->time);
+			logpkg(__FILE__,__LINE__,'debug', "here: $here, future time: ", $marks[$i]->time);
+			set_position($marks[$i+$jumps]->time);
 			$this_mark = $marks[$i];
 			return;
 		}
 	}
 }
 sub previous_mark {
-	my $jumps = shift;
+	logsub("&previous_mark");
+	my $jumps = shift || 0;
 	$jumps and $jumps--;
 	my $here = eval_iam("getpos");
 	my @marks = Audio::Nama::Mark::all();
 	for my $i ( reverse 0..$#marks ){
 		if ($marks[$i]->time < $here ){
-			eval_iam("setpos " .  $marks[$i+$jumps]->time);
+			set_position($marks[$i+$jumps]->time);
 			$this_mark = $marks[$i];
 			return;
 		}
@@ -221,10 +215,12 @@ sub previous_mark {
 ## jump recording head position
 
 sub to_start { 
+	logsub("&to_start");
 	return if Audio::Nama::ChainSetup::really_recording();
 	set_position( 0 );
 }
 sub to_end { 
+	logsub("&to_end");
 	# ten seconds shy of end
 	return if Audio::Nama::ChainSetup::really_recording();
 	my $end = eval_iam('cs-get-length') - 10 ;  
@@ -233,33 +229,33 @@ sub to_end {
 sub jump {
 	return if Audio::Nama::ChainSetup::really_recording();
 	my $delta = shift;
-	$debug2 and print "&jump\n";
+	logsub("&jump");
 	my $here = eval_iam('getpos');
-	$debug and print "delta: $delta\nhere: $here\nunit: $unit\n\n";
-	my $new_pos = $here + $delta * $unit;
-	$new_pos = $new_pos < $length ? $new_pos : $length - 10;
+	logpkg(__FILE__,__LINE__,'debug', "delta: $delta, here: $here, unit: $gui->{_seek_unit}");
+	my $new_pos = $here + $delta * $gui->{_seek_unit};
+	if ( $setup->{audio_length} )
+	{
+		$new_pos = $new_pos < $setup->{audio_length} 
+			? $new_pos 
+			: $setup->{audio_length} - 10
+	}
+	
 	set_position( $new_pos );
 	sleeper( 0.6) if engine_running();
 }
 sub set_position {
+	logsub("&set_position");
 
     return if Audio::Nama::ChainSetup::really_recording(); # don't allow seek while recording
 
     my $seconds = shift;
     my $coderef = sub{ eval_iam("setpos $seconds") };
 
-    if( $jack_running and eval_iam('engine-status') eq 'running')
-			{ engine_stop_seek_start( $coderef ) }
-	else 	{ $coderef->() }
-	update_clock_display();
-}
+	$jack->{jackd_running} 
+		?  Audio::Nama::stop_do_start( $coderef, $engine->{jack_seek_delay} )
+		:  $coderef->();
 
-sub engine_stop_seek_start {
-	my $coderef = shift;
-	eval_iam('stop');
-	$coderef->();
-	sleeper($seek_delay);
-	eval_iam('start');
+	update_clock_display();
 }
 
 sub forward {
@@ -275,5 +271,13 @@ sub rewind {
 }
 	
 } # end package
+{ package Audio::Nama::HereMark;
+our @ISA = Audio::Nama::Mark;
+our $last_time;
+sub name { 'Here' }
+sub time { Audio::Nama::eval_iam('cs-connected') ? ($last_time = Audio::Nama::eval_iam('getpos')) : $last_time } 
+}
+
+
 1;
 __END__
