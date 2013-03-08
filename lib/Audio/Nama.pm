@@ -1,7 +1,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = "1.102";
+$VERSION = "1.103";
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -2095,7 +2095,7 @@ off: 'Xxx' {}
 record: 'Xxx' {}
 mon: 'Xxx' {}
 
-command: rw end 
+command: rw end
 
 rw_setting: 'rec'|'mon'|'off'
 rw: rw_setting {
@@ -2668,36 +2668,6 @@ bring_back_effects:   _bring_back_effects 'all' {
 
 
 
-
-
-effect_chain_id: effect_chain_id_pair(s) {
- 		die " i found an effect chain id";
-  		my @pairs = @{$item{'effect_chain_id_pair(s)'}};
-  		my @found = Audio::Nama::EffectChain::find(@pairs);
-  		@found and 
-  			Audio::Nama::pager2(
-				join " ", "found effect chain(s):",
-  				map{ ('name:', $_->name, 'n', $_->n )} @found
-			)
-  			
-}
-effect_chain_id_pair: fxc_key fxc_val { return @$item{fxc_key fxc_val} }
-
-fxc_key: 'n'|                
-		'ops_list'|
-        'ops_dat'|
-		'inserts_data'|
-		'name'|
-		'id'|
-		'project'|
-		'global'|
-		'profile'|
-		'user'|
-		'system'|
-		'track_name'|
-		'track_version'|
-		'track_cache'|
-		'bypass'
 
 
 
@@ -4886,38 +4856,43 @@ panic
 let
 proc
 
-@@ default_palette_yml
----
-gui:
-  _nama_palette:
-    Capture: '#f22c92f088d3'
-    ClockBackground: '#998ca489b438'
-    ClockForeground: '#000000000000'
-    GroupBackground: '#998ca489b438'
-    GroupForeground: '#000000000000'
-    MarkArmed: '#d74a811f443f'
-    Mixdown: '#bf67c5a1491f'
-    MonBackground: '#9420a9aec871'
-    MonForeground: Black
-    Mute: '#a5a183828382'
-    OffBackground: '#998ca489b438'
-    OffForeground: Black
-    Play: '#68d7aabf755c'
-    RecBackground: '#d9156e866335'
-    RecForeground: Black
-    SendBackground: '#9ba79cbbcc8a'
-    SendForeground: Black
-    SourceBackground: '#f22c92f088d3'
-    SourceForeground: Black
-  _palette:
-    ew:
-      background: '#d915cc1bc3cf'
-      foreground: black
-    mw:
-      activeBackground: '#81acc290d332'
-      background: '#998ca489b438'
-      foreground: black
-...
+@@ default_palette_json
+{
+   "gui" : {
+      "_nama_palette" : {
+         "Capture" : "#f22c92f088d3",
+         "ClockBackground" : "#998ca489b438",
+         "ClockForeground" : "#000000000000",
+         "GroupBackground" : "#998ca489b438",
+         "GroupForeground" : "#000000000000",
+         "MarkArmed" : "#d74a811f443f",
+         "Mixdown" : "#bf67c5a1491f",
+         "MonBackground" : "#9420a9aec871",
+         "MonForeground" : "Black",
+         "Mute" : "#a5a183828382",
+         "OffBackground" : "#998ca489b438",
+         "OffForeground" : "Black",
+         "Play" : "#68d7aabf755c",
+         "RecBackground" : "#d9156e866335",
+         "RecForeground" : "Black",
+         "SendBackground" : "#9ba79cbbcc8a",
+         "SendForeground" : "Black",
+         "SourceBackground" : "#f22c92f088d3",
+         "SourceForeground" : "Black"
+      },
+      "_palette" : {
+         "ew" : {
+            "background" : "#d915cc1bc3cf",
+            "foreground" : "black"
+         },
+         "mw" : {
+            "activeBackground" : "#81acc290d332",
+            "background" : "#998ca489b438",
+            "foreground" : "black"
+         }
+      }
+   }
+}
 
 __END__
 

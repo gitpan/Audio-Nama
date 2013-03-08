@@ -57,7 +57,6 @@ sub init_gui {
 	$gui->{mw}->optionAdd('*BorderWidth' => 1);
 	$gui->{mw}->title("Ecasound/Nama"); 
 	$gui->{mw}->deiconify;
-	$gui->{parents}->{mw} = $gui->{mw};
 
 	### init effect window
 
@@ -65,7 +64,6 @@ sub init_gui {
 	$gui->{ew}->title("Effect Window");
 	$gui->{ew}->deiconify; 
 #	$gui->{ew}->withdraw;
-	$gui->{parents}->{ew} = $gui->{ew};
 
 	### Exit via Ctrl-C 
 
@@ -150,10 +148,6 @@ sub init_gui {
 		->pack( -side => 'left');
 	$gui->{nama_palette} = $gui->{load_frame}->Menubutton(-tearoff => 0)
 		->pack( -side => 'left');
-	#$gui->{fx_palette} = $gui->{load_frame}->Menubutton(-tearoff => 0)
-	#	->pack( -side => 'left');
-	# $sn_dump = $gui->{load_frame}->Button->pack(-side => 'left');
-
 	$gui->{add_track}->{label} = $gui->{add_frame}->Label(
 		-text => "New track name: ")->pack(-side => 'left');
 	$gui->{add_track}->{text_entry} = $gui->{add_frame}->Entry(
@@ -1166,12 +1160,12 @@ sub get_saved_colors {
 
 
 	my $pal = $file->gui_palette;
-	$pal .= '.yml';
+	$pal .= '.json' unless $pal =~ /\.json$/;
 	say "pal $pal";
 	$pal = -f $pal 
 			? scalar read_file($pal)
-			: get_data_section('default_palette_yml');
-	my $ref = decode($pal, 'yaml');
+			: get_data_section('default_palette_json');
+	my $ref = decode($pal, 'json');
 	#say "palette file",yaml_out($ref);
 
 	assign_singletons({ data => $ref });
@@ -1189,7 +1183,7 @@ sub get_saved_colors {
 sub colorset {
 	my ($widgetid, $field) = @_;
 	sub { 
-			my $widget = eval "\$$widgetid";
+			my $widget = $gui->{$widgetid};
 			#print "ancestor: $widgetid\n";
 			my $new_color = colorchooser($field,$widget->cget("-$field"));
 			if( defined $new_color ){
@@ -1401,39 +1395,5 @@ sub refresh {
 
 
 1;
-__DATA__
-@@ default_palette_yml
----
-gui:
-  _nama_palette:
-    Capture: '#f22c92f088d3'
-    ClockBackground: '#998ca489b438'
-    ClockForeground: '#000000000000'
-    GroupBackground: '#998ca489b438'
-    GroupForeground: '#000000000000'
-    MarkArmed: '#d74a811f443f'
-    Mixdown: '#bf67c5a1491f'
-    MonBackground: '#9420a9aec871'
-    MonForeground: Black
-    Mute: '#a5a183828382'
-    OffBackground: '#998ca489b438'
-    OffForeground: Black
-    Play: '#68d7aabf755c'
-    RecBackground: '#d9156e866335'
-    RecForeground: Black
-    SendBackground: '#9ba79cbbcc8a'
-    SendForeground: Black
-    SourceBackground: '#f22c92f088d3'
-    SourceForeground: Black
-  _palette:
-    ew:
-      background: '#d915cc1bc3cf'
-      foreground: black
-    mw:
-      activeBackground: '#81acc290d332'
-      background: '#998ca489b438'
-      foreground: black
-...
-
 
 __END__

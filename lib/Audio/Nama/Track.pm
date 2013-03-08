@@ -316,7 +316,6 @@ sub rec_status {
 	if( $track->rw eq 'REC'){
 
 		given( $track->source_type){
-			# XXX if no jack client , play WAV file??
 			when('jack_client'){
 
 				# we expect an existing JACK client that
@@ -324,7 +323,7 @@ sub rec_status {
 				
 				Audio::Nama::jack_client_array($track->source_id,'output')
 					?  return 'REC'
-					:  return maybe_monitor($monitor_version)
+					:  return 'OFF'
 			}
 			when('jack_manual')		{ return 'REC' }
 			when('jack_ports_list')	{ return 'REC' }

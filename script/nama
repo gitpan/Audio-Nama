@@ -521,7 +521,7 @@ Mixdown proceeds after you start the transport.
 As a convenience, Mixdown_nn.wav will be symlinked to
 F<<branch_name>_nn.wav> in the project directory. (If git is
 disabled or not available F<<project_name>_nn.wav> is used
-instead)  Corresponding encoded files are created if the
+instead.)  Corresponding encoded files are created if the
 "mixdown_encodings" option is set. Acceptable values are a
 space-separated list. The default is "mixdown_encodings: ogg
 mp3".
@@ -551,12 +551,10 @@ and track comments) with no direct effect on the project audio.
 F<global_effect_chains.json>, in the project root directory,
 contains system and user defined effect chains.
 
-C<save somename.json> will force saving to a different
-filename. Similarly C<get somename.json> will load
-the corresponding file.
-
-(The F<.json> suffix may be omitted if git is not present
-or is disabled in F<.namarc>.)
+C<save somename.json> save to a file of that
+name.  Similarly C<get somename.json> will load the
+corresponding file. The F<.json> suffix may be omitted if
+git is disabled in F<.namarc>.
 
 =head3 Requirements to Use Git for saving projects
 
@@ -593,7 +591,7 @@ Later on, on typing C<get initial-mix>, Nama automatically
 promotes the tagged commit "initial-mix" to a branch named
 "initial-mix-branch" which becomes the current branch.
 
-If you want to start a new branch named something else
+If you want to start a new branch 
 at tag "initial-mix" you can say this: 
 
 C<new_branch compressed-mix initial-mix
@@ -2982,20 +2980,22 @@ port 2868 if your computer is exposed to the Internet.
 
 =head1 INSTALLATION
 
-The following command, available on Unixlike systems with
+The following commands, available on Unixlike systems with
 Perl installed, will pull in Nama and other Perl libraries
 required for text mode operation:
 
-PERL_MM_USE_DEFAULT=1 cpan Audio::Nama
+C<cpanm Audio::Nama>
+-or-
+C<PERL_MM_USE_DEFAULT=1 cpan Audio::Nama>
 
 To use the GUI, you will need to install Tk:
 
-C<cpan Tk>
+C<cpanm Tk>
 
 You may want to install Audio::Ecasound if you prefer not to
 run Ecasound in server mode:
 
-C<cpan Audio::Ecasound>
+C<cpanm Audio::Ecasound>
 
 You can pull the source code as follows: 
 
@@ -3005,17 +3005,20 @@ Consult the F<BUILD> file for build instructions.
 
 =head1 SUPPORT
 
-The Ecasound mailing list is a suitable forum for questions
-regarding Nama installation, usage, feature requests, etc.,
-as well as questions relating to Ecasound itself.
+The Nama mailing list is a suitable forum for questions
+regarding Nama installation, usage, bugs, feature requests, etc.
+
+http://www.freelists.org/list/nama
+
+For questions and discussion related to Ecasound 
 
 https://lists.sourceforge.net/lists/listinfo/ecasound-list
 
 =head1 PATCHES
 
-The main module, Nama.pm, and its sister modules are
-concatenations of several source files. Patches against
-these source files are preferred.
+The modules that make up this application are the
+preprocessed output from several source files.  Patches
+against these source files are preferred.
 
 =head1 AUTHOR
 
@@ -3023,7 +3026,8 @@ Joel Roth, E<lt>joelz@pobox.comE<gt>
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright (c) 2009-2010 by Joel Roth.
+Copyright (c) 2009-2013 by Joel Roth.
 
 This is free software; you can redistribute it and/or modify
-it under the terms of the Artistic License, version 2.0.
+it under the terms of the GNU General Public License,
+Version 3.
