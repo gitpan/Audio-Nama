@@ -231,7 +231,7 @@ sub prune_graph {
 	Audio::Nama::Graph::recursively_remove_inputless_tracks($g);
 	Audio::Nama::Graph::recursively_remove_outputless_tracks($g); 
 }
-# new object based dispatch from routing graph
+# object based dispatch from routing graph
 	
 sub process_routing_graph {
 	logsub("&process_routing_graph");

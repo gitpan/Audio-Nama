@@ -604,7 +604,10 @@ sub track_gui {
 						-value => $v,
 						-command => sub { 
 							return if Audio::Nama::eval_iam("engine-status") eq 'running';
-							$ti{$n}->set_send($v);
+							local $this_track = $ti{$n};
+							if( $v eq 'off' )
+								 { process_command('nosend') }
+							else { $this_track->set_send($v) }
 							$ui->refresh_track($n);
 							Audio::Nama::reconfigure_engine();
  						}
@@ -1283,7 +1286,7 @@ sub init_palettefields {
 sub save_palette {
  	serialize (
  		file => $file->gui_palette,
-		format => 'yaml',
+		format => 'json',
  		vars => [ qw( $gui->{_palette} $gui->{_nama_palette} ) ],
  		class => 'Audio::Nama')
 }

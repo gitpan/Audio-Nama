@@ -72,12 +72,12 @@ our %io_class = qw(
 #
 # which receives input from JACK node: 
 #
-#  + ecasound:piano_in,
+#  + Nama:piano_in,
 # 
 # If piano is stereo, the actual ports will be:
 #
-#  + ecasound:piano_in_1
-#  + ecasound:piano_in_2
+#  + Nama:piano_in_1
+#  + Nama:piano_in_2
 
 # (CLASS Audio::Nama::IO::to_jack_port is similar)
 
@@ -261,7 +261,9 @@ sub jack_multi_route {
 
 sub jack_multi_ports {
 	my ($client, $direction, $start, $width, $trackname)  = @_;
-	#say "client $client, $direction $direction, start: $start, width $width";
+	no warnings 'uninitialized';
+	Audio::Nama::logpkg(__FILE__,__LINE__,'debug',"trackname: $trackname, client $client, direction $direction, start: $start, width $width");
+
 	# can we route to these channels?
 	my $end   = $start + $width - 1;
 
@@ -269,9 +271,14 @@ sub jack_multi_ports {
 	# non-existent client, and correctly handles
 	# the case of a portname (containing colon)
 	
- 	my $max = scalar @{$jack->{clients}->{$client}{$direction}};
- 	die qq(track $trackname: JACK client "$client", direction: $direction channel ($end) is out of bounds. $max channels maximum.\n) if $end > $max
-		and $config->{enforce_channel_bounds};
+ 	my $channel_count = scalar @{$jack->{clients}->{$client}{$direction}};
+	my $source_or_send = $direction eq 'input' ? 'send' : 'source';
+ 	die(qq(
+Problem with $source_or_send setting for track $trackname:
+Track\'s $source_or_send would extend to channel $end,
+out of bounds for JACK client "$client", 
+which has $channel_count channels.
+Change $source_or_send setting, or set track OFF.)) if $end > $channel_count;
 
 		return @{$jack->{clients}->{$client}{$direction}}[$start-1..$end-1]
 		 	if $jack->{clients}->{$client}{$direction};
@@ -415,7 +422,7 @@ package Audio::Nama::IO::to_jack_port;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub format_template { $config->{devices}->{jack}->{signal_format} }
 sub device_id { 'jack,,'.$_[0]->port_name.'_out' }
-sub ports { "ecasound:".$_[0]->port_name. '_out_1' } # at least this one port
+sub ports { "Nama:".$_[0]->port_name. '_out_1' } # at least this one port
 	# HARDCODED port name
 }
 
@@ -424,7 +431,7 @@ package Audio::Nama::IO::from_jack_port;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO::to_jack_port';
 sub device_id { 'jack,,'.$_[0]->port_name.'_in' }
 sub ecs_extra { $_[0]->mono_to_stereo }
-sub ports { "ecasound:".$_[0]->port_name. '_in_1' } # at least this one port
+sub ports { "Nama:".$_[0]->port_name. '_in_1' } # at least this one port
 	# HARDCODED port name
 }
 

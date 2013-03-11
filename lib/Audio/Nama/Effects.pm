@@ -1,6 +1,6 @@
 # ------ Effect Routines -------
 
-package Audio::Nama::Effects; # share namespace with Nama.pm and several others
+package Audio::Nama::Effects; 
 use Modern::Perl;
 use List::MoreUtils qw(insert_after_string);
 use Audio::Nama::Assign qw(yaml_out json_out);
@@ -883,11 +883,10 @@ sub effect_update_copp_set {
 }
 
 sub sync_effect_parameters {
-	return; ### DIAGNOSTIC FOR TROUBLESHOOTING XXX
 	local $config->{category} = 'ECI_FX';
 	# when a controller changes an effect parameter
 	# the effect state can differ from the state in
-	# %{$fx->{params}}, Nama's effect parameter store
+	# $fx->{params}, Nama's effect parameter store
 	#
 	# this routine syncs them in prep for save_state()
 	

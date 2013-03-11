@@ -1,7 +1,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = "1.103";
+$VERSION = "1.104";
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -2538,7 +2538,7 @@ remove_insert: _remove_insert prepost(?) {
 	my $prepost = $item{'prepost(?)'}->[0];
 	my $id = Audio::Nama::Insert::get_id($Audio::Nama::this_track,$prepost);
 	$id or Audio::Nama::throw($Audio::Nama::this_track->name.  ": Missing or ambiguous insert. Skipping"), return 1 ;
-	Audio::Nama::pager2( $Audio::Nama::this_track->name.": removing $prepost". "fader insert");
+	Audio::Nama::pager2( $Audio::Nama::this_track->name.": removing ". $prepost ?  "$prepost fader insert" : "insert");
 	$Audio::Nama::Insert::by_index{$id}->remove;
 	1;
 }
@@ -4886,8 +4886,8 @@ proc
             "foreground" : "black"
          },
          "mw" : {
-            "activeBackground" : "#81acc290d332",
-            "background" : "#998ca489b438",
+            "activeBackground" : "#4e097822b438",
+            "background" : "#c2c5d0b5e49a",
             "foreground" : "black"
          }
       }

@@ -405,7 +405,7 @@ sub region_is_out_of_bounds {
 
 sub fancy_ops { # returns list 
 	my $track = shift;
-	my @skip = 	grep {fx($_)}  # must have data structure
+	my @skip = 	grep {Audio::Nama::fx($_)}  # must have data structure
 				grep {$_} 	   # must be non null
 				map { $track->$_ } qw(vol pan fader latency_op );
 
@@ -1060,7 +1060,7 @@ use Audio::Nama::Globals qw(:all);
 use Modern::Perl; use Carp; use Audio::Nama::Log qw(logpkg);
 no warnings qw(uninitialized redefine);
 our @ISA = 'Audio::Nama::Track';
-sub rec_status { $_[0]->rw ne 'OFF' ? 'REC' : 'OFF' }
+sub rec_status { $_[0]->rw ne 'OFF' ? 'MON' : 'OFF' }
 #sub rec_status_display { $_[0]->rw ne 'OFF' ? 'MON' : 'OFF' }
 sub busify {}
 sub unbusify {}
