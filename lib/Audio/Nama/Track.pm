@@ -212,14 +212,6 @@ sub dir {
 		? join_path(Audio::Nama::project_root(), $self->project, '.wav')
 		: Audio::Nama::this_wav_dir();
 }
-# look at "ancestors" of track to get basename
-
-# overrides default Object::Tiny accessor (returning $self->{target})
-sub target {
-	my $self = shift;
-	my $parent = $tn{$self->{target}};
-	defined $parent && $parent->target || $self->{target};
-}
 
 sub basename {
 	my $self = shift;

@@ -19,7 +19,6 @@ Audio::Nama::Bunch
 Audio::Nama::Bus
 Audio::Nama::CacheTrack
 Audio::Nama::ChainSetup
-Audio::Nama::CommmandHistory
 Audio::Nama::Config
 Audio::Nama::Custom
 Audio::Nama::Edit
