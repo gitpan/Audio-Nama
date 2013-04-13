@@ -8,7 +8,7 @@ use Data::Dumper::Concise;
 use Storable qw(dclone);
 no warnings 'uninitialized';
 use Audio::Nama::Util qw(signal_format input_node output_node);
-use Audio::Nama::Assign qw(yaml_out);
+use Audio::Nama::Assign qw(json_out);
 
 our (
 
@@ -54,8 +54,6 @@ sub initialize {
 	remove_temporary_tracks();# start clean
 	$logger = Log::Log4perl->get_logger();
 	Audio::Nama::Graph::initialize_logger();
-	delete $setup->{latency_graph};
-	delete $setup->{final_graph};
 	$setup->{audio_length} = 0;  
 	@io = (); 			# IO object list
 	Audio::Nama::IO::initialize();
@@ -66,7 +64,7 @@ sub initialize {
 	undef $chain_setup;
 	Audio::Nama::disable_length_timer();
 	reset_aux_chain_counter();
-	{no autodie; unlink $file->chain_setup}
+	unlink $file->chain_setup;
 	$g;
 }
 sub ecasound_chain_setup { $chain_setup } 
@@ -97,7 +95,7 @@ sub really_recording {
 }
 	
 sub show_io {
-	my $output = yaml_out( \%inputs ). yaml_out( \%outputs ); 
+	my $output = json_out( \%inputs ). json_out( \%outputs ); 
 	Audio::Nama::pager( $output );
 }
 
@@ -132,7 +130,6 @@ sub generate_setup_try {  # TODO: move operations below to buses
 	$extra_setup_code->($g) if $extra_setup_code;
 
 	prune_graph();
-	$setup->{latency_graph} = dclone($g);
 	$logger->debug("Graph after pruning unterminated branches:\n$g");
 
 	Audio::Nama::Graph::expand_graph($g); 
@@ -143,11 +140,6 @@ sub generate_setup_try {  # TODO: move operations below to buses
 	Audio::Nama::Graph::add_inserts($g);
 
 	$logger->debug("Graph with inserts:\n$g");
-
-	Audio::Nama::Graph::add_jack_io($g);
-	$setup->{final_graph} = dclone($g);
-
-	
 
 	# Mix tracks to mono if Master is mono
 	# (instead of just throwing away right channel)
@@ -162,7 +154,6 @@ sub generate_setup_try {  # TODO: move operations below to buses
 
 	if ( process_routing_graph() ){
 		write_chains(); 
-		set_buffersize();
 		1
 	} else { 
 		say("No tracks to record or play.");
@@ -214,8 +205,8 @@ sub add_paths_for_mixdown_handling {
 												 
 	# Mixdown handling - playback
 	
-	} elsif ($tn{Mixdown}->rec_status eq 'MON'){
-			my @e = qw(wav_in Mixdown soundcard_out);
+	} elsif ($tn{Mixdown}->rec_status eq 'MON'){ 
+			my @e = ('wav_in','Mixdown',output_node($tn{Master}->send_type));
 			$g->add_path(@e);
 			$g->set_vertex_attributes('Mixdown', {
 				send_type	=> $tn{Master}->send_type,
@@ -323,10 +314,10 @@ sub non_track_dispatch {
 	my $edge = shift;
 	$logger->debug("non-track IO dispatch:",join ' -> ',@$edge);
 	my $eattr = $g->get_edge_attributes(@$edge) // {};
-	$logger->debug("found edge attributes: ",yaml_out($eattr)) if $eattr;
+	$logger->debug("found edge attributes: ",json_out($eattr)) if $eattr;
 
 	my $vattr = $g->get_vertex_attributes($edge->[0]) // {};
-	$logger->debug("found vertex attributes: ",yaml_out($vattr)) if $vattr;
+	$logger->debug("found vertex attributes: ",json_out($vattr)) if $vattr;
 
 	if ( ! $eattr->{chain_id} and ! $vattr->{chain_id} ){
 		my $n = $eattr->{n} || $vattr->{n};
@@ -339,8 +330,10 @@ sub non_track_dispatch {
 		my $attrib = {%$vattr, %$eattr};
 		$attrib->{endpoint} //= $_ if Audio::Nama::Graph::is_a_loop($_); 
 		$logger->debug("non-track: $_, class: $class, chain_id: $attrib->{chain_id},","device_id: $attrib->{device_id}");
-		$class->new($attrib ? %$attrib : () ) } @$edge;
-		# we'd like to $class->new(override($edge->[0], $edge)) } @$edge;
+		my $io = $class->new($attrib ? %$attrib : () ) ;
+		$g->set_edge_attribute(@$edge, $direction, $io);
+		$io;
+	} @$edge;
 }
 
 { 
@@ -367,7 +360,7 @@ sub jumper_count {
 	
 
 sub dispatch { # creates an IO object from a graph edge
-my $edge = shift;
+	my $edge = shift;
 	return non_track_dispatch($edge) if not grep{ $tn{$_} } @$edge ;
 	$logger->debug('dispatch: ',join ' -> ',  @$edge);
 	my($name, $endpoint, $direction) = decode_edge($edge);
@@ -381,7 +374,10 @@ my $edge = shift;
 				chain_id => $tn{$name}->n, # default
 				override($name, $edge));   # priority: edge > node
 	#say "dispatch class: $class";
-	$class->new(@args);
+	my $io = $class->new(@args);
+
+	$g->set_edge_attribute(@$edge, $direction => $io );
+	$io
 }
 sub decode_edge {
 	# assume track-endpoint or endpoint-track
@@ -420,21 +416,9 @@ sub write_chains {
 
 	## write general options
 	
-	my $globals = $config->{engine_globals_common};
-	$globals .=  setup_requires_realtime()
-			? join " ", " -b:$config->{engine_buffersize_realtime}", 
-				$config->{engine_globals_realtime}
-			: join " ", " -b:$config->{engine_buffersize_nonrealtime}", 
-				$config->{engine_globals_nonrealtime};
-
-	# use realtime globals if they exist and we are
-	# recording to a non-mixdown file
-	
-	$globals = $config->{engine_globals_realtime}
-		if $config->{engine_globals_realtime} 
-			and grep{ ! /Mixdown/} really_recording();
-			# we assume there exists latency-sensitive monitor output 
-			# when recording
+	my $globals .= join " ", $config->{engine_globals}->{common},
+							"-b",$config->buffersize,
+							$config->globals_realtime;
 	
 	my $format = signal_format($config->{devices}->{jack}->{signal_format},2);
 	$globals .= " -f:$format" if $jack->{jackd_running};
@@ -455,24 +439,133 @@ sub write_chains {
 					"# audio outputs",
 					join("\n", @output_chains), "";
 	$logger->debug("Chain setup:\n",$ecs_file);
-	open my $fh, ">", $file->chain_setup;
+	open(my $fh, ">", $file->chain_setup) 
+		or die("can't open chain setup file ".$file->chain_setup.": $!");
 	print $fh $ecs_file;
 	close $fh;
 	$chain_setup = $ecs_file;
 
 }
 sub setup_requires_realtime {
-	my @fields = qw(soundcard jack_client jack_manual jack_ports_list);
-	grep { has_vertex("$_\_in") } @fields 
-		or grep { has_vertex("$_\_out") } @fields
-
+	my $prof = $config->{realtime_profile};
+	if( $prof eq 'auto'){
+		grep{ ! $_->is_mix_track 
+				  and $_->is_user_track 
+				  and $_->rec_status eq 'REC' 
+			} Audio::Nama::Track::all() 
+	} elsif ( $prof eq 'realtime') {
+		my @fields = qw(soundcard jack_client jack_manual jack_ports_list);
+		grep { has_vertex("$_\_in") } @fields 
+			or grep { has_vertex("$_\_out") } @fields
+	}
+	elsif ( $prof eq 'nonrealtime' or !$prof){ 0 }
 }
+
 sub has_vertex { $g->has_vertex($_[0]) }
 
-sub set_buffersize { 
-	my $buffer_type = setup_requires_realtime() ? "realtime" : "nonrealtime";
-	$engine->{buffersize} = $config->{"engine_buffersize_$buffer_type"}	;
-}
-
 1;
-__END__
+
+=head1 Audio::Nama::ChainSetup - routines for generating Ecasound chain setup
+
+=head2 Overview
+
+For the Ecasound engine to run, it must be configured into a
+signal processing network. This configuration is called a
+"chain setup".  It is a graph comprised of multiple signal
+processing chains, each of which consists of exactly one
+input and one output.
+
+When user input requires a change of configuration, Nama
+generates an new chain setup file. These files are
+guaranteed to be consistent with the rules of Ecasound's
+routing language. 
+
+After initializing the data structures, Nama iterates over
+project tracks and buses to create a first-stage graph.
+This graph is successively transformed as more routing
+details are added, then each edge of the graph is processed
+into a pair of IO objects--one for input and one for
+output--that together constitute an Ecasound chain. With a
+bit more processing, the configuration is written out 
+as text in the chain setup file.
+
+=head2 The Graph and its Transformations
+
+Generating a chain setup starts with each bus iterating over
+its member tracks, and connecting them to its mix track.
+(See man Audio::Nama::Bus.)
+
+In the case of one track belonging to the Main (default) 
+bus, the initial graph would be:
+
+	soundcard_in -> sax -> Master -> soundcard_out
+
+"soundcard_in" and "soundcard_out" will eventually be mapped
+to the appropriate JACK or ALSA source, depending on whether
+jackd is running. The Master track hosts the master fader,
+connects to the main output, and serves as the mix track for
+the Main bus.
+
+If we've asked to record the input, we automatically get
+this route:
+
+	soundcard_in -> sax-rec-file -> wav_out
+
+The track 'sax-rec-file' is a temporary clone (slave) of track 'sax'
+and connects to all the same inputs.
+
+A 'send' (for example, a instrument monitor for
+the sax player) generates this additional route:
+
+	sax -> soundcard_out
+
+Ecasound requires that we insert a loop device where signals fan 
+out or fan in.
+
+	soundcard_in -> sax -> sax_out -> Master -> soundcard_out
+
+	                       sax_out -> soundcard_out
+
+Here 'sax_out' is a loop device. (Note that we prohibit
+track names matching *_out or *_in.)
+
+Inserts are incorporated by replacing the edge either before
+or after a track vertex with a network of auxiliary tracks and 
+loop devices.  (See man Audio::Nama::Insert.)
+
+Unterminated parts of the network are discarded. Then
+redundant loop devices are removed from the graph to
+minimize latency.
+
+=head2 Dispatch
+
+After routing is complete, Nama iterates over the graph's
+edges, transforming them into pairs of IO objects that
+become the inputs and outputs of Ecasound chains.
+
+To create an Ecasound chain from 
+
+	Master -> soundcard_out 
+
+Nama uses 'Master' track attributes to provide
+data. For example track index (1) serves as the chain_id,
+and the track's send settings determine the soundcard
+channel or other destination. 
+
+Some edges are without a track at either terminal. For
+example this auxiliary send:
+
+	sax_out -> soundcard_out
+
+In this case, the track, chain_id and other data can be
+specified as vertex or edge attributes. 
+
+Edge attributes override vertex attributes, which override
+track attributes. This allows routing to be edited and
+annotated to behaviors different from what the track wants.
+When a temporary track is used for recording, for example
+
+    sax-rec-file  -> wav_out
+
+The 'sax-rec-file' vertex is assigned the 'chain_id' attribute 
+'R3' rather than the track index assigned to 'sax-rec-file'. 

@@ -125,15 +125,60 @@ sub new {
 sub capture_latency {
 	my $self = shift;
 	return unless $self->client;
-	Audio::Nama::jack_port_latency('input', rectified($self->client));
+	Audio::Nama::jack_port_latency('input', $self->client);
 }
 sub playback_latency {
 	my $self = shift;
 	return unless $self->client;
-	Audio::Nama::jack_port_latency('output', rectified($self->client));
+	Audio::Nama::jack_port_latency('output', $self->client);
 }
-sub ports {} # no ports by default
-sub client {} # not a JACK client by default
+
+# we need at least stubs for subclasses' methods 
+# for AUTOLOAD to be happy - so we include
+
+sub client {}
+
+#### JACK related methods
+
+# inherited by all, the methods defined below are called in 
+# these classes: 
+# 
+#		to_jack_multi, 
+#		from_jack_multi 
+#		to_jack_client
+#		from_jack_client
+#
+# They have no function in other classes.
+
+
+sub target_id {
+	my $self = shift;
+	$self->direction eq 'input' 
+		? $self->source_id
+		: $self->send_id;
+}
+sub target_type {
+	my $self = shift;
+	$self->direction eq 'input' 
+		? $self->source_type
+		: $self->send_type;
+}
+sub target_channel {
+	my $self = shift;
+	$self->target_id =~ /^(\d+)$/ ? $1 : 1
+}
+sub ports {
+	my $self = shift;
+	my $client_direction = $self->direction eq 'input' ? 'output' : 'input';
+	Audio::Nama::IO::jack_multi_ports( $self->client,
+							$client_direction,
+							$self->target_channel,
+							$self->width, 
+							Audio::Nama::try{$self->name} 
+	) if $self->client
+}
+
+
 
 sub ecs_string {
 	my $self = shift;
@@ -273,11 +318,9 @@ sub jack_multi_ports {
 	
  	my $channel_count = scalar @{$jack->{clients}->{$client}{$direction}};
 	my $source_or_send = $direction eq 'input' ? 'send' : 'source';
- 	die(qq(
-Problem with $source_or_send setting for track $trackname:
-Track\'s $source_or_send would extend to channel $end,
-out of bounds for JACK client "$client", 
-which has $channel_count channels.
+  	die(qq(
+Track $trackname: $source_or_send would cover channels $start - $end,
+out of bounds for JACK client "$client" ($channel_count channels max).
 Change $source_or_send setting, or set track OFF.)) if $end > $channel_count;
 
 		return @{$jack->{clients}->{$client}{$direction}}[$start-1..$end-1]
@@ -285,20 +328,16 @@ Change $source_or_send setting, or set track OFF.)) if $end > $channel_count;
 
 }
 #sub one_port { $jack->{clients}->{$client}->{$direction}->[$start-1] }
-sub default_jack_ports_list {
-	my ($track_name) = shift;
-	"$track_name.ports"
-}
+
 sub quote_jack_port {
 	my $port = shift;
 	($port =~ /\s/ and $port !~ /^"/) ? qq("$port") : $port
 }
 sub rectified { # client name from number
-	$_[0] !~ /D/ 
-		? 'system' # source_id or send_id matching digit
+	$_[0] =~ /^\d+$/ 
+		? 'system'
 		: $_[0]
 }
-
 ### subclass definitions
 
 ### method names with a preceding underscore 
@@ -342,6 +381,7 @@ sub device_id {
 }
 sub ecs_extra { $_[0]->mono_to_stereo}
 sub client { 'system' if $jack->{jackd_running} } # since we share latency value
+sub ports { 'system:capture_1' }
 }
 {
 package Audio::Nama::IO::to_wav;
@@ -385,30 +425,16 @@ sub new {
 {
 package Audio::Nama::IO::to_jack_multi;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub client {
+sub client { 
 	my $self = shift;
-	my $client = $self->direction eq 'input' 
-		? $self->source_id
-		: $self->send_id;
+#  	say "to_jack_multi: target_id: ",$self->target_id;
+#  	say "to_jack_multi: rectified target_id: ",Audio::Nama::IO::rectified($self->target_id);
+	Audio::Nama::IO::rectified($self->target_id)
 }
 sub device_id { 
 	my $self = shift;
 	Audio::Nama::IO::jack_multi_route($self->ports)
 }
-sub ports {
-	my $self = shift;
-	# maybe source_id is an input number
-	my $client = $self->client;
-	my $channel = 1;
-	# we want the direction with respect to the client, i.e.  # reversed
-	my $client_direction = $self->direction eq 'input' ? 'output' : 'input';
-	if( Audio::Nama::dest_type($client) eq 'soundcard'){
-		$channel = $client;
-		$client = Audio::Nama::IO::soundcard_input_device_string(); # system, okay for output
-	}
-	Audio::Nama::IO::jack_multi_ports($client,$client_direction,$channel,$self->width, Audio::Nama::try{$self->name} );
-}
-
 }
 
 {

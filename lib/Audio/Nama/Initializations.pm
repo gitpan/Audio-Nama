@@ -23,6 +23,8 @@ sub apply_test_harness {
 				q(-T), # don't initialize terminal
 
 				#qw(-L SUB), # logging
+
+	$jack->{periodsize} = 1024;
 }
 sub apply_ecasound_test_harness {
 	apply_test_harness();
@@ -53,7 +55,7 @@ sub definitions {
 
 
 
-@persistent_vars = qw(
+@tracked_vars = qw(
 
 
 
@@ -77,7 +79,7 @@ sub definitions {
 
 
 
-@persistent_untracked_vars = qw(
+@persistent_vars = qw(
 
 	$project->{save_file_version_number}
 	$project->{timebase}
@@ -114,10 +116,11 @@ sub definitions {
 	# are just hashes, some have object behavior as
 	# the sole instance of their class.
 	
+	$project = bless {}, 'Audio::Nama::Project';
+	
 	# for example, $file belongs to class Audio::Nama::File, and uses
 	# AUTOLOAD to generate methods to provide full path
 	# to various system files, such as $file->state_store
-
 	{
 	package Audio::Nama::File;
 		use Carp;
@@ -208,11 +211,6 @@ sub definitions {
 
 		serialize_formats               => 'json',		# for save_system_state()
 
-		engine_globals_common			=> "-z:mixmode,sum",
-		engine_globals_realtime			=> "-z:db,100000 -z:nointbuf",
-		engine_globals_nonrealtime		=> "-z:nodb -z:intbuf",
-		engine_buffersize_realtime		=> 256, 
-		engine_buffersize_nonrealtime	=> 1024,
 		latency_op						=> 'el:delay_n',
 		latency_op_init					=> [0,0],
 		latency_op_set					=> sub
@@ -222,7 +220,6 @@ sub definitions {
 				modify_effect($id,2,undef,$delay)
 			},
 	}, 'Audio::Nama::Config';
-
 
 	{ package Audio::Nama::Config;
 	use Carp;
@@ -236,7 +233,30 @@ sub definitions {
 		no warnings 'uninitialized';
 		$config->{devices}->{$config->{alsa_capture_device}}{hardware_latency} || 0
 	}
+ 	sub buffersize {
+		package Audio::Nama;
+ 		Audio::Nama::ChainSetup::setup_requires_realtime()
+ 			? ($config->{engine_buffersize}->{realtime}->{jack_period_multiple}
+				&& $jack->{jackd_running}
+				&& $config->{engine_buffersize}->{realtime}->{jack_period_multiple}
+					* $jack->{periodsize}
+				|| $config->{engine_buffersize}->{realtime}->{default}
+ 			)
+ 			: (	$config->{engine_buffersize}->{nonrealtime}->{jack_period_multiple}
+				&& $jack->{jackd_running}
+				&&  $config->{engine_buffersize}->{nonrealtime}->{jack_period_multiple}
+					* $jack->{periodsize}
+				|| $config->{engine_buffersize}->{nonrealtime}->{default}
+ 			)
+ 	}
+	sub globals_realtime {
+		Audio::Nama::ChainSetup::setup_requires_realtime()
+			? $config->{engine_globals}->{realtime}
+			: $config->{engine_globals}->{nonrealtime}
 	}
+	} # end Audio::Nama::Config package
+
+	$engine = bless {}, 'Audio::Nama::Engine';
 
 	$prompt = "nama ('h' for help)> ";
 
@@ -294,12 +314,11 @@ BANNER
 	logpkg(__FILE__,__LINE__,'debug',"project name: $project->{name}");
 	}
 
-	logpkg(__FILE__,__LINE__,'debug', sub{"Command line options\n".  yaml_out($config->{opts})});
+	logpkg(__FILE__,__LINE__,'debug', sub{"Command line options\n".  json_out($config->{opts})});
 
 	read_config(global_config());  # from .namarc if we have one
 	
 	logpkg(__FILE__,__LINE__,'debug',sub{"Config data\n".Dumper $config});
-	
 
 	start_ecasound();
 

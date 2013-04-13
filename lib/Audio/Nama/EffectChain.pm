@@ -259,7 +259,7 @@ sub new {
 			];
 		}
 
-		#say Audio::Nama::yaml_out($vals{inserts_data}) if $vals{inserts_data};
+		#say Audio::Nama::json_out($vals{inserts_data}) if $vals{inserts_data};
 	}
 
 	my $object = bless 
@@ -343,7 +343,7 @@ sub add_inserts {
 	map 
 	{
 		my $insert_data = dclone($_); # copy so safe to modify 
-		#say "found insert data:\n",Audio::Nama::yaml_out($insert_data);
+		#say "found insert data:\n",Audio::Nama::json_out($insert_data);
 
 		# get effect chain indices for wet/dry arms
 		

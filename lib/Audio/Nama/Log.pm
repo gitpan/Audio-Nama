@@ -38,6 +38,7 @@ Audio::Nama::IO
 Audio::Nama::Initializations
 Audio::Nama::Insert
 Audio::Nama::Jack
+Audio::Nama::Lat
 Audio::Nama::Latency
 Audio::Nama::Log
 Audio::Nama::Mark
@@ -64,7 +65,7 @@ Audio::Nama::Wavinfo
 
 	my %negate = map{ $_ => 1} map{ s/^#//; $_ } grep{ /^#/ } 
 		expand_cats(split q(,), $cat_string);
-	#say("negate\n",Audio::Nama::yaml_out(\%negate));
+	#say("negate\n",Audio::Nama::json_out(\%negate));
 
 	my $layout = "[\%r] %c %m%n"; # backslash to protect from source filter
 	my $logfile = $ENV{NAMA_LOGFILE};

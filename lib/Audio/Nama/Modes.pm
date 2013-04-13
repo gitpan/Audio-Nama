@@ -85,11 +85,11 @@ sub master_off {
 
 	$mode->{mastering} = 0;
 	hide_mastering_tracks();
-	map{ $ui->remove_track_gui($tn{$_}->n) } @{$mastering->{track_names}};
+	map{ $ui->remove_track_gui($tn{$_}->n) 
+		} @{$mastering->{track_names}};
 	$this_track = $tn{Master} if grep{ $this_track->name eq $_} @{$mastering->{track_names}};
 ;
 }
-
 
 sub add_mastering_tracks {
 
@@ -102,7 +102,7 @@ sub add_mastering_tracks {
 		$ui->track_gui( $track->n );
 
  	} grep{ $_ ne 'Boost' } @{$mastering->{track_names}};
-	my $track = Audio::Nama::SlaveTrack->new(
+	my $track = Audio::Nama::BoostTrack->new(
 		name => 'Boost', 
 		rw => 'MON',
 		group => 'Mastering', 
@@ -112,6 +112,7 @@ sub add_mastering_tracks {
 
 	
 }
+
 
 sub add_mastering_effects {
 	

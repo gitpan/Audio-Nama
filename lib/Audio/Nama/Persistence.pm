@@ -144,7 +144,7 @@ sub save_system_state {
 			serialize(
 				file => $path,
 				format => $format,
-				vars => \@persistent_vars,
+				vars => \@tracked_vars,
 				class => 'Audio::Nama',
 				);
 
@@ -153,7 +153,7 @@ sub save_system_state {
 	serialize(
 		file => $file->untracked_state_store,
 		format => 'json',
-		vars => \@persistent_untracked_vars,
+		vars => \@persistent_vars,
 		class => 'Audio::Nama',
 	);	
 
@@ -194,7 +194,7 @@ sub get_newest {
 			[$_, -M $_, $suffix] 
 		} 
 		glob("$path*");
-	logpkg(__FILE__,__LINE__,'debug', sub{yaml_out \@sorted});
+	logpkg(__FILE__,__LINE__,'debug', sub{json_out \@sorted});
 	($sorted[0]->[0], $sorted[0]->[2]);
 }
 }
@@ -317,7 +317,7 @@ sub restore_state_from_file {
 		my $ref = decode($source, $suffix);
 		assign(
 				data	=> $ref,	
-				vars   	=> \@persistent_untracked_vars,
+				vars   	=> \@persistent_vars,
 				class 	=> 'Audio::Nama');
 		assign_singletons( { data => $ref });
 	}
@@ -330,7 +330,7 @@ sub restore_state_from_file {
 
 		assign(
 					data => $ref,
-					vars   => \@persistent_vars,
+					vars   => \@tracked_vars,
 					class => 'Audio::Nama');
 		
 
@@ -392,6 +392,10 @@ sub restore_state_from_file {
 	if ( $project->{save_file_version_number} <= 1.100){ 
 		map{ Audio::Nama::EffectChain::move_attributes($_) } 
 			(@project_effect_chain_data, @global_effect_chain_data)
+	}
+	if ( $project->{save_file_version_number} <= 1.105){ 
+		map{ $_->{class} = 'Audio::Nama::BoostTrack' } 
+		grep{ $_->{name} eq 'Boost' } @tracks_data;
 	}
 
 	#######################################

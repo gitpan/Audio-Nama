@@ -19,7 +19,7 @@ my %set_stat = (
 sub bunch {
 	my ($bunchname, @tracks) = @_;
 	if (! $bunchname){
-		Audio::Nama::pager(yaml_out( $project->{bunch} ));
+		Audio::Nama::pager(json_out( $project->{bunch} ));
 	} elsif (! @tracks){
 		$project->{bunch}->{$bunchname} 
 			and print "bunch $bunchname: @{$project->{bunch}->{$bunchname}}\n" 

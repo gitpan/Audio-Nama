@@ -1,5 +1,5 @@
 package Audio::Nama;
-use Test::More qw(no_plan);
+use Test::More tests => 1;
 use strict;
 use warnings;
 no warnings qw(uninitialized);

@@ -1,11 +1,10 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = "1.105";
+$VERSION = "1.106";
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
-use autodie qw(:default);
 
 ########## External dependencies ##########
 
@@ -28,6 +27,7 @@ use Module::Load::Conditional qw(can_load);
 use Parse::RecDescent;
 use Storable qw(thaw);
 use Term::ReadLine;
+#use Text::Diff; # diagnostic use
 use Text::Format;
 use Try::Tiny;
 # use File::HomeDir;# Assign.pm
@@ -95,6 +95,7 @@ use Audio::Nama::Insert;
 use Audio::Nama::Fade;
 use Audio::Nama::Edit;
 use Audio::Nama::EffectChain;
+use Audio::Nama::Lat;
 
 ####### Nama subroutines ######
 #
@@ -153,13 +154,16 @@ sub bootstrap_environment {
 }
 
 sub cleanup_exit {
+	logsub("&cleanup_exit");
  	remove_riff_header_stubs();
+	trigger_rec_cleanup_hooks();
 	# for each process: 
 	# - SIGINT (1st time)
 	# - allow time to close down
 	# - SIGINT (2nd time)
 	# - allow time to close down
 	# - SIGKILL
+	delete $engine->{events};
 	map{ my $pid = $_; 
 		 map{ my $signal = $_; 
 			  kill $signal, $pid; 
@@ -167,9 +171,9 @@ sub cleanup_exit {
 			} (2,2,9)
 	} @{$engine->{pids}};
  	#kill 15, ecasound_pid() if $engine->{socket};  	
-	close_midish() if $config->{use_midish};
+	#close_midish() if $config->{use_midish};
 	$text->{term}->rl_deprep_terminal() if defined $text->{term};
-	exit; 
+	exit;
 }
 END { cleanup_exit() }
 
@@ -1521,6 +1525,16 @@ git:
   type: project
   what: execute git command in the project directory
   parameters: <s_command_name> [argument,...]
+edit_rec_setup_hook:
+  type: track
+  what: edit the REC hook script for current track
+  short: ersh
+  parameters: none
+edit_rec_cleanup_hook:
+  type: track
+  what: edit the REC cleanup hook script for current track
+  short: erch
+  parameters: none
 # config:
 #   type: general
 #   what: get or set project-specific config values (args may be quoted)
@@ -1655,7 +1669,7 @@ command: user_alias predicate {
 user_alias: ident { 
 	
 		$Audio::Nama::text->{user_alias}->{$item{ident}} }
-user_command: ident { $return = $item{ident} if $Audio::Nama::text->{user_command}->{$item{ident}} }
+user_command: ident { return $item{ident} if $Audio::Nama::text->{user_command}->{$item{ident}} }
 
 
 
@@ -1859,6 +1873,8 @@ new_track_name: anytag  {
   	my $proposed = $item{anytag};
   	Audio::Nama::throw( qq(Track name "$proposed" needs to start with a letter)), 
   		return undef if  $proposed !~ /^[A-Za-z]/;
+  	Audio::Nama::throw( qq(Track name "$proposed" cannot contain a colon.)), 
+  		return undef if  $proposed =~ /:/;
  	Audio::Nama::throw( qq(A track named "$proposed" already exists.)), 
  		return undef if $Audio::Nama::Track::by_name{$proposed};
  	Audio::Nama::throw( qq(Track name "$proposed" conflicts with Ecasound command keyword.)), 
@@ -2058,8 +2074,7 @@ master_off: _master_off { Audio::Nama::master_off(); 1 }
 
 exit: _exit {   
 	Audio::Nama::save_state(); 
-	Audio::Nama::cleanup_exit();
-	1
+	CORE::exit;
 }	
 source: _source source_id { $Audio::Nama::this_track->set_source($item{source_id}); 1 }
 source_id: shellish
@@ -3001,17 +3016,27 @@ mode_string: 'preview'
 
 show_track_latency: _show_track_latency {
 	my $node = $Audio::Nama::setup->{latency}->{track}->{$Audio::Nama::this_track->name};
-	Audio::Nama::pager2( Audio::Nama::yaml_out($node)) if $node;
+	Audio::Nama::pager2( Audio::Nama::json_out($node)) if $node;
 	1;
 }
 show_latency_all: _show_latency_all { 
-	Audio::Nama::pager2( Audio::Nama::yaml_out($Audio::Nama::setup->{latency})) if $Audio::Nama::setup->{latency};
+	Audio::Nama::pager2( Audio::Nama::json_out($Audio::Nama::setup->{latency})) if $Audio::Nama::setup->{latency};
 	1;
 }
 analyze_level: _analyze_level { Audio::Nama::check_level($Audio::Nama::this_track);1 }
 git: _git shellcode stopper { 
 
 Audio::Nama::pager2(map {$_.="\n"} $Audio::Nama::project->{repo}->run( split " ", $item{shellcode})) 
+}
+edit_rec_setup_hook: _edit_rec_setup_hook { 
+	system("$ENV{EDITOR} ".$Audio::Nama::this_track->rec_setup_script() );
+	chmod 0755, $Audio::Nama::this_track->rec_setup_script();
+	1
+}
+edit_rec_cleanup_hook: _edit_rec_cleanup_hook { 
+	system("$ENV{EDITOR} ".$Audio::Nama::this_track->rec_cleanup_script() );
+	chmod 0755, $Audio::Nama::this_track->rec_cleanup_script();
+	1
 }
 
 command: help
@@ -3226,6 +3251,8 @@ command: eager
 command: analyze_level
 command: for
 command: git
+command: edit_rec_setup_hook
+command: edit_rec_cleanup_hook
 _help: /help\b/ | /h\b/
 _help_effect: /help_effect\b/ | /hfx\b/ | /he\b/
 _find_effect: /find_effect\b/ | /ffx\b/ | /fe\b/
@@ -3438,6 +3465,8 @@ _eager: /eager\b/
 _analyze_level: /analyze_level\b/ | /anl\b/
 _for: /for\b/
 _git: /git\b/
+_edit_rec_setup_hook: /edit_rec_setup_hook\b/ | /ersh\b/
+_edit_rec_cleanup_hook: /edit_rec_cleanup_hook\b/ | /erch\b/
 @@ chain_op_hints_yml
 ---
 -
@@ -4013,13 +4042,19 @@ mixdown_encodings: mp3 ogg
 
 sample_rate: frequency
 
-# globals for our chain setups
+realtime_profile: nonrealtime # other choices: realtime or auto
 
-ecasound_globals_general: -z:mixmode,sum -G:jack,Nama,send
-ecasound_globals_realtime: -z:db,100000 -z:nointbuf 
-ecasound_globals_nonrealtime: -z:nodb -z:intbuf
-ecasound_buffersize_realtime: 256
-ecasound_buffersize_nonrealtime: 1024
+ecasound_buffersize:
+  realtime:
+#   jack_period_multiple: 2 # uncomment to enable
+    default: 256
+  nonrealtime:
+#   jack_period_multiple: 8 # takes precedence when JACK is running
+    default: 1024
+ecasound_globals:
+  common: -z:mixmode,sum -G:jack,Nama,send
+  realtime: -z:db,100000 -z:nointbuf 
+  nonrealtime: -z:nodb -z:intbuf
 
 # ecasound_tcp_port: 2868  
 
@@ -4895,20 +4930,3 @@ proc
 }
 
 __END__
-
-=head1 NAME
-
-Nama/Audio::Nama - an audio recording, mixing and editing application
-
-=head1 DESCRIPTION
-
-B<Nama> is an application for multitrack recording,
-non-destructive editing, mixing and mastering using the
-Ecasound audio engine developed by Kai Vehmanen.
-
-Features include tracks, buses, effects, presets,
-sends, inserts, marks and regions. Nama runs under JACK and
-ALSA audio frameworks, automatically detects LADSPA plugins,
-and supports Ladish Level 1 session handling.
-
-Type C<man nama> for details.

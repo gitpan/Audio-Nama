@@ -106,17 +106,20 @@ sub add_path_for_rec {
 }
 sub add_path_for_aux_send {
 	my ($g, $track) = @_;
+
 		logsub("&add_path_for_aux_send: track ".$track->name);
 		# for track 'sax', send_type 'jack_client', create route as 
-		# sax-jack_client_out
-		my @edge = ($track->name, output_node($track->send_type));
-		$g->add_edge(@edge);
-		 $g->set_edge_attributes(
-				@edge,
-			  	{	track => $track->name,
-					width => 2, # force stereo output width
-					chain_id => 'S'.$track->n,
-				});
+		# sax -> sax_aux_send -> jack_client_out
+		my $name = $track->name . '_aux_send';
+		my $anon = Audio::Nama::SlaveTrack->new( 
+			target => $track->name,
+			rw => 'OFF',
+			group => 'Temp',
+			hide => 1,
+			name => $name);
+
+		my @path= ($track->name, $name, output_node($track->send_type));
+		$g->add_path(@path);
 }
 {
 my %seen;
@@ -285,7 +288,8 @@ sub add_far_side_loop {
 sub in_loop{ "$_[0]_in" }
 sub out_loop{ "$_[0]_out" }
 sub is_a_track{ $Audio::Nama::tn{$_[0]} }  # most reliable
-sub is_terminal { $reserved{$_[0]} }
+sub is_terminal { $reserved{$_[0]} or is_port($_[0]) }
+sub is_port { $_[0] =~ /^[^:]+:[^:]+$/ }
 sub is_a_loop{
 	my $name = shift;
 	return if $reserved{$name};
@@ -293,11 +297,6 @@ sub is_a_loop{
 		return ($root, $suffix);
 	} 
 }
-sub is_a_jumper { 		! is_terminal($_[0])
-				 	and ! is_a_track($_[0]) 
-					and ! is_a_loop($_[0]) }
-	
-
 sub inputless_tracks {
 	my $g = shift;
 	(grep{ is_a_track($_) and $g->is_source_vertex($_) } $g->vertices)
@@ -337,70 +336,20 @@ sub remove_tracks {
 		} @names;
 }
 
-### we need jack clients latency 
-sub add_jack_io {
-	my $g = shift;
-		
+# for latency-related graph transformations
 
+sub remove_branch {
+	my ($g, $v) = @_;
+	my @p = $g->predecessors($v);
+	$g->delete_vertex($v) if $g->is_sink_vertex($v);
+	remove_branch($g, $_) for @p;
 }
-	
-		
-		
+
+sub remove_isolated_vertices {
+	my $g = shift;
+	map{ $g->delete_vertex($_) } 
+	grep{ $g->is_isolated_vertex($_) } $g->vertices();	
+}
+
 1;
 __END__
-
-The graphic routing system is complicated enough that some comment is
-warranted.
-
-The first step of routing is to create a graph that expresses the signal flow.
-
-	soundcard_in -> sax -> Master -> soundcard_out
-
-If we are to record the input, we need:
-
-	sax -> wav_out
-
-If we add an instrument monitor on a separate channel for the sax player, we need:
-
-	sax -> soundcard_out
-
-Ecasound requires that we insert loop devices wherever the signals
-must fan out or fan in.
-
-	soundcard_in -> sax -> sax_out -> Master -> soundcard_out
-
-	                       sax_out -> wav_out
-
-	                       sax_out -> soundcard_out
-
-Here 'sax_out' is a loop device.
-
-All routing functions follow these rules.
-
-We then process each edge to generate a line for the Ecasound chain setup
-file.
-
-Master -> soundcard_out is easy to process, because the track
-Master knows what it's outputs should be.
-
-The edge sax_out -> soundcard_out, an auxiliary send, needs to know its
-associated track, the chain_id (identifier for the Ecasound
-chain corresponding to this edge) and in the final step
-the soundcard channel number.
-
-We can provide this information as edge attributes.
-
-We also allow vertexes, for example a track or loop device, to carry data is
-well, for example to tell the dispatcher to override the 
-chain_id of a temporary track.
-
-An Ecasound chain setup is a graph comprised of multiple 
-signal processing chains, each of which consists 
-of exactly one input and one output.
- 
-The dispatch process transforms the graph edges into a group of 
-IO objects, each with enough information to create
-the input or output fragment of a chain.
-
-Finally, these objects are processed into the Ecasound
-chain setup file. 

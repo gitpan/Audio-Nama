@@ -1,6 +1,6 @@
 package Audio::Nama; 
 use Audio::Nama;
-use Test::More qw(no_plan);
+use Test::More tests => 110;
 use File::Path qw(make_path remove_tree);
 use Cwd;
 
@@ -123,12 +123,14 @@ my $yaml = q(---
   args:
     width: 1
     source_id: 2
+    source_type: soundcard
   ecs_string: -i:jack_multi,system:capture_2
 -
   class: to_soundcard
   args:
     width: 2
     send_id: 5
+    send_type: soundcard
   ecs_string: -o:jack_multi,system:playback_5,system:playback_6
 -
   class: to_jack_port
@@ -667,8 +669,8 @@ sub setup_content {
 }
 sub check_setup {
 	my $test_name = shift;
-	is( yaml_out(setup_content(Audio::Nama::ChainSetup::ecasound_chain_setup())), 
-		yaml_out(setup_content($expected_setup_lines)), 
+	is( json_out(setup_content(Audio::Nama::ChainSetup::ecasound_chain_setup())), 
+		json_out(setup_content($expected_setup_lines)), 
 		$test_name);
 }
 

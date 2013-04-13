@@ -136,6 +136,8 @@ sub idx { # return first free track index
 }
 sub all { sort{$a->n <=> $b->n } values %by_name }
 
+sub rec_hookable { grep{ $_->group ne 'Temp' and $_->group ne 'Insert' } all() }
+
 { my %system_track = map{ $_, 1} qw( Master Mixdown Eq Low Mid High Boost );
 sub user {
 	grep{ ! $system_track{$_} } map{$_->name} all();
@@ -190,7 +192,7 @@ sub new {
 
 	#print "object class: $class, object type: ", ref $object, $/;
 	$track_names{$vals{name}}++;
-	#print "names used: ", Audio::Nama::yaml_out( \%track_names );
+	#print "names used: ", Audio::Nama::json_out( \%track_names );
 	$by_index{$n} = $object;
 	$by_name{ $object->name } = $object;
 	Audio::Nama::add_pan_control($n);
@@ -962,7 +964,7 @@ sub as_hash {
 	my $self = shift;
 	my $class = ref $self;
 	bless $self, 'HASH'; # easy magic
-	#print yaml_out $self; return;
+	#print json_out $self; return;
 	my %guts = %{ $self };
 	$guts{class} = $class; # make sure we save the correct class name
 	#print join " ", %guts; return;
@@ -1040,6 +1042,15 @@ sub remove_system_version_comment {
 	delete $project->{track_version_comments}{$t->name}{$v}{system} if
 		$project->{track_version_comments}{$t->name}{$v}
 }
+sub rec_setup_script { 
+	my $track = shift;
+	join_path(Audio::Nama::project_dir(), $track->name."-rec-setup.sh")
+}
+sub rec_cleanup_script { 
+	my $track = shift;
+	join_path(Audio::Nama::project_dir(), $track->name."-rec-cleanup.sh")
+}
+	
 
 } # end package
 
@@ -1088,6 +1099,17 @@ sub source_status { $tn{$_[0]->target}->source_status }
 sub send_type { $tn{$_[0]->target}->send_type}
 sub send_id { $tn{$_[0]->target}->send_id}
 sub dir { $tn{$_[0]->target}->dir }
+}
+{
+package Audio::Nama::BoostTrack; # for instrument monitor bus
+use Audio::Nama::Globals qw(:all);
+use Modern::Perl; use Audio::Nama::Log qw(logpkg);
+no warnings qw(uninitialized redefine);
+our @ISA = 'Audio::Nama::SlaveTrack';
+sub rec_status{
+	my $track = shift;
+	$mode->{mastering} ? 'MON' :  'OFF';
+}
 }
 {
 package Audio::Nama::CacheRecTrack; # for graph generation

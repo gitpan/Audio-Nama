@@ -1,6 +1,7 @@
 # ------ Memoize subroutines ------
 package Audio::Nama;
 use Modern::Perl;
+use Memoize qw(memoize unmemoize);
 
 BEGIN { # OPTMIZATION
 my @wav_functions = qw(
@@ -40,6 +41,14 @@ sub restart_wav_memoize {
 	map{package Audio::Nama::Wav; unmemoize ($_); memoize($_) } 
 		@wav_functions;
 }
+sub latency_memoize { 
+	map{ memoize($_) } ('Audio::Nama::self_latency','Audio::Nama::latency_of');
+}
+sub latency_unmemoize {
+	map{ unmemoize($_) } ('Audio::Nama::self_latency','Audio::Nama::latency_of');
+}
+sub latency_rememoize { latency_unmemoize(); latency_memoize() }
+
 sub init_wav_memoize {
 	return unless $config->{memoize};
 	map{package Audio::Nama::Wav; memoize($_) } @wav_functions;

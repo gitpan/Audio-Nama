@@ -21,7 +21,7 @@
 #     NAME => q[Audio::Nama]
 #     NO_META => q[1]
 #     PREREQ_PM => { Graph=>q[0], JSON::XS=>q[0], Data::Dumper::Concise=>q[0], IPC::Open3=>q[0], Text::Format=>q[0], Modern::Perl=>q[0], List::Util=>q[0], Data::Section::Simple=>q[0], autodie=>q[0], Module::Load::Conditional=>q[0], List::MoreUtils=>q[0], File::Slurp=>q[0], Try::Tiny=>q[0], File::Find::Rule=>q[0], File::Copy=>q[0], AnyEvent=>q[5.0], File::HomeDir=>q[0], File::Copy::Link=>q[0], Event=>q[0], YAML::Tiny=>q[0], ExtUtils::MakeMaker=>q[6.59], Time::HiRes=>q[0], Parse::RecDescent=>q[0], Git::Repository=>q[0], IO::Select=>q[0], IO::Socket=>q[0], Term::ReadLine::Gnu=>q[0], File::Temp=>q[0], Log::Log4perl=>q[0] }
-#     VERSION => q[1.105]
+#     VERSION => q[1.106]
 #     VERSION_FROM => q[lib/Audio/Nama.pm]
 #     dist => { PREOP=>q[$(PERL) -I. "-MModule::Install::Admin" -e "dist_preop(q($(DISTVNAME)))"] }
 #     realclean => { FILES=>q[MYMETA.yml] }
@@ -63,11 +63,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Audio::Nama
 NAME_SYM = Audio_Nama
-VERSION = 1.105
+VERSION = 1.106
 VERSION_MACRO = VERSION
-VERSION_SYM = 1_105
+VERSION_SYM = 1_106
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 1.105
+XS_VERSION = 1.106
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -165,7 +165,7 @@ C_FILES  =
 O_FILES  = 
 H_FILES  = 
 MAN1PODS = script/nama
-MAN3PODS = lib/Audio/Nama.pm \
+MAN3PODS = lib/Audio/Nama/ChainSetup.pm \
 	lib/Audio/Nama/Object.pm
 
 # Where is the Config information that we are using/depend on
@@ -214,6 +214,7 @@ TO_INST_PM = lib/Audio/Nama.pm \
 	lib/Audio/Nama/Initializations.pm \
 	lib/Audio/Nama/Insert.pm \
 	lib/Audio/Nama/Jack.pm \
+	lib/Audio/Nama/Lat.pm \
 	lib/Audio/Nama/Latency.pm \
 	lib/Audio/Nama/Log.pm \
 	lib/Audio/Nama/Mark.pm \
@@ -247,10 +248,10 @@ PM_TO_BLIB = lib/Audio/Nama/Mix.pm \
 	blib/lib/Audio/Nama/Custom.pm \
 	lib/Audio/Nama/Globals.pm \
 	blib/lib/Audio/Nama/Globals.pm \
-	lib/Audio/Nama/Mark.pm \
-	blib/lib/Audio/Nama/Mark.pm \
 	lib/Audio/Nama/Config.pm \
 	blib/lib/Audio/Nama/Config.pm \
+	lib/Audio/Nama/Mark.pm \
+	blib/lib/Audio/Nama/Mark.pm \
 	lib/Audio/Nama/Midi.pm \
 	blib/lib/Audio/Nama/Midi.pm \
 	lib/Audio/Nama/EngineSetup.pm \
@@ -269,24 +270,26 @@ PM_TO_BLIB = lib/Audio/Nama/Mix.pm \
 	blib/lib/Audio/Nama/AnalyseLV2.pm \
 	lib/Audio/Nama/Util.pm \
 	blib/lib/Audio/Nama/Util.pm \
-	lib/Audio/Nama/Grammar.pm \
-	blib/lib/Audio/Nama/Grammar.pm \
 	lib/Audio/Nama/Wav.pm \
 	blib/lib/Audio/Nama/Wav.pm \
+	lib/Audio/Nama/Grammar.pm \
+	blib/lib/Audio/Nama/Grammar.pm \
 	lib/Audio/Nama/Assign.pm \
 	blib/lib/Audio/Nama/Assign.pm \
 	lib/Audio/Nama/ChainSetup.pm \
 	blib/lib/Audio/Nama/ChainSetup.pm \
+	lib/Audio/Nama/Lat.pm \
+	blib/lib/Audio/Nama/Lat.pm \
 	lib/Audio/nama.1 \
 	blib/lib/Audio/nama.1 \
 	lib/Audio/Nama/EffectsRegistry.pm \
 	blib/lib/Audio/Nama/EffectsRegistry.pm \
-	lib/Audio/Nama/Track.pm \
-	blib/lib/Audio/Nama/Track.pm \
 	lib/Audio/Nama/Modes.pm \
 	blib/lib/Audio/Nama/Modes.pm \
 	lib/Audio/Nama/Initializations.pm \
 	blib/lib/Audio/Nama/Initializations.pm \
+	lib/Audio/Nama/Track.pm \
+	blib/lib/Audio/Nama/Track.pm \
 	lib/Audio/Nama/Terminal.pm \
 	blib/lib/Audio/Nama/Terminal.pm \
 	lib/Audio/Nama/Bunch.pm \
@@ -295,10 +298,10 @@ PM_TO_BLIB = lib/Audio/Nama/Mix.pm \
 	blib/lib/Audio/Nama/Jack.pm \
 	lib/Audio/Nama/Regions.pm \
 	blib/lib/Audio/Nama/Regions.pm \
-	lib/Audio/Nama/EffectChain.pm \
-	blib/lib/Audio/Nama/EffectChain.pm \
 	lib/Audio/Nama/Graph.pm \
 	blib/lib/Audio/Nama/Graph.pm \
+	lib/Audio/Nama/EffectChain.pm \
+	blib/lib/Audio/Nama/EffectChain.pm \
 	lib/Audio/Nama/Insert.pm \
 	blib/lib/Audio/Nama/Insert.pm \
 	lib/Audio/Nama/Object.pm \
@@ -319,14 +322,14 @@ PM_TO_BLIB = lib/Audio/Nama/Mix.pm \
 	blib/lib/Audio/Nama/EngineRun.pm \
 	lib/Audio/Nama.pm \
 	blib/lib/Audio/Nama.pm \
-	lib/Audio/Nama/Latency.pm \
-	blib/lib/Audio/Nama/Latency.pm \
-	lib/Audio/Nama/Effects.pm \
-	blib/lib/Audio/Nama/Effects.pm \
-	lib/Audio/Nama/Bus.pm \
-	blib/lib/Audio/Nama/Bus.pm \
 	lib/Audio/Nama/Memoize.pm \
 	blib/lib/Audio/Nama/Memoize.pm \
+	lib/Audio/Nama/Latency.pm \
+	blib/lib/Audio/Nama/Latency.pm \
+	lib/Audio/Nama/Bus.pm \
+	blib/lib/Audio/Nama/Bus.pm \
+	lib/Audio/Nama/Effects.pm \
+	blib/lib/Audio/Nama/Effects.pm \
 	lib/Audio/Nama/Options.pm \
 	blib/lib/Audio/Nama/Options.pm \
 	lib/Audio/Nama/Fade.pm \
@@ -401,7 +404,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Audio-Nama
-DISTVNAME = Audio-Nama-1.105
+DISTVNAME = Audio-Nama-1.106
 
 
 # --- MakeMaker macro section:
@@ -556,13 +559,13 @@ POD2MAN = $(POD2MAN_EXE)
 
 manifypods : pure_all  \
 	script/nama \
-	lib/Audio/Nama/Object.pm \
-	lib/Audio/Nama.pm
+	lib/Audio/Nama/ChainSetup.pm \
+	lib/Audio/Nama/Object.pm
 	$(NOECHO) $(POD2MAN) --section=1 --perm_rw=$(PERM_RW) \
 	  script/nama $(INST_MAN1DIR)/nama.$(MAN1EXT) 
 	$(NOECHO) $(POD2MAN) --section=3 --perm_rw=$(PERM_RW) \
-	  lib/Audio/Nama/Object.pm $(INST_MAN3DIR)/Audio::Nama::Object.$(MAN3EXT) \
-	  lib/Audio/Nama.pm $(INST_MAN3DIR)/Audio::Nama.$(MAN3EXT) 
+	  lib/Audio/Nama/ChainSetup.pm $(INST_MAN3DIR)/Audio::Nama::ChainSetup.$(MAN3EXT) \
+	  lib/Audio/Nama/Object.pm $(INST_MAN3DIR)/Audio::Nama::Object.$(MAN3EXT) 
 
 
 
@@ -936,7 +939,7 @@ testdb_static :: testdb_dynamic
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="$(DISTNAME)" VERSION="1.105">' > $(DISTNAME).ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="$(DISTNAME)" VERSION="1.106">' > $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR>Joel Roth, &lt;joelz@pobox.com&gt;</AUTHOR>' >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> $(DISTNAME).ppd
@@ -984,8 +987,8 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  lib/Audio/Nama/Graphical.pm blib/lib/Audio/Nama/Graphical.pm \
 	  lib/Audio/Nama/Custom.pm blib/lib/Audio/Nama/Custom.pm \
 	  lib/Audio/Nama/Globals.pm blib/lib/Audio/Nama/Globals.pm \
-	  lib/Audio/Nama/Mark.pm blib/lib/Audio/Nama/Mark.pm \
 	  lib/Audio/Nama/Config.pm blib/lib/Audio/Nama/Config.pm \
+	  lib/Audio/Nama/Mark.pm blib/lib/Audio/Nama/Mark.pm \
 	  lib/Audio/Nama/Midi.pm blib/lib/Audio/Nama/Midi.pm \
 	  lib/Audio/Nama/EngineSetup.pm blib/lib/Audio/Nama/EngineSetup.pm \
 	  lib/Audio/Nama/Text.pm blib/lib/Audio/Nama/Text.pm \
@@ -995,21 +998,22 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  lib/Audio/Nama/Log.pm blib/lib/Audio/Nama/Log.pm \
 	  lib/Audio/Nama/AnalyseLV2.pm blib/lib/Audio/Nama/AnalyseLV2.pm \
 	  lib/Audio/Nama/Util.pm blib/lib/Audio/Nama/Util.pm \
-	  lib/Audio/Nama/Grammar.pm blib/lib/Audio/Nama/Grammar.pm \
 	  lib/Audio/Nama/Wav.pm blib/lib/Audio/Nama/Wav.pm \
+	  lib/Audio/Nama/Grammar.pm blib/lib/Audio/Nama/Grammar.pm \
 	  lib/Audio/Nama/Assign.pm blib/lib/Audio/Nama/Assign.pm \
 	  lib/Audio/Nama/ChainSetup.pm blib/lib/Audio/Nama/ChainSetup.pm \
+	  lib/Audio/Nama/Lat.pm blib/lib/Audio/Nama/Lat.pm \
 	  lib/Audio/nama.1 blib/lib/Audio/nama.1 \
 	  lib/Audio/Nama/EffectsRegistry.pm blib/lib/Audio/Nama/EffectsRegistry.pm \
-	  lib/Audio/Nama/Track.pm blib/lib/Audio/Nama/Track.pm \
 	  lib/Audio/Nama/Modes.pm blib/lib/Audio/Nama/Modes.pm \
 	  lib/Audio/Nama/Initializations.pm blib/lib/Audio/Nama/Initializations.pm \
+	  lib/Audio/Nama/Track.pm blib/lib/Audio/Nama/Track.pm \
 	  lib/Audio/Nama/Terminal.pm blib/lib/Audio/Nama/Terminal.pm \
 	  lib/Audio/Nama/Bunch.pm blib/lib/Audio/Nama/Bunch.pm \
 	  lib/Audio/Nama/Jack.pm blib/lib/Audio/Nama/Jack.pm \
 	  lib/Audio/Nama/Regions.pm blib/lib/Audio/Nama/Regions.pm \
-	  lib/Audio/Nama/EffectChain.pm blib/lib/Audio/Nama/EffectChain.pm \
 	  lib/Audio/Nama/Graph.pm blib/lib/Audio/Nama/Graph.pm \
+	  lib/Audio/Nama/EffectChain.pm blib/lib/Audio/Nama/EffectChain.pm \
 	  lib/Audio/Nama/Insert.pm blib/lib/Audio/Nama/Insert.pm \
 	  lib/Audio/Nama/Object.pm blib/lib/Audio/Nama/Object.pm \
 	  lib/Audio/Nama/CacheTrack.pm blib/lib/Audio/Nama/CacheTrack.pm \
@@ -1020,12 +1024,12 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  lib/Audio/Nama/Wavinfo.pm blib/lib/Audio/Nama/Wavinfo.pm \
 	  lib/Audio/Nama/EngineRun.pm blib/lib/Audio/Nama/EngineRun.pm \
 	  lib/Audio/Nama.pm blib/lib/Audio/Nama.pm \
-	  lib/Audio/Nama/Latency.pm blib/lib/Audio/Nama/Latency.pm \
-	  lib/Audio/Nama/Effects.pm blib/lib/Audio/Nama/Effects.pm \
-	  lib/Audio/Nama/Bus.pm blib/lib/Audio/Nama/Bus.pm \
 	  lib/Audio/Nama/Memoize.pm blib/lib/Audio/Nama/Memoize.pm \
-	  lib/Audio/Nama/Options.pm blib/lib/Audio/Nama/Options.pm 
+	  lib/Audio/Nama/Latency.pm blib/lib/Audio/Nama/Latency.pm \
+	  lib/Audio/Nama/Bus.pm blib/lib/Audio/Nama/Bus.pm \
+	  lib/Audio/Nama/Effects.pm blib/lib/Audio/Nama/Effects.pm 
 	$(NOECHO) $(ABSPERLRUN) -MExtUtils::Install -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', q[$(PM_FILTER)], '\''$(PERM_DIR)'\'')' -- \
+	  lib/Audio/Nama/Options.pm blib/lib/Audio/Nama/Options.pm \
 	  lib/Audio/Nama/Fade.pm blib/lib/Audio/Nama/Fade.pm \
 	  lib/Audio/Nama/MuteSoloFade.pm blib/lib/Audio/Nama/MuteSoloFade.pm 
 	$(NOECHO) $(TOUCH) pm_to_blib

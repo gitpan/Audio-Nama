@@ -1,5 +1,11 @@
 # --------- Project related subroutines ---------
 
+{
+package Audio::Nama::Project;
+use Modern::Perl; use Carp;
+sub hello { my $self = shift; say "hello $self: ",Audio::Nama::Dumper $Audio::Nama::project}
+}
+
 package Audio::Nama;
 use Modern::Perl;
 use Carp;
@@ -67,14 +73,18 @@ sub initialize_project_data {
 	initialize_effects_data();
 
 	# $is_armed = 0;
-	
+
 	$setup->{_old_snapshot} = {};
+
 	$mode->{preview} = $config->{initial_mode};
 	$mode->{mastering} = 0;
+
 	$project->{save_file_version_number} = 0; 
 	$project->{track_comments} = {};
 	$project->{track_version_comments} = {};
 	$project->{undo_buffer} = [];
+	$project->{repo} = undef;
+	$project->{artist} = undef;
 	
 	$project->{bunch} = {};	
 	
@@ -113,7 +123,7 @@ sub initialize_effects_data {
 sub load_project {
 	logsub("&load_project");
 	my %args = @_;
-	logpkg(__FILE__,__LINE__,'debug', sub{yaml_out \%args});
+	logpkg(__FILE__,__LINE__,'debug', sub{json_out \%args});
 	throw("no project name.. doing nothing."),return 
 		unless $args{name} or $project->{name};
 
@@ -138,6 +148,7 @@ sub load_project {
 	# read_config( global_config() ); 
 	
 	teardown_engine();
+	trigger_rec_cleanup_hooks();
 	initialize_project_data();
 	remove_riff_header_stubs(); 
 	cache_wav_info();
@@ -222,7 +233,7 @@ sub dig_ruins { # only if there are no tracks
 	# look for wave files
 		
 	my $d = this_wav_dir();
-	opendir my $wav, $d or carp "couldn't open $d: $!";
+	opendir my $wav, $d or carp "couldn't open directory $d: $!";
 
 	# remove version numbers
 	

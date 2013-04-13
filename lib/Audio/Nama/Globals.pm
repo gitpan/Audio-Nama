@@ -6,6 +6,10 @@ use Modern::Perl;
 *tn = \%Audio::Nama::Track::by_name;
 *ti = \%Audio::Nama::Track::by_index;
 
+# and the graph
+
+*g = \$Audio::Nama::ChainSetup::g;
+
 use Exporter;
 our @ISA = 'Exporter';
 our @EXPORT_OK = qw(
@@ -20,6 +24,7 @@ $prompt
 %tn
 %ti
 %bn
+$g
 $debug
 $debug2
 $ui
@@ -51,8 +56,8 @@ $project
 $this_track_name
 %track_comments
 %track_version_comments
+@tracked_vars
 @persistent_vars
-@persistent_untracked_vars
 
 );
 
@@ -82,8 +87,8 @@ $project
 
 	var_lists => [qw(
 
+						@tracked_vars
 						@persistent_vars
-						@persistent_untracked_vars
 						@global_effect_chain_vars
 	)],
 
@@ -99,6 +104,7 @@ $prompt
 %tn
 %ti
 %bn
+$g
 $debug
 $debug2
 
@@ -126,8 +132,8 @@ $this_track_name
 
 %track_comments
 %track_version_comments
+@tracked_vars
 @persistent_vars
-@persistent_untracked_vars
 
 
 	)],

@@ -15,7 +15,7 @@ sub poll_jack {
 sub jack_update {
 	logsub("&jack_update");
 	# cache current JACK status
-	#
+	
 	# skip if Ecasound is busy
 	return if engine_running();
 
@@ -23,14 +23,13 @@ sub jack_update {
 		# reset our clients data 
 		$jack->{clients} = {};
 
-		#$jack->{use_jacks} 
-		#	?  jacks_get_port_latency() 
-		#	:  
-		parse_port_latency();
+		$jack->{use_jacks} 
+			?  jacks_get_port_latency() 
+			:  parse_port_latency();
 		parse_ports_list();
 
-		# we know that JACK capture latency is 1 period
-		$jack->{period} = $jack->{clients}->{system}->{capture}->{max};
+		my ($bufsize) = qx(jack_bufsize);
+		($jack->{periodsize}) = $bufsize =~ /(\d+)/;
 
 	} else {  }
 }
@@ -76,6 +75,9 @@ for (my $i = 0; $i < $plist->length(); $i++) {
 
     my $port = $jc->getPort($pname);
 
+	#my @connections = $jc->getAllConnections($client_name, $port_name);
+	#say for @connections;
+
     my $platency = $port->getLatencyRange($jacks::JackPlaybackLatency);
     my $pmin = $platency->min();
     my $pmax = $platency->max();
@@ -97,6 +99,33 @@ for (my $i = 0; $i < $plist->length(); $i++) {
 
 
 }
+
+sub parse_port_connections {
+	my $j = shift || qx(jack_lsp -c 2> /dev/null); 
+	return unless $j;
+
+	# initialize
+	$jack->{connections} = {}; 
+	
+	# convert to single lines
+	$j =~ s/\n\s+/ /sg;
+
+	my @lines = split "\n",$j;
+	#say for @ports;
+
+	for (@lines){
+	
+		my ($port, @connections) = split " ", $_;
+		#say "$port @connections";
+		$jack->{connections}->{$port} = \@connections;
+		
+	}
+}
+sub jack_port_to_nama {
+	my $jack_port = shift;
+	grep{ /Nama/ and $jack->{is_own_port}->{$_} } @{ $jack->{connections}->{$jack_port} };
+}
+	
 sub parse_port_latency {
 	
 	# default to use output of jack_lsp -l
@@ -251,7 +280,9 @@ my $jack_connect_code = sub
 		my $debug++;
 		my $cmd = qq(jack_connect $port1 $port2);
 		logpkg(__FILE__,__LINE__,'debug', $cmd);
-		system $cmd;
+		system($cmd) == 0
+		   or die "system $cmd failed: $?";
+
 	};
 sub connect_jack_ports_list {
 
@@ -276,7 +307,8 @@ sub connect_jack_ports_list {
 
 		# write config file
 		initialize_jack_plumbing_conf();
-		open $fh, ">>", jack_plumbing_conf();
+		open($fh, ">>", jack_plumbing_conf())
+			or die("can't open ".jack_plumbing_conf()." for append: $!");
 		print $fh $plumbing_header;
 		make_connections($jack_plumbing_code, \@source_tracks, 'in' );
 		make_connections($jack_plumbing_code, \@send_tracks,   'out');
@@ -348,13 +380,39 @@ sub start_jack_plumbing {
 	if ( 	$config->{use_jack_plumbing}				# not disabled in namarc
 			and ! ($config->{opts}->{J} or $config->{opts}->{A})	# we are not testing   
 
-	){ system('jack.plumbing >/dev/null 2>&1 &') }
+	){ system('jack.plumbing >/dev/null 2>&1 &') == 0 
+			or die "can't run jack.plumbing: $?"
+	}
 }
 sub jack_client : lvalue {
 	my $name = shift;
 	logit(__LINE__,'Audio::Nama::Jack','info',"$name: non-existent JACK client") if not $jack->{clients}->{$name} ;
 	$jack->{clients}->{$name}
 }
+sub port_mapping {
+	my $jack_port = shift;
+	my $own_port;
+	#.....
+	$own_port
+}
+
+sub register_other_ports { 
+	return unless $jack->{jackd_running};
+	$jack->{is_other_port} = { map{ chomp; $_ => 1 } qx(jack_lsp) } 
+}
+
+sub register_own_ports { # distinct from other Nama instances 
+	return unless $jack->{jackd_running};
+	$jack->{is_own_port} = 
+	{ 
+		map{chomp; $_ => 1}
+		grep{ ! $jack->{is_other_port}->{$_} }
+		grep{ /^Nama/ } 
+		qx(jack_lsp)
+	} 
+}
+
+
 1;
 __END__
 	
