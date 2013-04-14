@@ -21,7 +21,7 @@
 #     NAME => q[Audio::Nama]
 #     NO_META => q[1]
 #     PREREQ_PM => { Graph=>q[0], JSON::XS=>q[0], Data::Dumper::Concise=>q[0], IPC::Open3=>q[0], Text::Format=>q[0], Modern::Perl=>q[0], List::Util=>q[0], Data::Section::Simple=>q[0], autodie=>q[0], Module::Load::Conditional=>q[0], List::MoreUtils=>q[0], File::Slurp=>q[0], Try::Tiny=>q[0], File::Find::Rule=>q[0], File::Copy=>q[0], AnyEvent=>q[5.0], File::HomeDir=>q[0], File::Copy::Link=>q[0], Event=>q[0], YAML::Tiny=>q[0], ExtUtils::MakeMaker=>q[6.59], Time::HiRes=>q[0], Parse::RecDescent=>q[0], Git::Repository=>q[0], IO::Select=>q[0], IO::Socket=>q[0], Term::ReadLine::Gnu=>q[0], File::Temp=>q[0], Log::Log4perl=>q[0] }
-#     VERSION => q[1.106]
+#     VERSION => q[1.107]
 #     VERSION_FROM => q[lib/Audio/Nama.pm]
 #     dist => { PREOP=>q[$(PERL) -I. "-MModule::Install::Admin" -e "dist_preop(q($(DISTVNAME)))"] }
 #     realclean => { FILES=>q[MYMETA.yml] }
@@ -63,11 +63,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Audio::Nama
 NAME_SYM = Audio_Nama
-VERSION = 1.106
+VERSION = 1.107
 VERSION_MACRO = VERSION
-VERSION_SYM = 1_106
+VERSION_SYM = 1_107
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 1.106
+XS_VERSION = 1.107
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -404,7 +404,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Audio-Nama
-DISTVNAME = Audio-Nama-1.106
+DISTVNAME = Audio-Nama-1.107
 
 
 # --- MakeMaker macro section:
@@ -939,7 +939,7 @@ testdb_static :: testdb_dynamic
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="$(DISTNAME)" VERSION="1.106">' > $(DISTNAME).ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="$(DISTNAME)" VERSION="1.107">' > $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR>Joel Roth, &lt;joelz@pobox.com&gt;</AUTHOR>' >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> $(DISTNAME).ppd
