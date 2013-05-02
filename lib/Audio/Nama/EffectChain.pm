@@ -145,14 +145,14 @@ sub new {
 		$vals{inserts_data} ||= [];
 		$vals{ops_list} 	||= [];
 		$vals{ops_data} 	||= {};
-		croak "undeclared field: @_" if grep{ ! $_is_field{$_} } keys %vals;
+		croak "undeclared field in: @_" if grep{ ! $_is_field{$_} } keys %vals;
 		croak "must have exactly one of 'global' or 'project' fields defined" 
-			unless ($vals{global} xor $vals{project});
-		# we expect some effects
+			unless ($vals{attrib}{global} xor $vals{attrib}{project});
 
 		logpkg(__FILE__,__LINE__,'debug','constructor arguments ', sub{ json_out(\%vals) });
 
-		logpkg(__FILE__,__LINE__,'debug',"Nether ops_list or nor insert_data is present") 
+		# we expect some effects
+		logpkg(__FILE__,__LINE__,'warn',"Nether ops_list or nor insert_data is present") 
 			if ! scalar @{$vals{ops_list}} and ! scalar @{$vals{inserts_data}};
 
 		my $n = $vals{n} || ++$n;

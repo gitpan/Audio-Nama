@@ -57,4 +57,4 @@ requires:
 resources:
   license: http://opensource.org/licenses/gpl-license.php
   repository: https://github.com/bolangi/nama
-version: 1.107
+version: 1.108
