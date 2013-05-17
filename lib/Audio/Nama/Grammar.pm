@@ -53,7 +53,7 @@ sub process_line {
 	logpkg(__FILE__,__LINE__,'debug',"user input: $user_input");
 	if (defined $user_input and $user_input !~ /^\s*$/) {
 		$text->{term}->addhistory($user_input) 
-			unless $user_input eq $text->{previous_cmd};
+			unless $user_input eq $text->{previous_cmd} or ! $text->{term};
 		$text->{previous_cmd} = $user_input;
 		if ($mode->{midish_terminal}){
 				$user_input =~ /^\s*(midish_mode_off|mmx)/ 
@@ -150,20 +150,27 @@ sub do_user_command {
 sub do_script {
 
 	my $name = shift;
-	my $filename;
-	# look in project_dir() and project_root()
-	# if filename provided does not contain slash
-	if( $name =~ m!/!){ $filename = $name }
-	else {
-		$filename = join_path(project_dir(),$name);
-		if(-e $filename){}
-		else{ $filename = join_path(project_root(),$name) }
+	my $script;
+	if ($name =~ / /){
+		$script = $name
 	}
-	-e $filename or say("$filename: file not found. Skipping"), return;
-	my @lines = split "\n",read_file($filename);
+	else {
+		my $filename;
+		# look in project_dir() and project_root()
+		# if filename provided does not contain slash
+		if( $name =~ m!/!){ $filename = $name }
+		else {
+			$filename = join_path(project_dir(),$name);
+			if(-e $filename){}
+			else{ $filename = join_path(project_root(),$name) }
+		}
+		-e $filename or say("$filename: file not found. Skipping"), return;
+		$script = read_file($filename)
+	}
+	my @lines = split "\n",$script;
 	my $old_opt_r = $config->{opts}->{R};
 	$config->{opts}->{R} = 1; # turn off auto reconfigure
-	for my $input (@lines) { process_line($input)};
+	for my $input (@lines) { process_line($input) unless $input =~ /^\s*#/};
 	$config->{opts}->{R} = $old_opt_r;
 }
 

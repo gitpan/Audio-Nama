@@ -140,6 +140,8 @@ my %dispatch = (
 
 	# connect loop device, with verification
 	loop  => sub { $bus->send_id =~ /^\w+_(in|out)$/ },
+
+	null => sub {},
 );
 
 sub apply {
@@ -150,20 +152,21 @@ sub apply {
 	$logger->debug( "Expected track as bus destination, found type: (",
 		$bus->send_type, ") id: (", $bus->send_id, q[)] );
 	map{ 
-		# connect signal sources to tracks
+		# connect member track input paths
 		$logger->debug( "track ".$_->name);
 		my @path = $_->input_path;
 		$g->add_path(@path) if @path;
 		$logger->debug("input path: @path") if scalar @path;
 
 		try{ $logger->debug( join " ", "bus output:", $_->name, $bus->send_id) };
-		$g->add_edge($_->name, $bus->send_id)
+
+		# connect member track outputs to target
+		Audio::Nama::Graph::add_path_for_send($g, $_->name, $bus->send_type, $bus->send_id )
 			if 	try { $dispatch{$bus->send_type}->() } 
 			catch {  warn "caught error: $_" } ;
 		
 		# add paths for recording
-		#
-		#
+		
 		# say "rec status: ",$_->rec_status;
 		# say "rec defeat: ",$_->rec_defeat; 
 		# say q($mode->{preview}: ),$Audio::Nama::mode->{preview};
@@ -175,7 +178,7 @@ sub apply {
 			and ! $_->rec_defeat
 				and $Audio::Nama::mode->{preview} !~ /doodle|preview/ ;
 
-	} grep{ $_->group eq $bus->group} Audio::Nama::Track::all()
+	} grep {$_->rec_status ne 'OFF'} grep{ $_->group eq $bus->group} Audio::Nama::Track::all()
 }
 }
 sub remove {
@@ -199,17 +202,6 @@ sub remove {
 	
 	delete $by_name{$bus->name};
 } 
-}
-{
-package Audio::Nama::MasterBus;
-use Modern::Perl; use Carp; our @ISA = 'Audio::Nama::SubBus';
-sub apply {
-	my ($bus,$g) = @_;
-	$bus->SUPER::apply($g);
-	map { $g->add_edge($_->name, $bus->send_id) } 
-	grep{ $_->group eq $bus->group} 
-	Audio::Nama::Track::all()
-}
 }
 {
 package Audio::Nama::SendBusRaw;
@@ -287,20 +279,16 @@ sub add_sub_bus {
 
 	# create mix track
 	@args = ( 
-		width 		=> 2,     # default to stereo 
 		rec_defeat	=> 1,     # set to rec_defeat (don't record signal)
-		rw 			=> 'REC', # essentially 'on'
+		is_mix_track => 1,
+		rw 			=> 'REC', # live (non WAV file) input
 		@args
 	);
 
 	$tn{$name} and Audio::Nama::pager3( qq($name: setting as mix track for bus "$name"));
 
-	my $track = $tn{$name} // add_track($name);
+	my $track = $tn{$name}// add_track($name, width => 2);
 
-	# convert host track to mix track
-	
-	$track->set(was_class => ref $track); # save the current track (sub)class
-	$track->set_track_class('Audio::Nama::MixTrack'); 
 	$track->set( @args );
 	
 }

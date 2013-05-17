@@ -397,6 +397,22 @@ sub restore_state_from_file {
 		map{ $_->{class} = 'Audio::Nama::BoostTrack' } 
 		grep{ $_->{name} eq 'Boost' } @tracks_data;
 	}
+	if ( $project->{save_file_version_number} <= 1.109){ 
+		map
+		{ 	if ($_->{class} eq 'Audio::Nama::MixTrack') { 
+				$_->{is_mix_track}++;
+				$_->{class} = $_->{was_class};
+				$_->{class} = 'Audio::Nama::Track';
+		  	}
+		  	delete $_->{was_class} 
+		} @tracks_data;
+		map
+		{    if($_->{class} eq 'Audio::Nama::MasterBus') {
+				$_->{class} = 'Audio::Nama::SubBus';
+			 }
+		} @bus_data;
+
+	}
 
 	#######################################
 
@@ -405,14 +421,11 @@ sub restore_state_from_file {
 
 	Audio::Nama::Bus::initialize();	
 
-	create_system_buses(); 
-
 	# restore user buses
 		
-	# Main exists, therefore is not created, stored values 
-	# are lost.  TODO
-	
 	map{ my $class = $_->{class}; $class->new( %$_ ) } @bus_data;
+
+	create_system_buses();  # any that are missing
 
 	# restore user tracks
 	

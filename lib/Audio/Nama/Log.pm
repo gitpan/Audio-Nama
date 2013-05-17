@@ -53,6 +53,7 @@ Audio::Nama::Options
 Audio::Nama::Persistence
 Audio::Nama::Project
 Audio::Nama::Regions
+Audio::Nama::StereoTo51
 Audio::Nama::Terminal
 Audio::Nama::Text
 Audio::Nama::Track

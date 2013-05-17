@@ -2964,6 +2964,14 @@ C<edit_rec_cleanup_hook>
 
 =back
 
+=head4 B<remove_fader_effect> (rffx) - Remove vol pan or fader on current track
+
+=over 8
+
+C<remove_fader_effect> vol | pan | fader
+
+=back
+
 =head1 REALTIME OPERATION
 
 Nama selects realtime or nonrealtime parameters based on the

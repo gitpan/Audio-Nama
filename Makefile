@@ -1,7 +1,7 @@
 # This Makefile is for the Audio::Nama extension to perl.
 #
 # It was generated automatically by MakeMaker version
-# 6.62 (Revision: 66200) from the contents of
+# 6.57_05 (Revision: 65705) from the contents of
 # Makefile.PL. Don't edit this file, edit Makefile.PL instead.
 #
 #       ANY CHANGES MADE HERE WILL BE LOST!
@@ -13,7 +13,6 @@
 
 #     AUTHOR => [q[Joel Roth, <joelz@pobox.com>]]
 #     BUILD_REQUIRES => { ExtUtils::MakeMaker=>q[6.59] }
-#     CONFIGURE_REQUIRES => {  }
 #     DISTNAME => q[Audio-Nama]
 #     EXE_FILES => [q[script/nama]]
 #     LICENSE => q[gpl]
@@ -21,7 +20,7 @@
 #     NAME => q[Audio::Nama]
 #     NO_META => q[1]
 #     PREREQ_PM => { Graph=>q[0], JSON::XS=>q[0], Data::Dumper::Concise=>q[0], IPC::Open3=>q[0], Text::Format=>q[0], Modern::Perl=>q[0], List::Util=>q[0], Data::Section::Simple=>q[0], autodie=>q[0], Module::Load::Conditional=>q[0], List::MoreUtils=>q[0], File::Slurp=>q[0], Try::Tiny=>q[0], File::Find::Rule=>q[0], File::Copy=>q[0], AnyEvent=>q[5.0], File::HomeDir=>q[0], File::Copy::Link=>q[0], Event=>q[0], YAML::Tiny=>q[0], ExtUtils::MakeMaker=>q[6.59], Time::HiRes=>q[0], Parse::RecDescent=>q[0], Git::Repository=>q[0], IO::Select=>q[0], IO::Socket=>q[0], Term::ReadLine::Gnu=>q[0], File::Temp=>q[0], Log::Log4perl=>q[0] }
-#     VERSION => q[1.108]
+#     VERSION => q[1.109]
 #     VERSION_FROM => q[lib/Audio/Nama.pm]
 #     dist => { PREOP=>q[$(PERL) -I. "-MModule::Install::Admin" -e "dist_preop(q($(DISTVNAME)))"] }
 #     realclean => { FILES=>q[MYMETA.yml] }
@@ -63,11 +62,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Audio::Nama
 NAME_SYM = Audio_Nama
-VERSION = 1.108
+VERSION = 1.109
 VERSION_MACRO = VERSION
-VERSION_SYM = 1_108
+VERSION_SYM = 1_109
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 1.108
+XS_VERSION = 1.109
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -79,44 +78,46 @@ INST_MAN3DIR = blib/man3
 MAN1EXT = 1p
 MAN3EXT = 3pm
 INSTALLDIRS = site
-INSTALL_BASE = /home/jroth/perl5
 DESTDIR = 
-PREFIX = $(INSTALL_BASE)
-INSTALLPRIVLIB = $(INSTALL_BASE)/lib/perl5
+PREFIX = /usr
+PERLPREFIX = $(PREFIX)
+SITEPREFIX = $(PREFIX)/local
+VENDORPREFIX = $(PREFIX)
+INSTALLPRIVLIB = $(PERLPREFIX)/share/perl/5.14
 DESTINSTALLPRIVLIB = $(DESTDIR)$(INSTALLPRIVLIB)
-INSTALLSITELIB = $(INSTALL_BASE)/lib/perl5
+INSTALLSITELIB = $(SITEPREFIX)/share/perl/5.14.2
 DESTINSTALLSITELIB = $(DESTDIR)$(INSTALLSITELIB)
-INSTALLVENDORLIB = $(INSTALL_BASE)/lib/perl5
+INSTALLVENDORLIB = $(VENDORPREFIX)/share/perl5
 DESTINSTALLVENDORLIB = $(DESTDIR)$(INSTALLVENDORLIB)
-INSTALLARCHLIB = $(INSTALL_BASE)/lib/perl5/x86_64-linux-gnu-thread-multi
+INSTALLARCHLIB = $(PERLPREFIX)/lib/perl/5.14
 DESTINSTALLARCHLIB = $(DESTDIR)$(INSTALLARCHLIB)
-INSTALLSITEARCH = $(INSTALL_BASE)/lib/perl5/x86_64-linux-gnu-thread-multi
+INSTALLSITEARCH = $(SITEPREFIX)/lib/perl/5.14.2
 DESTINSTALLSITEARCH = $(DESTDIR)$(INSTALLSITEARCH)
-INSTALLVENDORARCH = $(INSTALL_BASE)/lib/perl5/x86_64-linux-gnu-thread-multi
+INSTALLVENDORARCH = $(VENDORPREFIX)/lib/perl5
 DESTINSTALLVENDORARCH = $(DESTDIR)$(INSTALLVENDORARCH)
-INSTALLBIN = $(INSTALL_BASE)/bin
+INSTALLBIN = $(PERLPREFIX)/bin
 DESTINSTALLBIN = $(DESTDIR)$(INSTALLBIN)
-INSTALLSITEBIN = $(INSTALL_BASE)/bin
+INSTALLSITEBIN = $(SITEPREFIX)/bin
 DESTINSTALLSITEBIN = $(DESTDIR)$(INSTALLSITEBIN)
-INSTALLVENDORBIN = $(INSTALL_BASE)/bin
+INSTALLVENDORBIN = $(VENDORPREFIX)/bin
 DESTINSTALLVENDORBIN = $(DESTDIR)$(INSTALLVENDORBIN)
-INSTALLSCRIPT = $(INSTALL_BASE)/bin
+INSTALLSCRIPT = $(PERLPREFIX)/bin
 DESTINSTALLSCRIPT = $(DESTDIR)$(INSTALLSCRIPT)
-INSTALLSITESCRIPT = $(INSTALL_BASE)/bin
+INSTALLSITESCRIPT = $(SITEPREFIX)/bin
 DESTINSTALLSITESCRIPT = $(DESTDIR)$(INSTALLSITESCRIPT)
-INSTALLVENDORSCRIPT = $(INSTALL_BASE)/bin
+INSTALLVENDORSCRIPT = $(VENDORPREFIX)/bin
 DESTINSTALLVENDORSCRIPT = $(DESTDIR)$(INSTALLVENDORSCRIPT)
-INSTALLMAN1DIR = $(INSTALL_BASE)/man/man1
+INSTALLMAN1DIR = $(PERLPREFIX)/share/man/man1
 DESTINSTALLMAN1DIR = $(DESTDIR)$(INSTALLMAN1DIR)
-INSTALLSITEMAN1DIR = $(INSTALL_BASE)/man/man1
+INSTALLSITEMAN1DIR = $(SITEPREFIX)/man/man1
 DESTINSTALLSITEMAN1DIR = $(DESTDIR)$(INSTALLSITEMAN1DIR)
-INSTALLVENDORMAN1DIR = $(INSTALL_BASE)/man/man1
+INSTALLVENDORMAN1DIR = $(VENDORPREFIX)/share/man/man1
 DESTINSTALLVENDORMAN1DIR = $(DESTDIR)$(INSTALLVENDORMAN1DIR)
-INSTALLMAN3DIR = $(INSTALL_BASE)/man/man3
+INSTALLMAN3DIR = $(PERLPREFIX)/share/man/man3
 DESTINSTALLMAN3DIR = $(DESTDIR)$(INSTALLMAN3DIR)
-INSTALLSITEMAN3DIR = $(INSTALL_BASE)/man/man3
+INSTALLSITEMAN3DIR = $(SITEPREFIX)/man/man3
 DESTINSTALLSITEMAN3DIR = $(DESTDIR)$(INSTALLSITEMAN3DIR)
-INSTALLVENDORMAN3DIR = $(INSTALL_BASE)/man/man3
+INSTALLVENDORMAN3DIR = $(VENDORPREFIX)/share/man/man3
 DESTINSTALLVENDORMAN3DIR = $(DESTDIR)$(INSTALLVENDORMAN3DIR)
 PERL_LIB =
 PERL_ARCHLIB = /usr/lib/perl/5.14
@@ -140,9 +141,9 @@ PERM_DIR = 755
 PERM_RW = 644
 PERM_RWX = 755
 
-MAKEMAKER   = /home/jroth/perl5/lib/perl5/ExtUtils/MakeMaker.pm
-MM_VERSION  = 6.62
-MM_REVISION = 66200
+MAKEMAKER   = /usr/share/perl/5.14/ExtUtils/MakeMaker.pm
+MM_VERSION  = 6.57_05
+MM_REVISION = 65705
 
 # FULLEXT = Pathname for extension directory (eg Foo/Bar/Oracle).
 # BASEEXT = Basename part of FULLEXT. May be just equal FULLEXT. (eg Oracle)
@@ -228,6 +229,7 @@ TO_INST_PM = lib/Audio/Nama.pm \
 	lib/Audio/Nama/Persistence.pm \
 	lib/Audio/Nama/Project.pm \
 	lib/Audio/Nama/Regions.pm \
+	lib/Audio/Nama/StereoTo51.pm \
 	lib/Audio/Nama/Terminal.pm \
 	lib/Audio/Nama/Text.pm \
 	lib/Audio/Nama/Track.pm \
@@ -258,6 +260,8 @@ PM_TO_BLIB = lib/Audio/Nama/Mix.pm \
 	blib/lib/Audio/Nama/EngineSetup.pm \
 	lib/Audio/Nama/Text.pm \
 	blib/lib/Audio/Nama/Text.pm \
+	lib/Audio/Nama/StereoTo51.pm \
+	blib/lib/Audio/Nama/StereoTo51.pm \
 	lib/Audio/makeman \
 	blib/lib/Audio/makeman \
 	lib/Audio/Nama/EngineCleanup.pm \
@@ -286,10 +290,10 @@ PM_TO_BLIB = lib/Audio/Nama/Mix.pm \
 	blib/lib/Audio/Nama/EffectsRegistry.pm \
 	lib/Audio/Nama/Modes.pm \
 	blib/lib/Audio/Nama/Modes.pm \
-	lib/Audio/Nama/Initializations.pm \
-	blib/lib/Audio/Nama/Initializations.pm \
 	lib/Audio/Nama/Track.pm \
 	blib/lib/Audio/Nama/Track.pm \
+	lib/Audio/Nama/Initializations.pm \
+	blib/lib/Audio/Nama/Initializations.pm \
 	lib/Audio/Nama/Terminal.pm \
 	blib/lib/Audio/Nama/Terminal.pm \
 	lib/Audio/Nama/Bunch.pm \
@@ -339,7 +343,7 @@ PM_TO_BLIB = lib/Audio/Nama/Mix.pm \
 
 
 # --- MakeMaker platform_constants section:
-MM_Unix_VERSION = 6.62
+MM_Unix_VERSION = 6.57_05
 PERL_MALLOC_DEF = -DPERL_EXTMALLOC_DEF -Dmalloc=Perl_malloc -Dfree=Perl_mfree -Drealloc=Perl_realloc -Dcalloc=Perl_calloc
 
 
@@ -404,7 +408,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Audio-Nama
-DISTVNAME = Audio-Nama-1.108
+DISTVNAME = Audio-Nama-1.109
 
 
 # --- MakeMaker macro section:
@@ -429,8 +433,8 @@ DISTVNAME = Audio-Nama-1.108
 
 PASTHRU = LIBPERL_A="$(LIBPERL_A)"\
 	LINKTYPE="$(LINKTYPE)"\
-	PREFIX="$(PREFIX)"\
-	INSTALL_BASE="$(INSTALL_BASE)"
+	LD="$(LD)"\
+	PREFIX="$(PREFIX)"
 
 
 # --- MakeMaker special_targets section:
@@ -561,9 +565,9 @@ manifypods : pure_all  \
 	script/nama \
 	lib/Audio/Nama/ChainSetup.pm \
 	lib/Audio/Nama/Object.pm
-	$(NOECHO) $(POD2MAN) --section=1 --perm_rw=$(PERM_RW) \
+	$(NOECHO) $(POD2MAN) --section=$(MAN1EXT) --perm_rw=$(PERM_RW) \
 	  script/nama $(INST_MAN1DIR)/nama.$(MAN1EXT) 
-	$(NOECHO) $(POD2MAN) --section=3 --perm_rw=$(PERM_RW) \
+	$(NOECHO) $(POD2MAN) --section=$(MAN3EXT) --perm_rw=$(PERM_RW) \
 	  lib/Audio/Nama/ChainSetup.pm $(INST_MAN3DIR)/Audio::Nama::ChainSetup.$(MAN3EXT) \
 	  lib/Audio/Nama/Object.pm $(INST_MAN3DIR)/Audio::Nama::Object.$(MAN3EXT) 
 
@@ -611,19 +615,18 @@ clean :: clean_subdirs
 	  *$(LIB_EXT) core \
 	  core.[0-9] $(INST_ARCHAUTODIR)/extralibs.all \
 	  core.[0-9][0-9] $(BASEEXT).bso \
-	  pm_to_blib.ts MYMETA.json \
-	  core.[0-9][0-9][0-9][0-9] MYMETA.yml \
-	  $(BASEEXT).x $(BOOTSTRAP) \
-	  perl$(EXE_EXT) tmon.out \
-	  *$(OBJ_EXT) pm_to_blib \
-	  $(INST_ARCHAUTODIR)/extralibs.ld blibdirs.ts \
-	  core.[0-9][0-9][0-9][0-9][0-9] *perl.core \
-	  core.*perl.*.? $(MAKE_APERL_FILE) \
-	  $(BASEEXT).def perl \
-	  core.[0-9][0-9][0-9] mon.out \
-	  lib$(BASEEXT).def perlmain.c \
-	  perl.exe so_locations \
-	  $(BASEEXT).exp 
+	  pm_to_blib.ts core.[0-9][0-9][0-9][0-9] \
+	  MYMETA.yml $(BASEEXT).x \
+	  $(BOOTSTRAP) perl$(EXE_EXT) \
+	  tmon.out *$(OBJ_EXT) \
+	  pm_to_blib $(INST_ARCHAUTODIR)/extralibs.ld \
+	  blibdirs.ts core.[0-9][0-9][0-9][0-9][0-9] \
+	  *perl.core core.*perl.*.? \
+	  $(MAKE_APERL_FILE) $(BASEEXT).def \
+	  perl core.[0-9][0-9][0-9] \
+	  mon.out lib$(BASEEXT).def \
+	  perlmain.c perl.exe \
+	  so_locations $(BASEEXT).exp 
 	- $(RM_RF) \
 	  blib 
 	- $(MV) $(FIRST_MAKEFILE) $(MAKEFILE_OLD) $(DEV_NULL)
@@ -737,12 +740,8 @@ ci :
 
 # --- MakeMaker distmeta section:
 distmeta : create_distdir metafile
-	$(NOECHO) cd $(DISTVNAME) && $(ABSPERLRUN) -MExtUtils::Manifest=maniadd -e 'exit unless -e q{META.yml};' \
-	  -e 'eval { maniadd({q{META.yml} => q{Module YAML meta-data (added by MakeMaker)}}) }' \
+	$(NOECHO) cd $(DISTVNAME) && $(ABSPERLRUN) -MExtUtils::Manifest=maniadd -e 'eval { maniadd({q{META.yml} => q{Module meta-data (added by MakeMaker)}}) } ' \
 	  -e '    or print "Could not add META.yml to MANIFEST: $${'\''@'\''}\n"' --
-	$(NOECHO) cd $(DISTVNAME) && $(ABSPERLRUN) -MExtUtils::Manifest=maniadd -e 'exit unless -f q{META.json};' \
-	  -e 'eval { maniadd({q{META.json} => q{Module JSON meta-data (added by MakeMaker)}}) }' \
-	  -e '    or print "Could not add META.json to MANIFEST: $${'\''@'\''}\n"' --
 
 
 
@@ -782,9 +781,7 @@ doc__install : doc_site_install
 	$(NOECHO) $(ECHO) INSTALLDIRS not defined, defaulting to INSTALLDIRS=site
 
 pure_perl_install :: all
-	$(NOECHO) $(MOD_INSTALL) \
-		read $(PERL_ARCHLIB)/auto/$(FULLEXT)/.packlist \
-		write $(DESTINSTALLARCHLIB)/auto/$(FULLEXT)/.packlist \
+	$(NOECHO) umask 022; $(MOD_INSTALL) \
 		$(INST_LIB) $(DESTINSTALLPRIVLIB) \
 		$(INST_ARCHLIB) $(DESTINSTALLARCHLIB) \
 		$(INST_BIN) $(DESTINSTALLBIN) \
@@ -796,7 +793,7 @@ pure_perl_install :: all
 
 
 pure_site_install :: all
-	$(NOECHO) $(MOD_INSTALL) \
+	$(NOECHO) umask 02; $(MOD_INSTALL) \
 		read $(SITEARCHEXP)/auto/$(FULLEXT)/.packlist \
 		write $(DESTINSTALLSITEARCH)/auto/$(FULLEXT)/.packlist \
 		$(INST_LIB) $(DESTINSTALLSITELIB) \
@@ -809,9 +806,7 @@ pure_site_install :: all
 		$(PERL_ARCHLIB)/auto/$(FULLEXT)
 
 pure_vendor_install :: all
-	$(NOECHO) $(MOD_INSTALL) \
-		read $(VENDORARCHEXP)/auto/$(FULLEXT)/.packlist \
-		write $(DESTINSTALLVENDORARCH)/auto/$(FULLEXT)/.packlist \
+	$(NOECHO) umask 022; $(MOD_INSTALL) \
 		$(INST_LIB) $(DESTINSTALLVENDORLIB) \
 		$(INST_ARCHLIB) $(DESTINSTALLVENDORARCH) \
 		$(INST_BIN) $(DESTINSTALLVENDORBIN) \
@@ -820,50 +815,31 @@ pure_vendor_install :: all
 		$(INST_MAN3DIR) $(DESTINSTALLVENDORMAN3DIR)
 
 doc_perl_install :: all
-	$(NOECHO) $(ECHO) Appending installation info to $(DESTINSTALLARCHLIB)/perllocal.pod
-	-$(NOECHO) $(MKPATH) $(DESTINSTALLARCHLIB)
-	-$(NOECHO) $(DOC_INSTALL) \
-		"Module" "$(NAME)" \
-		"installed into" "$(INSTALLPRIVLIB)" \
-		LINKTYPE "$(LINKTYPE)" \
-		VERSION "$(VERSION)" \
-		EXE_FILES "$(EXE_FILES)" \
-		>> $(DESTINSTALLARCHLIB)/perllocal.pod
 
 doc_site_install :: all
-	$(NOECHO) $(ECHO) Appending installation info to $(DESTINSTALLARCHLIB)/perllocal.pod
-	-$(NOECHO) $(MKPATH) $(DESTINSTALLARCHLIB)
-	-$(NOECHO) $(DOC_INSTALL) \
+	$(NOECHO) $(ECHO) Appending installation info to $(DESTINSTALLSITEARCH)/perllocal.pod
+	-$(NOECHO) umask 02; $(MKPATH) $(DESTINSTALLSITEARCH)
+	-$(NOECHO) umask 02; $(DOC_INSTALL) \
 		"Module" "$(NAME)" \
 		"installed into" "$(INSTALLSITELIB)" \
 		LINKTYPE "$(LINKTYPE)" \
 		VERSION "$(VERSION)" \
 		EXE_FILES "$(EXE_FILES)" \
-		>> $(DESTINSTALLARCHLIB)/perllocal.pod
+		>> $(DESTINSTALLSITEARCH)/perllocal.pod
 
 doc_vendor_install :: all
-	$(NOECHO) $(ECHO) Appending installation info to $(DESTINSTALLARCHLIB)/perllocal.pod
-	-$(NOECHO) $(MKPATH) $(DESTINSTALLARCHLIB)
-	-$(NOECHO) $(DOC_INSTALL) \
-		"Module" "$(NAME)" \
-		"installed into" "$(INSTALLVENDORLIB)" \
-		LINKTYPE "$(LINKTYPE)" \
-		VERSION "$(VERSION)" \
-		EXE_FILES "$(EXE_FILES)" \
-		>> $(DESTINSTALLARCHLIB)/perllocal.pod
 
 
 uninstall :: uninstall_from_$(INSTALLDIRS)dirs
 	$(NOECHO) $(NOOP)
 
 uninstall_from_perldirs ::
-	$(NOECHO) $(UNINSTALL) $(PERL_ARCHLIB)/auto/$(FULLEXT)/.packlist
 
 uninstall_from_sitedirs ::
 	$(NOECHO) $(UNINSTALL) $(SITEARCHEXP)/auto/$(FULLEXT)/.packlist
 
 uninstall_from_vendordirs ::
-	$(NOECHO) $(UNINSTALL) $(VENDORARCHEXP)/auto/$(FULLEXT)/.packlist
+
 
 
 # --- MakeMaker force section:
@@ -939,7 +915,7 @@ testdb_static :: testdb_dynamic
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="$(DISTNAME)" VERSION="1.108">' > $(DISTNAME).ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="$(DISTNAME)" VERSION="1.109">' > $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR>Joel Roth, &lt;joelz@pobox.com&gt;</AUTHOR>' >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> $(DISTNAME).ppd
@@ -992,6 +968,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  lib/Audio/Nama/Midi.pm blib/lib/Audio/Nama/Midi.pm \
 	  lib/Audio/Nama/EngineSetup.pm blib/lib/Audio/Nama/EngineSetup.pm \
 	  lib/Audio/Nama/Text.pm blib/lib/Audio/Nama/Text.pm \
+	  lib/Audio/Nama/StereoTo51.pm blib/lib/Audio/Nama/StereoTo51.pm \
 	  lib/Audio/makeman blib/lib/Audio/makeman \
 	  lib/Audio/Nama/EngineCleanup.pm blib/lib/Audio/Nama/EngineCleanup.pm \
 	  lib/Audio/Nama/Edit.pm blib/lib/Audio/Nama/Edit.pm \
@@ -1006,8 +983,8 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  lib/Audio/nama.1 blib/lib/Audio/nama.1 \
 	  lib/Audio/Nama/EffectsRegistry.pm blib/lib/Audio/Nama/EffectsRegistry.pm \
 	  lib/Audio/Nama/Modes.pm blib/lib/Audio/Nama/Modes.pm \
-	  lib/Audio/Nama/Initializations.pm blib/lib/Audio/Nama/Initializations.pm \
 	  lib/Audio/Nama/Track.pm blib/lib/Audio/Nama/Track.pm \
+	  lib/Audio/Nama/Initializations.pm blib/lib/Audio/Nama/Initializations.pm \
 	  lib/Audio/Nama/Terminal.pm blib/lib/Audio/Nama/Terminal.pm \
 	  lib/Audio/Nama/Bunch.pm blib/lib/Audio/Nama/Bunch.pm \
 	  lib/Audio/Nama/Jack.pm blib/lib/Audio/Nama/Jack.pm \
@@ -1026,9 +1003,9 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  lib/Audio/Nama.pm blib/lib/Audio/Nama.pm \
 	  lib/Audio/Nama/Memoize.pm blib/lib/Audio/Nama/Memoize.pm \
 	  lib/Audio/Nama/Latency.pm blib/lib/Audio/Nama/Latency.pm \
-	  lib/Audio/Nama/Bus.pm blib/lib/Audio/Nama/Bus.pm \
-	  lib/Audio/Nama/Effects.pm blib/lib/Audio/Nama/Effects.pm 
+	  lib/Audio/Nama/Bus.pm blib/lib/Audio/Nama/Bus.pm 
 	$(NOECHO) $(ABSPERLRUN) -MExtUtils::Install -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', q[$(PM_FILTER)], '\''$(PERM_DIR)'\'')' -- \
+	  lib/Audio/Nama/Effects.pm blib/lib/Audio/Nama/Effects.pm \
 	  lib/Audio/Nama/Options.pm blib/lib/Audio/Nama/Options.pm \
 	  lib/Audio/Nama/Fade.pm blib/lib/Audio/Nama/Fade.pm \
 	  lib/Audio/Nama/MuteSoloFade.pm blib/lib/Audio/Nama/MuteSoloFade.pm 

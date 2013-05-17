@@ -35,6 +35,7 @@ our @ISA = 'Audio::Nama::Wav';
 use Audio::Nama::Object qw(
 					class 			
 					was_class		
+					is_mix_track		
 					n   			
 					name
 					group 			
@@ -310,6 +311,7 @@ sub rec_status {
 	if( $track->rw eq 'REC'){
 
 		given( $track->source_type){
+			when('track')		{ return 'REC' }
 			when('jack_client'){
 
 				# we expect an existing JACK client that
@@ -426,39 +428,27 @@ sub snapshot {
 }
 
 
-# for graph-style routing
+# create an edge representing sound source
 
-sub input_path { # signal path, not file path
+sub input_path { 
 
 	my $track = shift;
 
-	# create edge representing live sound source input
-	
-	if($track->rec_status eq 'REC'){
+	# the corresponding bus handles input routing for mix tracks
+	return() if $track->is_mix_track and $track->rec_status eq 'REC';
 
-			# we skip the source if the track is a 'mix track'
-			# i.e. it gets input from other tracks, not 
-			# the specified source, if any.
-			
-			return () if $track->is_mix_track;
+	# the track may route to:
+	# + another track
+	# + an external source (soundcard or JACK client)
+	# + a WAV file
 
-			# comment: individual tracks of a sub bus
-			# connect their outputs to the mix track
-			# (the $bus->apply method takes care of this)
-			#
-			# subtrack ---> mix_track
-			#
-			# later:
-			#  
-			#  subtrack --> mix_track_in --> mix_track
+	if($track->source_type eq 'track'){ ($track->source_id, $track->name) } 
 
-			( input_node($track->source_type) , $track->name)
-	} elsif($track->rec_status eq 'MON' and $mode->{preview} ne 'doodle'){
+	elsif($track->rec_status eq 'REC'){ 
+		(input_node($track->source_type), $track->name) } 
 
-	# create edge representing WAV file input
-
+	elsif($track->rec_status eq 'MON' and $mode->{preview} ne 'doodle'){
 		('wav_in', $track->name) 
-
 	}
 }
 
@@ -508,7 +498,8 @@ sub remove {
 sub soundcard_channel { $_[0] // 1 }
 
 sub set_io {
-	my ($track, $direction, $id) = @_;
+	my $track = shift;
+	my ($direction, $id, $type) = @_;
 	# $direction: send | source
 	
 	# unless we are dealing with a simple query,
@@ -528,17 +519,18 @@ sub set_io {
 	my $type_field = $direction."_type";
 	my $id_field   = $direction."_id";
 
-	# respond to a query (no argument)
+	# respond to query
 	if ( ! $id ){ return $track->$type_field ? $track->$id_field : undef }
 
 	# set values, returning new setting
-	my $type = dest_type( $id );
+	$type ||= dest_type( $id );
+	
 	given ($type){
 	
-		# no data changes needed for some settings
-
-		when('soundcard'){}
-		when ('bus')     {}
+		
+		when('track'){}
+		when('soundcard'){} # no changes needed 
+		when ('bus')     {} # -ditto-
 		#when('loop')     {}  # unused at present
 
 		# rec_defeat tracks with 'null' input
@@ -567,7 +559,7 @@ sub set_io {
 				,"Cannot set JACK client or port as track source."), 
 					return unless $jack->{jackd_running};
 
-			continue; # don't break out of given/when chain
+			continue;
 		} 
 
 		when ('jack_manual'){
@@ -605,16 +597,18 @@ sub set_io {
 	$track->set($id_field => $id);
 } 
 sub source { # command for setting, showing track source
-	my ($track, $id) = @_;
-	$track->set_io( 'source', $id);
+	my $track = shift;
+	my ($id, $type) = @_;
+	$track->set_io( 'source', $id, $type);
 }
 sub send { # command for setting, showing track source
-	my ($track, $id) = @_;
-	$track->set_io( 'send', $id);
-}
-sub set_source { # called from parser 
 	my $track = shift;
-	my ($source, $type) = @_; # we don't usually get $type passed
+	my ($id, $type) = @_;
+	$track->set_io( 'send', $id, $type);
+}
+sub set_source {
+	my $track = shift;
+	my ($source, $type) = @_;
 	my $old_source = $track->input_object_text;
 	$track->set_io('source',$source, $type);
 	my $new_source = $track->input_object_text;;
@@ -656,11 +650,12 @@ sub set_version {
 	}
 }
 
-sub set_send { # wrapper
-	my ($track, $output) = @_;
+sub set_send {
+	my $track = shift;
+	my ($output, $type) = @_;
 	my $old_send = $track->output_object_text;
 	logpkg(__FILE__,__LINE__,'debug', "send was $old_send");
-	$track->send($output);
+	$track->send($output, $type);
 	my $new_send = $track->output_object_text;
 	logpkg(__FILE__,__LINE__,'debug', "send is now $new_send");
 	my $object = $track->output_object_text;
@@ -735,7 +730,6 @@ sub set_off {
 	my $track = shift;
 	$track->set_rw('OFF');
 }
-sub is_mix_track { ref $_[0] =~ /MixTrack/ }
 
 =comment
 mix
@@ -1063,7 +1057,7 @@ use Audio::Nama::Globals qw(:all);
 use Modern::Perl; use Carp; use Audio::Nama::Log qw(logpkg);
 no warnings qw(uninitialized redefine);
 our @ISA = 'Audio::Nama::Track';
-sub rec_status { $_[0]->rw ne 'OFF' ? 'MON' : 'OFF' }
+sub rec_status { $_[0]->rw ne 'OFF' ? 'REC' : 'OFF' }
 #sub rec_status_display { $_[0]->rw ne 'OFF' ? 'MON' : 'OFF' }
 sub busify {}
 sub unbusify {}
@@ -1186,20 +1180,6 @@ use Audio::Nama::Log qw(logpkg);
 our @ISA ='Audio::Nama::Track';
 sub set_version {}
 sub versions { [$_[0]->version] }
-}
-{
-package Audio::Nama::MixTrack;
-use Audio::Nama::Globals qw(:all);
-use Audio::Nama::Log qw(logpkg);
-our @ISA ='Audio::Nama::Track';
-# as a mix track, I have no sources of my own
-# when status is REC
-sub input_path { 
-	my $track = shift;
-	return $track->rec_status eq 'MON'
-		?  $track->SUPER::input_path()	
-		:  ()
-}
 }
 
 

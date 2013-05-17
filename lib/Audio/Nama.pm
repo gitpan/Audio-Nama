@@ -1,7 +1,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = "1.108";
+$VERSION = "1.109";
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -1535,6 +1535,11 @@ edit_rec_cleanup_hook:
   what: edit the REC cleanup hook script for current track
   short: erch
   parameters: none
+remove_fader_effect:
+  type: track
+  short: rffx
+  what: remove vol pan or fader on current track
+  parameters: vol | pan | fader
 # config:
 #   type: general
 #   what: get or set project-specific config values (args may be quoted)
@@ -1893,9 +1898,13 @@ $proposed
 track_name: ident
 existing_track_name: track_name { 
 	my $track_name = $item{track_name};
-	$return = $track_name, return if $Audio::Nama::tn{$track_name}; 
-	print("$track_name: track does not exist.\n"),
-	undef
+	if ($Audio::Nama::tn{$track_name}){
+		$track_name;
+	}
+	else {	
+		print("$track_name: track does not exist.\n");
+		undef
+	}
 }
 
 move_to_bus: _move_to_bus existing_bus_name {
@@ -2076,6 +2085,10 @@ exit: _exit {
 	Audio::Nama::save_state(); 
 	CORE::exit;
 }	
+source: _source ('track'|'t') trackname { 
+	$Audio::Nama::this_track->set_source($item{trackname}, 'track'); 1
+} 
+trackname: existing_track_name
 source: _source source_id { $Audio::Nama::this_track->set_source($item{source_id}); 1 }
 source_id: shellish
 source: _source { 
@@ -2084,6 +2097,9 @@ source: _source {
 		if $Audio::Nama::this_track->rec_status ne 'REC';
 	1;
 }
+send: _send ('track'|'t') trackname { 
+	$Audio::Nama::this_track->set_send($item{trackname}, 'track'); 1
+} 
 send: _send send_id { $Audio::Nama::this_track->set_send($item{send_id}); 1}
 send: _send { $Audio::Nama::this_track->set_send(); 1}
 send_id: shellish
@@ -2101,25 +2117,6 @@ mono: _mono {
 	print $Audio::Nama::this_track->name, ": setting to mono\n";
 	1; }
 
-
-
-
-
-
-off: 'Xxx' {}
-record: 'Xxx' {}
-mon: 'Xxx' {}
-
-command: rw end
-
-rw_setting: 'rec'|'mon'|'off'
-rw: rw_setting {
-	
-	$Audio::Nama::this_track->is_system_track 
-		? $Audio::Nama::this_track->set(rw => uc $item{rw_setting}) 
-		: Audio::Nama::rw_set($Audio::Nama::Bus::by_name{$Audio::Nama::this_bus},$Audio::Nama::this_track,$item{rw_setting}); 
-	1
-}
 rec_defeat: _rec_defeat { 
 	$Audio::Nama::this_track->set(rec_defeat => 1);
 	print $Audio::Nama::this_track->name, ": WAV recording disabled!\n";
@@ -2132,6 +2129,27 @@ rec_enable: _rec_enable {
 		print qq(, but bus "),$Audio::Nama::this_track->group, qq(" has rw setting of $rw.\n),
 		"No WAV file will be recorded.\n";
 	} else { print "!\n" }
+}
+
+off: 'Xxx' {}
+record: 'Xxx' {}
+mon: 'Xxx' {}
+
+
+command: mono
+command: rec_defeat
+command: rec_enable
+command: rw
+
+rw_setting: 'rec'|'mon'|'off' { $return = $item[1] }
+rw: rw_setting {
+	$Audio::Nama::this_track->is_system_track 
+		
+		? $Audio::Nama::this_track->set(rw => uc $item{rw_setting}) 
+
+		
+		: Audio::Nama::rw_set($Audio::Nama::Bus::by_name{$Audio::Nama::this_bus},$Audio::Nama::this_track,$item{rw_setting}); 
+	1
 }
 
 set_version: _set_version dd { $Audio::Nama::this_track->set_version($item{dd}); 1}
@@ -2322,7 +2340,10 @@ add_effect: _add_effect effect value(s?) {
 		values => $values
 	};
 	
-	my $fader = $Audio::Nama::this_track->pan || $Audio::Nama::this_track->vol; 
+	my $fader = Audio::Nama::fx($Audio::Nama::this_track->pan) && $Audio::Nama::this_track->pan 
+			|| Audio::Nama::fx($Audio::Nama::this_track->vol) && $Audio::Nama::this_track->vol; 
+	Audio::Nama::logpkg(__FILE__,__LINE__,'debug',$Audio::Nama::this_track->name,": effect insert point is $fader", 
+	Audio::Nama::Dumper($args));
 	$args->{before} = $fader if $fader;
  	my $id = Audio::Nama::add_effect($args);
 	if ($id)
@@ -3038,6 +3059,12 @@ edit_rec_cleanup_hook: _edit_rec_cleanup_hook {
 	chmod 0755, $Audio::Nama::this_track->rec_cleanup_script();
 	1
 }
+remove_fader_effect: _remove_fader_effect fader_role {
+	Audio::Nama::remove_fader_effect($Audio::Nama::this_track, $item{fader_role});
+	1
+}
+fader_role: 'vol'|'pan'|'fader'
+	
 
 command: help
 command: help_effect
@@ -3253,6 +3280,7 @@ command: for
 command: git
 command: edit_rec_setup_hook
 command: edit_rec_cleanup_hook
+command: remove_fader_effect
 _help: /help\b/ | /h\b/
 _help_effect: /help_effect\b/ | /hfx\b/ | /he\b/
 _find_effect: /find_effect\b/ | /ffx\b/ | /fe\b/
@@ -3467,6 +3495,7 @@ _for: /for\b/
 _git: /git\b/
 _edit_rec_setup_hook: /edit_rec_setup_hook\b/ | /ersh\b/
 _edit_rec_cleanup_hook: /edit_rec_cleanup_hook\b/ | /erch\b/
+_remove_fader_effect: /remove_fader_effect\b/ | /rffx\b/
 @@ chain_op_hints_yml
 ---
 -

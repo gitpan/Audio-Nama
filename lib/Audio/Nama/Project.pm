@@ -296,21 +296,20 @@ sub create_system_buses {
 	
 	map{ Audio::Nama::Bus->new(name => $_ ) } @system_buses;
 
-	# remember to hide them
-	
 	map{ $config->{_is_system_bus}->{$_}++ } @system_buses;
 
 	# create Main bus (the mixer)
 
-	Audio::Nama::MasterBus->new(
+	Audio::Nama::SubBus->new(
 		name 		=> 'Main',
 		send_type 	=> 'track', 
 		send_id => 'Master');
 
-	# create Manual bus (for user routed tracks)
-
-	Audio::Nama::SubBus->new( name => 'Manual');
-	
+	# null bus, routed only from track source_* and send_send_* fields 
+	Audio::Nama::SubBus->new(
+		name 		=> 'null', 
+		send_type => 'null',
+	);
 }
 
 
