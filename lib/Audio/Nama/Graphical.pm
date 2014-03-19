@@ -187,7 +187,7 @@ sub init_gui {
 		 -command => sub { 
 				return if transport_running();
 				save_state($gui->{_save_id});
-				print "Exiting... \n";		
+				pager("Exiting... \n");
 				#$text->{term}->tkRunning(0);
 				#$gui->{ew}->destroy;
 				#$gui->{mw}->destroy;
@@ -373,12 +373,12 @@ sub engine_mode_color {
 				$gui->{_nama_palette}->{Play}; 	# just playback
 		} else { $gui->{_old_bg} } 
 }
-sub user_rec_tracks { some_user_tracks('REC') }
-sub user_mon_tracks { some_user_tracks('MON') }
+sub user_rec_tracks { some_user_tracks(REC) }
+sub user_mon_tracks { some_user_tracks(PLAY) }
 
 sub some_user_tracks {
 	my $which = shift;
-	my @user_tracks = Audio::Nama::Track::all();
+	my @user_tracks = Audio::Nama::audio_tracks();
 	splice @user_tracks, 0, 2; # drop Master and Mixdown tracks
 	return unless @user_tracks;
 	my @selected_user_tracks = grep { $_->rec_status eq $which } @user_tracks;
@@ -392,7 +392,7 @@ sub flash_ready {
 	logpkg(__FILE__,__LINE__,'debug', "flash color: $color");
 	$ui->length_display(-background => $color);
 	$ui->project_label_configure(-background => $color) unless $mode->{preview};
- 	$engine->{events}->{heartbeat} = AE::timer(5, 0, \&reset_engine_mode_color_display);
+ 	$project->{events}->{heartbeat} = AE::timer(5, 0, \&reset_engine_mode_color_display);
 }
 sub reset_engine_mode_color_display { $ui->project_label_configure(
 	-background => $gui->{_nama_palette}->{OffBackground} )
@@ -424,32 +424,22 @@ sub group_gui {
 
 		
 		$gui->{group_rw}->AddItems([
-			'command' => 'REC',
+			'command' => MON,
 			-background => $gui->{_old_bg},
 			-command => sub { 
 				return if Audio::Nama::eval_iam("engine-status") eq 'running';
-				$group->set(rw => 'REC');
-				$gui->{group_rw}->configure(-text => 'REC');
+				$group->set(rw => MON);
+				$gui->{group_rw}->configure(-text => MON);
 				refresh();
 				Audio::Nama::reconfigure_engine()
 				}
 			],[
-			'command' => 'MON',
+			'command' => OFF,
 			-background => $gui->{_old_bg},
 			-command => sub { 
 				return if Audio::Nama::eval_iam("engine-status") eq 'running';
-				$group->set(rw => 'MON');
-				$gui->{group_rw}->configure(-text => 'MON');
-				refresh();
-				Audio::Nama::reconfigure_engine()
-				}
-			],[
-			'command' => 'OFF',
-			-background => $gui->{_old_bg},
-			-command => sub { 
-				return if Audio::Nama::eval_iam("engine-status") eq 'running';
-				$group->set(rw => 'OFF');
-				$gui->{group_rw}->configure(-text => 'OFF');
+				$group->set(rw => OFF);
+				$gui->{group_rw}->configure(-text => OFF);
 				refresh();
 				Audio::Nama::reconfigure_engine()
 				}
@@ -482,7 +472,7 @@ sub global_version_buttons {
 	# the highest version number of all tracks in the
 	# $bn{Main} group
 	
-	my @user_track_indices = grep { $_ > 2 } map {$_->n} Audio::Nama::Track::all();
+	my @user_track_indices = grep { $_ > 2 } map {$_->n} Audio::Nama::audio_tracks();
 	
 		next unless grep{  grep{ $v == $_ } @{ $ti{$_}->versions } }
 			@user_track_indices;
@@ -520,10 +510,20 @@ sub track_gui {
 					#refresh_group();
 					Audio::Nama::reconfigure_engine();
 			}],
+			[ 'command' => "PLAY",
+				-command  => sub { 
+					return if Audio::Nama::eval_iam("engine-status") eq 'running';
+					$ti{$n}->set(rw => "PLAY");
+					$ui->refresh_track($n);
+					#refresh_group();
+					Audio::Nama::reconfigure_engine();
+			}],
 			[ 'command' => "MON",
+				-foreground => 'red',
 				-command  => sub { 
 					return if Audio::Nama::eval_iam("engine-status") eq 'running';
 					$ti{$n}->set(rw => "MON");
+					
 					$ui->refresh_track($n);
 					#refresh_group();
 					Audio::Nama::reconfigure_engine();
@@ -584,7 +584,7 @@ sub track_gui {
 			-value => $v,
 			-command => sub { 
 				return if Audio::Nama::eval_iam("engine-status") eq 'running';
-			#	$ti{$n}->set(rw => 'REC');
+			#	$ti{$n}->set(rw => REC);
 				$ti{$n}->source($v);
 				$ui->refresh_track($n) }
 			)
@@ -793,7 +793,7 @@ sub paint_mute_buttons {
 			-background 		=> $gui->{_nama_palette}->{Mute},
 
 			)} grep { $ti{$_}->old_vol_level}# muted tracks
-				map { $_->n } Audio::Nama::Track::all();  # track numbers
+				map { $_->n } Audio::Nama::audio_tracks();  # track numbers
 }
 
 sub create_master_and_mix_tracks { 
@@ -1055,7 +1055,7 @@ sub make_scale {
 		  -width => 12,
 		  -length => $p{length} ? $p{length} : 100,
 		  -command => sub { Audio::Nama::effect_update($id, $p, $fx->{params}->{$id}->[$p]) },
-			-state => is_read_only($id,$p) ? 'disabled' : 'normal',
+			-state => fxn($id)->is_read_only($p) ? 'disabled' : 'normal',
 		  );
 
 		# auxiliary field for logarithmic display
@@ -1129,9 +1129,9 @@ sub arm_mark_toggle {
 sub marker {
 	my $ui = shift;
 	my $mark = shift; # Mark
-	#print "mark is ", ref $mark, $/;
+	logpkg(__FILE__,__LINE__,'debug',"mark is ", ref $mark);
 	my $pos = $mark->time;
-	#print $pos, " ", int $pos, $/;
+	logpkg(__FILE__,__LINE__,'debug',$pos, " ", int $pos);
 		$gui->{marks}->{$pos} = $gui->{mark_frame}->Button( 
 			-text => (join " ",  colonize( int $pos ), $mark->name),
 			-background => $gui->{_nama_palette}->{OffBackground},
@@ -1164,7 +1164,7 @@ sub get_saved_colors {
 
 	my $pal = $file->gui_palette;
 	$pal .= '.json' unless $pal =~ /\.json$/;
-	say "pal $pal";
+	pager("pal $pal");
 	$pal = -f $pal 
 			? scalar read_file($pal)
 			: get_data_section('default_palette_json');
@@ -1300,41 +1300,40 @@ sub save_palette {
 sub set_widget_color {
 	my ($widget, $status) = @_;
 	my %rw_foreground = (	REC  => $gui->{_nama_palette}->{RecForeground},
+						 	PLAY => $gui->{_nama_palette}->{MonForeground},
 						 	MON => $gui->{_nama_palette}->{MonForeground},
 						 	OFF => $gui->{_nama_palette}->{OffForeground},
 						);
 
 	my %rw_background =  (	REC  => $gui->{_nama_palette}->{RecBackground},
-							MON  => $gui->{_nama_palette}->{MonBackground},
+							PLAY  => $gui->{_nama_palette}->{MonBackground},
+						 	MON => $gui->{_nama_palette}->{MonBackground},
 							OFF  => $gui->{_nama_palette}->{OffBackground});
 
 	$widget->configure( -background => $rw_background{$status} );
 	$widget->configure( -foreground => $rw_foreground{$status} );
 }
-
-
-	
 sub refresh_group { 
 	# main group, in this case we want to skip null group
 	logsub("&refresh_group");
 	
 	
 		my $status;
-		if ( 	grep{ $_->rec_status eq 'REC'} 
+		if ( 	grep{ $_->rec_status eq REC} 
 				map{ $tn{$_} }
 				$bn{Main}->tracks ){
 
-			$status = 'REC'
+			$status = REC
 
-		}elsif(	grep{ $_->rec_status eq 'MON'} 
+		}elsif(	grep{ $_->rec_status eq PLAY} 
 				map{ $tn{$_} }
 				$bn{Main}->tracks ){
 
-			$status = 'MON'
+			$status = PLAY
 
 		}else{ 
 		
-			$status = 'OFF' }
+			$status = OFF }
 
 logit(__LINE__,'Audio::Nama::Refresh','debug', "group status: $status");
 
@@ -1374,25 +1373,25 @@ sub refresh_track {
 	
 	set_widget_color( 	$gui->{tracks}->{$n}->{ch_r},
 				
- 							($rec_status eq 'REC'
+ 							($rec_status eq REC
 								and $n > 2 )
- 								? 'REC'
- 								: 'OFF');
+ 								? REC
+ 								: OFF);
 	
 	set_widget_color( $gui->{tracks}->{$n}->{ch_m},
-							$rec_status eq 'OFF' 
-								? 'OFF'
+							$rec_status eq OFF 
+								? OFF
 								: $ti{$n}->send 
-									? 'MON'
-									: 'OFF');
+									? MON
+									: OFF);
 }
 
 sub refresh {  
 	Audio::Nama::remove_riff_header_stubs();
  	#$ui->refresh_group(); 
-	#map{ $ui->refresh_track($_) } map{$_->n} grep{!  $_->hide} Audio::Nama::Track::all();
-	#map{ $ui->refresh_track($_) } grep{$remove_track_widget{$_} map{$_->n}  Audio::Nama::Track::all();
-	map{ $ui->refresh_track($_) } map{$_->n}  Audio::Nama::Track::all();
+	#map{ $ui->refresh_track($_) } map{$_->n} grep{!  $_->hide} Audio::Nama::audio_tracks();
+	#map{ $ui->refresh_track($_) } grep{$remove_track_widget{$_} map{$_->n}  Audio::Nama::audio_tracks();
+	map{ $ui->refresh_track($_) } map{$_->n}  Audio::Nama::audio_tracks();
 }
 ### end
 

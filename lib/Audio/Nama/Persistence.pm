@@ -5,14 +5,8 @@ package Audio::Nama;
 use File::Copy;
 use Modern::Perl; no warnings 'uninitialized';
 
-sub git { 
-	$config->{use_git} or warn("@_: git command, but git is not enabled.
-You may want to set use_git: 1 in .namarc"), return;
-	
-	logpkg(__FILE__,__LINE__,'debug',"VCS command: git @_"); 
-	$project->{repo}->run(@_) }
-		
 sub save_state {
+	logsub("&save_state");
 	my $filename = shift;
 	if ($filename)
 	{
@@ -29,8 +23,10 @@ sub save_state {
 									: join_path(project_dir(),$filename) 
 	}
 	my $path = $filename || $file->state_store();
-	logsub("&save_state");
 	$project->{save_file_version_number} = $VERSION;
+
+	# store playback position, if possible
+	$project->{playback_position} = eval_iam("getpos") if valid_engine_setup();
 
 	# some stuff get saved independently of our state file
 	
@@ -39,13 +35,11 @@ sub save_state {
 
 	# do nothing more if only Master and Mixdown
 	
-	if (scalar @Audio::Nama::Track::all == 2 ){
-		throw("No user tracks, skipping...");
-		return;
-	}
 
-	print "\nSaving state as ",
-	save_system_state($path), "\n";
+	user_tracks_present() or throw("No user tracks, skipping..."), return;
+	
+	logpkg(__FILE__,__LINE__,'debug',"Saving state as ", $path);
+	save_system_state($path);
 	save_global_effect_chains();
 
 	# store alsa settings
@@ -53,8 +47,8 @@ sub save_state {
 	if ( $config->{opts}->{a} ) {
 		my $filename = $filename;
 		$filename =~ s/\.yml$//;
-		print "storing ALSA settings\n";
-		print qx(alsactl -f $filename.alsa store);
+		pager("storing ALSA settings\n");
+		pager(qx(alsactl -f $filename.alsa store))
 	}
 }
 sub initialize_marshalling_arrays {
@@ -89,11 +83,11 @@ sub save_system_state {
 	
 	# prepare tracks for storage
 	
-	$this_track_name = $this_track->name;
+	$this_track_name = $this_track->name if $this_track;
 
 	logpkg(__FILE__,__LINE__,'debug', "copying tracks data");
 
-	map { push @tracks_data, $_->as_hash } Audio::Nama::Track::all();
+	map { push @tracks_data, $_->as_hash } all_tracks();
 
 	# print "found ", scalar @tracks_data, "tracks\n";
 
@@ -103,27 +97,32 @@ sub save_system_state {
 					qw(ch_r ch_m source_select send_select jack_source jack_send);
 	} @tracks_data;
 
-
 	logpkg(__FILE__,__LINE__,'debug', "copying bus data");
 
-	@bus_data = map{ $_->as_hash } Audio::Nama::Bus::all();
+	@bus_data = map{ $_->as_hash } sort { $a->name cmp $b->name} Audio::Nama::Bus::all();
+
+
+	my $by_n = sub { $a->{n} <=> $b->{n} };
 
 	# prepare inserts data for storage
 	
 	logpkg(__FILE__,__LINE__,'debug', "copying inserts data");
 	
-	@inserts_data = map{ $_->as_hash } values %Audio::Nama::Insert::by_index;
+	@inserts_data = sort $by_n map{ $_->as_hash } values %Audio::Nama::Insert::by_index;
 
 	# prepare marks data for storage (new Mark objects)
 
 	logpkg(__FILE__,__LINE__,'debug', "copying marks data");
-	@marks_data = map{ $_->as_hash } Audio::Nama::Mark::all();
 
-	@fade_data = map{ $_->as_hash } values %Audio::Nama::Fade::by_index;
 
-	@edit_data = map{ $_->as_hash } values %Audio::Nama::Edit::by_index;
+	@marks_data = sort {$a->{time} <=> $b->{time} } map{ $_->as_hash } Audio::Nama::Mark::all();
 
-	@project_effect_chain_data = map { $_->as_hash } Audio::Nama::EffectChain::find(project => 1);
+	@fade_data = sort $by_n map{ $_->as_hash } values %Audio::Nama::Fade::by_index;
+
+	@edit_data = sort $by_n map{ $_->as_hash } values %Audio::Nama::Edit::by_index;
+
+	@project_effect_chain_data = sort $by_n map { $_->as_hash } 
+		Audio::Nama::EffectChain::find(project => 1);
 
 	# save history -- 50 entries, maximum
 
@@ -240,48 +239,6 @@ sub decode {
 }
 }
 
-sub git_tag_exists {
-	my $tag = shift;
-	grep { $tag eq $_ } git( 'tag','--list');
-}
-
-sub tag_branch { "$_[0]-branch" }
-
-sub restore_state_from_vcs {
-	logsub("&restore_state_from_vcs");
-	my $name = shift; # tag or branch
-	
-	# checkout branch if matching branch exists
-	
-    if (git_branch_exists($name)){
-		pager3( qq($name: branch exists. Checking out branch $name.) );
-		git_checkout($name);
-		
-	}
-
-	# checkout branch diverging at tag if matching that tag
-
-	elsif ( git_tag_exists($name) ){
-
-		my $tag = $name;
-		my $branch = tag_branch($tag);
-	
-		if (git_branch_exists($branch)){
-			pager3( qq(tag $tag: matching branch exists. Checking out $branch.) );
-			git_checkout($branch);
-		}
-
-		else {
-			pager3( "Creating and checking out branch $branch from tag $tag");
-			git_create_branch($branch, $tag);
-			
-		}
-	}
- 	else { throw("$name: tag doesn't exist. Cannot checkout."), return  }
-
-	restore_state_from_file();
-}
- 
 sub restore_state_from_file {
 	logsub("&restore_state_from_file");
 	my $filename = shift;
@@ -290,31 +247,21 @@ sub restore_state_from_file {
 		if $filename and not $filename =~ m(/);
 	$filename ||= $file->state_store();
 
+	my ($ref, $path, $source, $suffix); 
+
 	# get state file, newest if more than one
 	# with same name, differing extensions
 	# i.e. State.json and State.yml
 	initialize_marshalling_arrays();
 
-	my( $path, $suffix ) = get_newest($filename);
-	
-	logpkg(__FILE__,__LINE__,'debug', "using file: $path");
-
-	throw(
-		$path ? "path: == $path.* ==," : "undefined path,"
-			," state file not found"), return if ! -f $path;
-
-	my $source = read_file($path);
-	my $ref = decode($source, $suffix);
-	logpkg(__FILE__,__LINE__,'debug', "suffix: $suffix");	
-	logpkg(__FILE__,__LINE__,'debug', "source: $source");
-
+	# restore from default filenames	
 	
 	( $path, $suffix ) = get_newest($file->untracked_state_store);
 	if ($path)
 	{
 		$source = read_file($path);
 
-		my $ref = decode($source, $suffix);
+		$ref = decode($source, $suffix);
 		assign(
 				data	=> $ref,	
 				vars   	=> \@persistent_vars,
@@ -322,7 +269,7 @@ sub restore_state_from_file {
 		assign_singletons( { data => $ref });
 	}
 	
-	( $path, $suffix ) = get_newest($file->state_store);
+	( $path, $suffix ) = get_newest($filename);
 	if ($path)
 	{
 		$source = read_file($path);
@@ -389,22 +336,22 @@ sub restore_state_from_file {
 
 	####### Backward Compatibility ########
 
-	if ( $project->{save_file_version_number} <= 1.100){ 
+	if ( $project->{save_file_version_number} lt "1.100"){ 
 		map{ Audio::Nama::EffectChain::move_attributes($_) } 
 			(@project_effect_chain_data, @global_effect_chain_data)
 	}
-	if ( $project->{save_file_version_number} <= 1.105){ 
+	if ( $project->{save_file_version_number} lt 1.105){ 
 		map{ $_->{class} = 'Audio::Nama::BoostTrack' } 
 		grep{ $_->{name} eq 'Boost' } @tracks_data;
 	}
-	if ( $project->{save_file_version_number} <= 1.109){ 
+	if ( $project->{save_file_version_number} lt "1.109"){ 
 		map
 		{ 	if ($_->{class} eq 'Audio::Nama::MixTrack') { 
 				$_->{is_mix_track}++;
 				$_->{class} = $_->{was_class};
 				$_->{class} = 'Audio::Nama::Track';
 		  	}
-		  	delete $_->{was_class} 
+		  	delete $_->{was_class};
 		} @tracks_data;
 		map
 		{    if($_->{class} eq 'Audio::Nama::MasterBus') {
@@ -413,10 +360,27 @@ sub restore_state_from_file {
 		} @bus_data;
 
 	}
-
+	if ( $project->{save_file_version_number} lt "1.111"){ 
+		map
+		{
+			convert_rw($_);
+			delete $_->{effect_chain_stack} ;
+            delete $_->{rec_defeat};
+            delete $_->{was_class};
+			delete $_->{is_mix_track};
+			$_->{rw} = MON if $_->{name} eq 'Master';
+		} @tracks_data;
+		map
+		{
+			$_->{rw} = MON if $_->{rw} eq 'REC'
+		} @bus_data;
+	}
 	#######################################
-
-
+sub convert_rw {
+	my $h = shift;
+	$h->{rw} = MON, return if $h->{rw} eq 'REC' and ($h->{rec_defeat} or $h->{is_mix_track});
+	$h->{rw} = PLAY, return if $h->{rw} eq 'MON';
+}
 	#  destroy and recreate all buses
 
 	Audio::Nama::Bus::initialize();	
@@ -455,12 +419,6 @@ sub restore_state_from_file {
 		$Audio::Nama::Insert::by_index{$_->{n}} = $_;
 	} @inserts_data;
 
-	$ui->create_master_and_mix_tracks();
-
-	$this_track = $tn{$this_track_name} if $this_track_name;
-	set_current_bus();
-
-	
 	map{ 
 		my $n = $_->{n};
 
@@ -486,19 +444,22 @@ sub restore_state_from_file {
 		}
 	} @tracks_data;
 
+	$ui->create_master_and_mix_tracks();
 
+	$this_track = $tn{$this_track_name}, set_current_bus() if $this_track_name;
+	
 	#print "\n---\n", $main->dump;  
-	#print "\n---\n", map{$_->dump} Audio::Nama::Track::all();# exit; 
+	#print "\n---\n", map{$_->dump} Audio::Nama::audio_tracks();# exit; 
 	$did_apply and $ui->manifest;
-	logpkg(__FILE__,__LINE__,'debug', sub{ join " ", map{ ref $_, $/ } Audio::Nama::Track::all() });
+	logpkg(__FILE__,__LINE__,'debug', sub{ join " ", map{ ref $_, $/ } all_tracks() });
 
 
 	# restore Alsa mixer settings
 	if ( $config->{opts}->{a} ) {
 		my $filename = $filename; 
 		$filename =~ s/\.yml$//;
-		print "restoring ALSA settings\n";
-		print qx(alsactl -f $filename.alsa restore);
+		pager("restoring ALSA settings\n");
+		pager(qx(alsactl -f $filename.alsa restore));
 	}
 
 	# text mode marks 
@@ -535,6 +496,7 @@ sub restore_state_from_file {
 ;
 	# restore effect chains and profiles
 	
+	%Audio::Nama::EffectChain::by_index = ();
 	#say "Project Effect Chain Data\n", json_out( \@project_effect_chain_data);
  	map { my $fx_chain = Audio::Nama::EffectChain->new(%$_) } 
 		(@project_effect_chain_data, @global_effect_chain_data)
@@ -563,12 +525,6 @@ sub save_global_effect_chains {
 	} $config->serialize_formats;
 
 }
-
-# unneeded after conversion - DEPRECATED
-sub save_project_effect_chains {
-	my $project = shift; # allow to cross multiple projects
-	@project_effect_chain_data = map{ $_->as_hash } Audio::Nama::EffectChain::find(project => $project);
-}
 sub restore_global_effect_chains {
 
 	logsub("&restore_global_effect_chains");
@@ -584,147 +540,8 @@ sub restore_global_effect_chains {
 				data => $ref,
 				vars   => \@global_effect_chain_vars, 
 				class => 'Audio::Nama');
+		assign_singletons({ data => $ref });
 }
-sub git_snapshot {
-	logsub("&git_snapshot");
-	return unless $config->{use_git};
-	return unless state_changed();
-	my $commit_message = shift() || "no comment";
-	git_commit($commit_message);
-}
-	
-sub git_commit {
-	logsub("&git_commit");
-	my $commit_message = shift;
-	$commit_message = join "\n", 
-		$commit_message,
-		# context for first command
-		"Context:",
-		" + track: $project->{undo_buffer}->[0]->{context}->{track}",
-		" + bus:   $project->{undo_buffer}->[0]->{context}->{bus}",
-		" + op:    $project->{undo_buffer}->[0]->{context}->{op}",
-		# all commands since last commit
-		map{ $_->{command} } @{$project->{undo_buffer}};
-		
-	git( add => $file->git_state_store );
-	git( commit => '--quiet', '--message', $commit_message);
-	$project->{undo_buffer} = [];
-}
-	
-
-sub git_tag { 
-	logsub("&git_tag");
-	return unless $config->{use_git};
-	my ($tag_name,$msg) = @_;
-	my @args = ($tag_name);
-	push(@args, '-m',$msg) if $msg;
-	git( tag => @args);
-}
-sub git_checkout {
-	logsub("&git_checkout");
-	my ($branchname, @args) = @_;
-	return unless $config->{use_git};
-
-	my $exist_message = git_branch_exists($branchname)
-				?  undef
-				: "$branchname: branch does not exist.";
-	my $dirty_tree_msg  = !! state_changed() 
-		?  "You have changes to working files.
-You cannot switch branches until you commit
-these changes, or throw them away."
-		: undef;
-		
-	my $conjunction = ($dirty_tree_msg and $exist_message) 
-			? "And by the way, "
-			: undef;
-
-	throw( $dirty_tree_msg, 
-			$conjunction, 
-			$exist_message, 
-			"No action taken."), return
-		if $dirty_tree_msg or $exist_message;
-
-	git(checkout => $branchname, @args);
-
-}
-sub git_create_branch {
-	logsub("&git_create_branch");
-	my ($branchname, $branchfrom) = @_;
-	return unless $config->{use_git};
-	# create new branch
-	my @args;
-	my $from_target;
-	$from_target = "from $branchfrom" if $branchfrom;
-	push @args, $branchname;
-	push(@args, $branchfrom) if $branchfrom;
-	pager("Creating branch $branchname $from_target");
-	git(checkout => '-b', @args)
-}
-
-sub state_changed {  
-	logsub("&state_changed");
-	return unless $config->{use_git};
-	git("diff");
-}
-
-sub git_branch_exists { 
-	logsub("&git_branch_exists");
-	return unless $config->{use_git};
-	my $branchname = shift;
-	grep{ $_ eq $branchname } 
-		map{ s/^\s+//; s/^\* //; $_}
-		git("branch");
-}
-
-sub current_branch {
-	logsub("&current_branch");
-	return unless $project->{repo};
-	my ($b) = map{ /\* (\S+)/ } grep{ /\*/ } split "\n", git('branch');
-	$b
-}
-
-sub git_sha {
-	my $commit = shift || 'HEAD';
-		my ($sha) = git(show => $commit) =~ /commit ([0-9a-f]{10})/;
-		$sha
-}
-sub git_branch_display {
-	logsub("&git_branch_display");
-	return unless $config->{use_git};
-	return unless current_branch();
-	"( ".current_branch()." ) "
-}
-sub list_branches {
-	pager3(
-		"---Branches--- (asterisk marks current branch)",
-		$project->{repo}->run('branch'),
-		"",
-		"-----Tags-----",
-		$project->{repo}->run('tag','--list')	
-	);
-}
-
-sub autosave {
-	logsub("&autosave");
-	my ($original_branch) = current_branch();
-	my @args = qw(undo --quiet);
-	unshift @args, '-b' if ! git_branch_exists('undo');
-	git(checkout => @args);
-	save_state();
-	git_snapshot();
-	git_checkout($original_branch, '--quiet');
-
-}
-
-sub merge_undo_branch {
-	logsub("&merge_undo_branch");
-	my $this_branch = current_branch();
-	autosave();
-	return unless my $diff = git(diff => $this_branch, 'undo');
-	git( qw{ merge --no-ff undo -m}, q{merge autosave commits} );
-	git( qw{ branch -d undo } );
-}
-
 1;
 
 __END__

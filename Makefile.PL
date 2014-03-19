@@ -21,6 +21,7 @@ use inc::Module::Install;
 		qw(
 			autodie  0
 			AnyEvent  5.0
+			AnyEvent::TermKey 0
 			Data::Dumper::Concise 0
 			Data::Section::Simple 0
 			Event  0
@@ -43,7 +44,9 @@ use inc::Module::Install;
 			Module::Load::Conditional  0 
 			Parse::RecDescent  0
 			Term::ReadLine::Gnu  0
+			Text::Diff  0
 			Text::Format  0
+			Text::Template 0
 			Time::HiRes  0
 			Try::Tiny  0
 			YAML::Tiny  0

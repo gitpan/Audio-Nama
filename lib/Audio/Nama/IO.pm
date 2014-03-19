@@ -28,7 +28,7 @@ our $VERSION = 1.0;
 # provide following vars to all packages
 our ($config, $jack, %tn);
 our (%by_name); # index for $by_name{trackname}->{input} = $object
-use Audio::Nama::Globals qw($config $jack %tn $setup);
+use Audio::Nama::Globals qw($config $jack %tn $setup :trackrw);
 use Try::Tiny;
 
 sub initialize { %by_name = () }
@@ -192,7 +192,7 @@ sub ecs_string {
 ## (e.g. -f:f32_le,2,48000) if the _format_template() method
 ## returns a signal format template (e.g. f32_le,N,48000)
 
-sub format { 
+sub _format { 
 	my $self = shift;
 	Audio::Nama::signal_format($self->format_template, $self->width)
 		if $self->format_template and $self->width
@@ -221,16 +221,12 @@ sub AUTOLOAD {
 		# ->can is reliable here because Track has no AUTOLOAD
 	}
 	}
-	print $self->dump;
-	croak "Autoload fell through. Object type: ", (ref $self), ", illegal method call: $call\n";
+	my $msg = "Autoload fell through. Object type: ". (ref $self). " illegal method call: $call\n";
+	Audio::Nama::throw($msg,$self->dump);
+	croak
 }
 
 sub DESTROY {}
-
-
-# The following methods were moved here from the Track class
-# because they are only used in generating chain setups.
-# They retain $track as the $self variable.
 
 sub _mono_to_stereo{
 	
@@ -239,8 +235,8 @@ sub _mono_to_stereo{
 	# Truth table
 	#REC status, Track width stereo: null
 	#REC status, Track width mono:   chcopy
-	#MON status, WAV width mono:   chcopy
-	#MON status, WAV width stereo: null
+	#PLAY status, WAV width mono:   chcopy
+	#PLAY status, WAV width stereo: null
 	#Higher channel count (WAV or Track): null
 
 	my $self   = shift;
@@ -252,23 +248,23 @@ sub _mono_to_stereo{
 	if  ( 
 			($self->track and $tn{$self->track}->pan)
 			and
-		  (	$status eq 'REC' and $is_mono_track->() 
-			or $status eq 'MON' and $is_mono_wav->() )
+		  (	$status =~ /REC|MON/ and $is_mono_track->() 
+			or $status eq PLAY and $is_mono_wav->() )
 	)
 	{ $copy } else { $nocopy }
 }
 sub _playat_output {
 	my $track = shift;
-	return unless $track->adjusted_playat_time;
+	return unless $track->shifted_playat_time;
 		# or $track->latency_offset;
-	join ',',"playat" , $track->adjusted_playat_time 
+	join ',',"playat" , $track->shifted_playat_time 
 		# + $track->latency_offset
 }
 sub _select_output {
 	my $track = shift;
 	no warnings 'uninitialized';
-	my $start = $track->adjusted_region_start_time + $config->hardware_latency();
-	my $end   = $track->adjusted_region_end_time;
+	my $start = $track->shifted_region_start_time + $config->hardware_latency();
+	my $end   = $track->shifted_region_end_time;
 	return unless $config->hardware_latency() or defined $start and defined $end;
 	my $setup_length;
 	# CASE 1: a region is defined 
@@ -325,8 +321,8 @@ sub jack_multi_ports {
   	die(qq(
 Track $trackname: $source_or_send would cover channels $start - $end,
 out of bounds for JACK client "$client" ($channel_count channels max).
-Change $source_or_send setting, or set track OFF.)) if $end > $channel_count;
-
+Change $source_or_send setting, or set track OFF.)) 
+	if $end > $channel_count and $config->{enforce_channel_bounds};
 		return @{$jack->{clients}->{$client}{$direction}}[$start-1..$end-1]
 		 	if $jack->{clients}->{$client}{$direction};
 
@@ -402,6 +398,7 @@ sub new {
 	my %vals = @_;
 	$class->SUPER::new( %vals, device_id => "loop,$vals{endpoint}");
 }
+sub format {}
 }
 {
 package Audio::Nama::IO::to_loop;

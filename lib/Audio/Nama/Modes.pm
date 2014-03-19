@@ -3,8 +3,6 @@
 package Audio::Nama;
 use Modern::Perl;
 {
-my $old_group_rw; # for restore on exiting doodle/preview mode
-
 sub set_preview_mode {
 
 	# set preview mode, releasing doodle mode if necessary
@@ -13,13 +11,13 @@ sub set_preview_mode {
 
 	# do nothing if already in 'preview' mode
 	
-	if ( $mode->{preview} eq 'preview' ){ return }
+	return if $mode->preview;
 
 	$mode->{preview} = "preview";
 
-	pager2( <<'MSG');
+	pager( <<'MSG');
 Setting preview mode.
-Using both REC and MON inputs.
+Using both REC and PLAY inputs.
 WAV recording is DISABLED.
 
 Type 'arm' to enable recording.
@@ -32,11 +30,11 @@ sub set_doodle_mode {
 	return if engine_running() and Audio::Nama::ChainSetup::really_recording();
 	$mode->{preview} = "doodle";
 
-	$tn{Mixdown}->set(rw => 'OFF');
+	$tn{Mixdown}->set(rw => OFF);
 	
 	# reconfigure_engine will generate setup and start transport
 	
-pager2( <<'MSG' );
+pager( <<'MSG' );
 Setting doodle mode.
 Using live inputs only, no duplicate inputs
 Exit using 'preview' or 'arm' commands
@@ -48,25 +46,15 @@ sub exit_preview_mode { # exit preview and doodle modes
 		logsub("&exit_preview_mode");
 		return unless $mode->{preview};
 		stop_transport() if engine_running();
-		pager2("Exiting preview/doodle mode");
+		pager("Exiting preview/doodle mode");
 		$mode->{preview} = 0;
-
-}
-
-sub restore_preview_mode { 
-	$mode->{preview} = $mode->{eager};
-}
 
 }
 
 sub master_on {
 
-	return if $mode->{mastering};
+	return if $mode->mastering;
 	
-	# set $mode->{mastering}	
-	
-	$mode->{mastering}++;
-
 	# create mastering tracks if needed
 	
 	if ( ! $tn{Eq} ){  
@@ -80,10 +68,8 @@ sub master_on {
 	}
 
 }
-	
 sub master_off {
-
-	$mode->{mastering} = 0;
+	return if ! $mode->mastering;
 	hide_mastering_tracks();
 	map{ $ui->remove_track_gui($tn{$_}->n) 
 		} @{$mastering->{track_names}};
@@ -96,7 +82,7 @@ sub add_mastering_tracks {
 	map{ 
 		my $track = Audio::Nama::MasteringTrack->new(
 			name => $_,
-			rw => 'MON',
+			rw => MON,
 			group => 'Mastering', 
 		);
 		$ui->track_gui( $track->n );
@@ -104,7 +90,7 @@ sub add_mastering_tracks {
  	} grep{ $_ ne 'Boost' } @{$mastering->{track_names}};
 	my $track = Audio::Nama::BoostTrack->new(
 		name => 'Boost', 
-		rw => 'MON',
+		rw => MON,
 		group => 'Mastering', 
 		target => 'Master',
 	);
@@ -144,12 +130,13 @@ sub add_mastering_effects {
 }
 
 sub unhide_mastering_tracks {
-	process_command("for Mastering; set_track hide 0");
+	process_command("for Mastering; set_track hide 0 rw MON");
 }
 
 sub hide_mastering_tracks {
-	process_command("for Mastering; set_track hide 1");
+	process_command("for Mastering; set_track hide 1 rw OFF");
  }
+}
 		
 1;
 __END__

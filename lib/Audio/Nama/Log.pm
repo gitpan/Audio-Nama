@@ -25,10 +25,12 @@ Audio::Nama::Edit
 Audio::Nama::EffectChain
 Audio::Nama::Effects
 Audio::Nama::EffectsRegistry
+Audio::Nama::Engine
 Audio::Nama::EngineCleanup
 Audio::Nama::EngineRun
 Audio::Nama::EngineSetup
 Audio::Nama::Fade
+Audio::Nama::Git
 Audio::Nama::Globals
 Audio::Nama::Grammar
 Audio::Nama::Graph
@@ -51,9 +53,11 @@ Audio::Nama::Nama
 Audio::Nama::Object
 Audio::Nama::Options
 Audio::Nama::Persistence
+Audio::Nama::Plug
 Audio::Nama::Project
+Audio::Nama::RegionComp
 Audio::Nama::Regions
-Audio::Nama::StereoTo51
+Audio::Nama::Sequence
 Audio::Nama::Terminal
 Audio::Nama::Text
 Audio::Nama::Track
@@ -64,8 +68,9 @@ Audio::Nama::Wavinfo
 	);
 	push @all_cats, 'ECI','SUB';
 
-	my %negate = map{ $_ => 1} map{ s/^#//; $_ } grep{ /^#/ } 
-		expand_cats(split q(,), $cat_string);
+	my %negate;
+	%negate = map{ $_ => 1} map{ s/^#//; $_ } grep{ /^#/ } 
+		expand_cats(split q(,), $cat_string) if $cat_string;
 	#say("negate\n",Audio::Nama::json_out(\%negate));
 
 	my $layout = "[\%r] %c %m%n"; # backslash to protect from source filter
@@ -75,7 +80,8 @@ Audio::Nama::Wavinfo
 	$appender = $logfile ? 'FILE' : 'STDERR';
 	$logfile //= "/dev/null";
 
-	my @cats = expand_cats(split ',', $cat_string);
+	my @cats;
+	@cats = expand_cats(split ',', $cat_string) if $cat_string;
 	#logpkg(__FILE__,__LINE__,'debug',"initial logging categories: @cats");
 	#logpkg(__FILE__,__LINE__,'trace',"all cats: @all_cats");
 	
@@ -133,8 +139,6 @@ sub logit {
 	#say qq($line_number, $category, $level, @message) ;
 	#confess("first call to logit");
 	my $line_number_output  = $line_number ? " (L $line_number) ": "";
-	return unless $category;
-
 	cluck "illegal level: $level" unless $is_method{$level};
 	my $logger = get_logger($category);
 	$logger->$level($line_number_output, @message);
@@ -149,6 +153,7 @@ sub logpkg {
 	# convert Effects.pm to Audio::Nama::Effects to support logpkg
 	my $pkg = $file;
 	($pkg) = $file =~ m| ([^/]+)\.pm$ |x;
+	$pkg //= "Dummy::Pkg";
 	$pkg = "Audio::Nama::$pkg";  # SKIP_PREPROC
 	#say "category: $pkg";
 	logit ($line_no,$pkg,$level, @message) 

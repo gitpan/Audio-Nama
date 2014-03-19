@@ -13,21 +13,22 @@ sub effects_cache {
 	$file->effects_cache . ".$registry_format";
 }
 sub prepare_static_effects_data{
+	my $source = shift; 
 	
 	logsub("&prepare_static_effects_data");
 
 	my $effects_cache = effects_cache();
 
 	logpkg(__FILE__,__LINE__,'debug', join "\n", "newplugins:", new_plugins());
-	if ($config->{opts}->{r} or new_plugins()){ 
+	if (! $source and ($config->{opts}->{r} or new_plugins())){ 
 
-		eval { unlink $effects_cache};
+		unlink $effects_cache;
 		print "Regenerating effects data cache\n";
 	}
 
-	if (-f $effects_cache and ! $config->{opts}->{C}){  
+	if ( ($source or -f $effects_cache) and ! $config->{opts}->{C}){  
 		logpkg(__FILE__,__LINE__,'debug', "found effects cache: $effects_cache");
-		my $source = read_file($effects_cache); # scalar assign
+		$source //= read_file($effects_cache); # scalar assign
 		assign(
 			data => decode($source, 'json'),
 			vars => [qw($fx_cache)],
@@ -130,12 +131,14 @@ sub extract_effects_data {
 	carp ("incorrect number of lines ", join ' ',$upper-$lower,scalar @lines)
 		if $lower + @lines - 1 != $upper;
 	logpkg(__FILE__,__LINE__,'debug',"lower: $lower upper: $upper  separator: $separator");
-	#logpkg(__FILE__,__LINE__,'debug', "lines: ". join "\n",@lines);
+	logpkg(__FILE__,__LINE__,'debug', "lines: ". join "\n",@lines);
 	logpkg(__FILE__,__LINE__,'debug', "regex: $regex");
 	my $j = $lower - 1;
 	while(my $line = shift @lines){
 		$j++;
-		$line =~ /$regex/ or carp("bad effect data line: $line\n"),next;
+		$line =~ /$regex/ or 
+		carp("bad effect data line: $line\n", 
+			join " ", map{ ord($_) } split //, $line), next;
 		my ($no, $name, $id, $rest) = ($1, $2, $3, $4);
 		# $no is unimportant; it from the list numbering
 		logpkg(__FILE__,__LINE__,'debug', "Number: $no Name: $name Code: $id Rest: $rest");
@@ -143,7 +146,7 @@ sub extract_effects_data {
 		map{s/'//g}@p_names; # remove leading and trailing q(') in ladspa strings
 		logpkg(__FILE__,__LINE__,'debug', "Parameter names: @p_names");
 		$fx_cache->{registry}->[$j]={};
-		$fx_cache->{registry}->[$j]->{number} = $no;
+		#$fx_cache->{registry}->[$j]->{number} = $no;
 		$fx_cache->{registry}->[$j]->{code} = $id;
 		$fx_cache->{registry}->[$j]->{name} = $name;
 		$fx_cache->{registry}->[$j]->{count} = scalar @p_names;
@@ -307,11 +310,9 @@ sub read_in_effects_data {
 		$fx_cache->{split}->{cop}{a},
 		$fx_cache->{split}->{cop}{z},
 		$cop_re,
-		q(','),
+		q(,),
 		@cop,
 	);
-
-
 	extract_effects_data(
 		$fx_cache->{split}->{ladspa}{a},
 		$fx_cache->{split}->{ladspa}{z},

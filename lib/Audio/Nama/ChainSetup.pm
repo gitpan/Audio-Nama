@@ -1,14 +1,14 @@
 # ---------- ChainSetup-----------
 
 package Audio::Nama::ChainSetup;
-use Audio::Nama::Globals qw($file $config $jack $setup $engine %tn %bn $mode);
-use Audio::Nama::Log qw(logsub);
+use Audio::Nama::Globals qw($file $config $jack $setup $this_engine %tn %bn $mode :trackrw);
+use Audio::Nama::Log qw(logsub logpkg);
 use Modern::Perl;
 use Data::Dumper::Concise;
 use Storable qw(dclone);
-no warnings 'uninitialized';
 use Audio::Nama::Util qw(signal_format input_node output_node);
 use Audio::Nama::Assign qw(json_out);
+no warnings 'uninitialized';
 
 our (
 
@@ -41,19 +41,18 @@ our (
 	@pre_output, 	# pre-output chain operators
 
 	$chain_setup,	# final result as string
-	$logger,
 	);
 
 
 sub remove_temporary_tracks {
 	logsub("&remove_temporary_tracks");
-	map { $_->remove  } grep{ $_->group eq 'Temp'} Audio::Nama::Track::all();
+	map { logpkg(__FILE__,__LINE__,'debug',"removing temporary track ",$_->name); $_->remove  } 
+		grep{ $_->group eq 'Temp'} 
+		Audio::Nama::audio_tracks();
 }
 sub initialize {
 
-	remove_temporary_tracks();# start clean
-	$logger = Log::Log4perl->get_logger();
-	Audio::Nama::Graph::initialize_logger();
+	remove_temporary_tracks(); # we will generate them again
 	$setup->{audio_length} = 0;  
 	@io = (); 			# IO object list
 	Audio::Nama::IO::initialize();
@@ -78,15 +77,13 @@ sub is_engine_track {
 		# returns object if corresponding track belongs to current chain setup
 	my $t = shift;
 	my $n;
-	given($t){
-	when( (ref $_) =~ /Track/){ $n = $_->n     }
-	when( ! /\D/ )            { $n = $_        }
-	when(   /\D/ and $tn{$_} ){ $n = $Audio::Nama::tn{$_}->n}
-	}
+	if( (ref $t) =~ /Track/){ $n = $t->n     }
+	if( $t =~ ! /\D/ )      { $n = $t        }
+	if( $t =~ /\D/ and $tn{$_} ){ $n = $Audio::Nama::tn{$t}->n}
 	$Audio::Nama::ti{$n} if $is_ecasound_chain{$n}
 }
 sub engine_wav_out_tracks {
-	grep{$_->rec_status eq 'REC' and ! $_->rec_defeat } engine_tracks();
+	grep{$_->rec_status eq REC} engine_tracks();
 }
 # return file output entries, including Mixdown 
 sub really_recording { 
@@ -99,7 +96,7 @@ sub show_io {
 	Audio::Nama::pager( $output );
 }
 
-sub generate_setup_try {  # TODO: move operations below to buses
+sub generate_setup_try {
 	logsub("&generate_setup_try");
 
 	my $extra_setup_code = shift;
@@ -112,34 +109,34 @@ sub generate_setup_try {  # TODO: move operations below to buses
 	
 	map{ $_->apply($g) } Audio::Nama::Bus::all();
 
-	$logger->debug("Graph after bus routing:\n$g");
+	logpkg(__FILE__,__LINE__,'debug',"Graph after bus routing:\n$g");
 	
 	# now various manual routing
 
 	add_paths_for_aux_sends();
-	$logger->debug("Graph after aux sends:\n$g");
+	logpkg(__FILE__,__LINE__,'debug',"Graph after aux sends:\n$g");
 
 	add_paths_from_Master();
-	$logger->debug("Graph with paths from Master:\n$g");
+	logpkg(__FILE__,__LINE__,'debug',"Graph with paths from Master:\n$g");
 
 	add_paths_for_mixdown_handling();
-	$logger->debug("Graph with mixdown mods:\n$g");
+	logpkg(__FILE__,__LINE__,'debug',"Graph with mixdown mods:\n$g");
 	
 	# run extra setup
 	
 	$extra_setup_code->($g) if $extra_setup_code;
 
 	prune_graph();
-	$logger->debug("Graph after pruning unterminated branches:\n$g");
+	logpkg(__FILE__,__LINE__,'debug',"Graph after pruning unterminated branches:\n$g");
 
 	Audio::Nama::Graph::expand_graph($g); 
 
-	$logger->debug("Graph after adding loop devices:\n$g");
+	logpkg(__FILE__,__LINE__,'debug',"Graph after adding loop devices:\n$g");
 
 	# insert handling
 	Audio::Nama::Graph::add_inserts($g);
 
-	$logger->debug("Graph with inserts:\n$g");
+	logpkg(__FILE__,__LINE__,'debug',"Graph with inserts:\n$g");
 
 	# Mix tracks to mono if Master is mono
 	# (instead of just throwing away right channel)
@@ -148,7 +145,7 @@ sub generate_setup_try {  # TODO: move operations below to buses
 	{
 		$g->set_vertex_attribute('Master', 'ecs_extra' => '-chmix:1')
 	}
-	$logger->debug(sub{"Graph object dump:\n",Dumper($g)});
+	#logpkg(__FILE__,__LINE__,'info',sub{"Graph object dump:\n",Dumper($g)});
 
 	# create IO lists %inputs and %outputs
 
@@ -156,7 +153,7 @@ sub generate_setup_try {  # TODO: move operations below to buses
 		write_chains(); 
 		1
 	} else { 
-		say("No tracks to record or play.");
+		Audio::Nama::throw("No tracks to record or play.");
 		0
 	}
 }
@@ -174,38 +171,38 @@ sub add_paths_for_aux_sends {
 	grep { (ref $_) !~ /Slave/ 
 			and $_->group !~ /Mixdown|Master/
 			and $_->send_type 
-			and $_->rec_status ne 'OFF' } Audio::Nama::Track::all();
+			and $_->rec_status ne OFF } Audio::Nama::audio_tracks();
 }
 
 
 sub add_paths_from_Master {
 	logsub("&add_paths_from_Master");
 
-	if ($mode->{mastering}){
+	if ($mode->mastering){
 		$g->add_path(qw[Master Eq Low Boost]);
 		$g->add_path(qw[Eq Mid Boost]);
 		$g->add_path(qw[Eq High Boost]);
 	}
-	my $final_leg_origin = $mode->{mastering} ?  'Boost' : 'Master';
+	my $final_leg_origin = $mode->mastering ?  'Boost' : 'Master';
 	$g->add_path($final_leg_origin, output_node($tn{Master}->send_type)) 
-		if $tn{Master}->rw ne 'OFF'
+		if $tn{Master}->rw ne OFF
 
 }
 sub add_paths_for_mixdown_handling {
 	logsub("&add_paths_for_mixdown_handling");
 
-	if ($tn{Mixdown}->rec_status eq 'REC'){
-		my @p = (($mode->{mastering} ? 'Boost' : 'Master'), ,'Mixdown', 'wav_out');
+	if ($tn{Mixdown}->rec_status eq REC){
+		my @p = (($mode->mastering ? 'Boost' : 'Master'), ,'Mixdown', 'wav_out');
 		$g->add_path(@p);
 		$g->set_vertex_attributes('Mixdown', {
-		  	format		=> signal_format($config->{mix_to_disk_format},$tn{Mixdown}->width),
+		  	format_template		=> $config->{mix_to_disk_format},
 		  	chain_id	=> "Mixdown" },
 		); 
 		# no effects will be applied because effects are on chain 2
 												 
 	# Mixdown handling - playback
 	
-	} elsif ($tn{Mixdown}->rec_status eq 'MON'){ 
+	} elsif ($tn{Mixdown}->rec_status eq PLAY){ 
 			my @e = ('wav_in','Mixdown',output_node($tn{Master}->send_type));
 			$g->add_path(@e);
 			$g->set_vertex_attributes('Mixdown', {
@@ -217,10 +214,14 @@ sub add_paths_for_mixdown_handling {
 }
 sub prune_graph {
 	logsub("&prune_graph");
-	# prune graph: remove tracks lacking inputs or outputs
+	Audio::Nama::Graph::simplify_send_routing($g);
+	logpkg(__FILE__,__LINE__,'debug',"Graph after simplify_send_routing:\n$g");
 	Audio::Nama::Graph::remove_out_of_bounds_tracks($g) if Audio::Nama::edit_mode();
+	logpkg(__FILE__,__LINE__,'debug',"Graph after remove_out_of_bounds_tracks:\n$g");
 	Audio::Nama::Graph::recursively_remove_inputless_tracks($g);
+	logpkg(__FILE__,__LINE__,'debug',"Graph after recursively_remove_inputless_tracks:\n$g");
 	Audio::Nama::Graph::recursively_remove_outputless_tracks($g); 
+	logpkg(__FILE__,__LINE__,'debug',"Graph after recursively_remove_outputless_tracks:\n$g");
 }
 # object based dispatch from routing graph
 	
@@ -230,29 +231,29 @@ sub process_routing_graph {
 	# generate a set of IO objects from edges
 	@io = map{ dispatch($_) } $g->edges;
 	
-	$logger->debug( sub{ join "\n",map $_->dump, @io });
+	logpkg(__FILE__,__LINE__,'debug', sub{ join "\n",map $_->dump, @io });
 
 	# sort chain_ids by attached input object
 	# one line will show all with that one input
 	# -a:3,5,6 -i:foo
 	
-	map{ $inputs{$_->ecs_string} //= [];
+	map { 
+		$inputs{$_->ecs_string} //= [];
 		push @{$inputs{$_->ecs_string}}, $_->chain_id;
-
-	# supplemental post-input modifiers
-	
+		# post-input modifiers
 		$post_input{$_->chain_id} = $_->ecs_extra if $_->ecs_extra;
-	} grep { $_->direction eq 'input' } @io;
+	} 
+	grep { $_->direction eq 'input' } @io;
 
 	# sort chain_ids by output
 
-	map{ $outputs{$_->ecs_string} //= [];
+	map { 
+		$outputs{$_->ecs_string} //= [];
 		push @{$outputs{$_->ecs_string}}, $_->chain_id;
-
-	# pre-output modifers
-	
+		# pre-output modifers
 		$pre_output{$_->chain_id} = $_->ecs_extra if $_->ecs_extra;
-	} grep { $_->direction eq 'output' } @io;
+	} 
+	grep { $_->direction eq 'output' } @io;
 
 	no warnings 'numeric';
 	my @in_keys = values %inputs;
@@ -312,12 +313,12 @@ sub non_track_dispatch {
 	
 	
 	my $edge = shift;
-	$logger->debug("non-track IO dispatch:",join ' -> ',@$edge);
+	logpkg(__FILE__,__LINE__,'debug',"non-track IO dispatch:",join ' -> ',@$edge);
 	my $eattr = $g->get_edge_attributes(@$edge) // {};
-	$logger->debug("found edge attributes: ",json_out($eattr)) if $eattr;
+	logpkg(__FILE__,__LINE__,'debug',"found edge attributes: ",json_out($eattr)) if $eattr;
 
 	my $vattr = $g->get_vertex_attributes($edge->[0]) // {};
-	$logger->debug("found vertex attributes: ",json_out($vattr)) if $vattr;
+	logpkg(__FILE__,__LINE__,'debug',"found vertex attributes: ",json_out($vattr)) if $vattr;
 
 	if ( ! $eattr->{chain_id} and ! $vattr->{chain_id} ){
 		my $n = $eattr->{n} || $vattr->{n};
@@ -329,7 +330,7 @@ sub non_track_dispatch {
 		my $class = Audio::Nama::IO::get_class($_, $direction);
 		my $attrib = {%$vattr, %$eattr};
 		$attrib->{endpoint} //= $_ if Audio::Nama::Graph::is_a_loop($_); 
-		$logger->debug("non-track: $_, class: $class, chain_id: $attrib->{chain_id},","device_id: $attrib->{device_id}");
+		logpkg(__FILE__,__LINE__,'debug',"non-track: $_, class: $class, chain_id: $attrib->{chain_id},","device_id: $attrib->{device_id}");
 		my $io = $class->new($attrib ? %$attrib : () ) ;
 		$g->set_edge_attribute(@$edge, $direction, $io);
 		$io;
@@ -357,20 +358,19 @@ sub jumper_count {
 	$try1 . $counter++;
 }
 }
-	
-
 sub dispatch { # creates an IO object from a graph edge
 	my $edge = shift;
 	return non_track_dispatch($edge) if not grep{ $tn{$_} } @$edge ;
-	$logger->debug('dispatch: ',join ' -> ',  @$edge);
+	logpkg(__FILE__,__LINE__,'debug','dispatch: ',join ' -> ',  @$edge);
 	my($name, $endpoint, $direction) = decode_edge($edge);
-	$logger->debug("name: $name, endpoint: $endpoint, direction: $direction");
+	logpkg(__FILE__,__LINE__,'debug',"name: $name, endpoint: $endpoint, direction: $direction");
 	my $track = $tn{$name};
 	my $class = Audio::Nama::IO::get_class( $endpoint, $direction );
 		# we need the $direction because there can be 
 		# edges to and from loop,Master_in
+		
 	my @args = (track => $name,
-			endpoint => $endpoint, # for loops
+				endpoint => massaged_endpoint($track, $endpoint, $direction),
 				chain_id => $tn{$name}->n, # default
 				override($name, $edge));   # priority: edge > node
 	#say "dispatch class: $class";
@@ -378,6 +378,14 @@ sub dispatch { # creates an IO object from a graph edge
 
 	$g->set_edge_attribute(@$edge, $direction => $io );
 	$io
+}
+sub massaged_endpoint {
+	my ($track, $endpoint, $direction) = @_;
+	if ( $endpoint =~ /^(loop_in|loop_out)$/ ){
+		my $final = ($direction eq 'input' ?  $track->source_id : $track->send_id );
+		$final =~ s/^loop,//;
+		$final		
+	} else { $endpoint }
 }
 sub decode_edge {
 	# assume track-endpoint or endpoint-track
@@ -417,6 +425,7 @@ sub write_chains {
 	## write general options
 	
 	my $globals .= join " ", $config->{engine_globals}->{common},
+							join(',', '-G:jack',$this_engine->name,$this_engine->jack_transport_mode),
 							"-b",$config->buffersize,
 							$config->globals_realtime;
 	
@@ -438,7 +447,7 @@ sub write_chains {
 	$ecs_file .= join "\n\n", 
 					"# audio outputs",
 					join("\n", @output_chains), "";
-	$logger->debug("Chain setup:\n",$ecs_file);
+	logpkg(__FILE__,__LINE__,'debug',"Chain setup:\n",$ecs_file);
 	open(my $fh, ">", $file->chain_setup) 
 		or die("can't open chain setup file ".$file->chain_setup.": $!");
 	print $fh $ecs_file;
@@ -451,8 +460,8 @@ sub setup_requires_realtime {
 	if( $prof eq 'auto'){
 		grep{ ! $_->is_mix_track 
 				  and $_->is_user_track 
-				  and $_->rec_status eq 'REC' 
-			} Audio::Nama::Track::all() 
+				  and $_->rec_status eq REC 
+			} Audio::Nama::audio_tracks() 
 	} elsif ( $prof eq 'realtime') {
 		my @fields = qw(soundcard jack_client jack_manual jack_ports_list);
 		grep { has_vertex("$_\_in") } @fields 

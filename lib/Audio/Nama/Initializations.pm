@@ -7,6 +7,7 @@
 
 package Audio::Nama;
 use Modern::Perl; use Carp;
+use Socket qw(getnameinfo NI_NUMERICHOST) ;
 
 sub apply_test_harness {
 
@@ -21,6 +22,9 @@ sub apply_test_harness {
 				q(-J), # fake jack client data
 
 				q(-T), # don't initialize terminal
+                       # load fake effects cache
+
+				q(-S), # don't load static effects data
 
 				#qw(-L SUB), # logging
 
@@ -37,27 +41,13 @@ sub definitions {
 
 	$ui eq 'bullwinkle' or die "no \$ui, bullwinkle";
 
-	
+	@global_effect_chain_vars  = qw(
 
-
-
-
-
-
-
-
-					
-
-
-
-@global_effect_chain_vars  = qw(@global_effect_chain_data $Audio::Nama::EffectChain::n );
-
-
-
-
+	@global_effect_chain_data 
+	$Audio::Nama::EffectChain::n 
+	$fx->{alias}
+);
 @tracked_vars = qw(
-
-
 
 	@tracks_data
 	@bus_data
@@ -74,19 +64,18 @@ sub definitions {
 	$fx->{params_log}
 
 );
-
-
-
-
-
 @persistent_vars = qw(
 
 	$project->{save_file_version_number}
 	$project->{timebase}
-	$project->{undo_buffer}
+	$project->{command_buffer}
 	$project->{track_version_comments}
 	$project->{track_comments}
 	$project->{bunch}
+	$project->{current_op}
+	$project->{current_param}
+	$project->{current_stepsize}
+	$project->{playback_position}
 	@project_effect_chain_data
 	$fx->{id_counter}
 	$setup->{loop_endpoints}
@@ -117,7 +106,19 @@ sub definitions {
 	# the sole instance of their class.
 	
 	$project = bless {}, 'Audio::Nama::Project';
-	
+	$mode = bless {}, 'Audio::Nama::Mode';
+	{ package Audio::Nama::Mode; 
+		sub mastering 	{ $Audio::Nama::tn{Eq} and ! $Audio::Nama::tn{Eq}->{hide} } 
+		no warnings 'uninitialized';
+		sub eager 		{ $Audio::Nama::mode->{eager} 					}
+		sub doodle 		{ 
+			#my $set = shift;
+			#if (defined $set){ $Audio::Nama::mode->{preview} = $set ? 'doodle' : 0 }
+			$Audio::Nama::mode->{preview} eq 'doodle' 	}
+		sub preview 	{ $Audio::Nama::mode->{preview} eq 'preview' 	}
+		sub song 		{ $Audio::Nama::mode->eager and $Audio::Nama::mode->preview }
+		sub live		{ $Audio::Nama::mode->eager and $Audio::Nama::mode->doodle  }
+	}
 	# for example, $file belongs to class Audio::Nama::File, and uses
 	# AUTOLOAD to generate methods to provide full path
 	# to various system files, such as $file->state_store
@@ -150,7 +151,7 @@ sub definitions {
 		untracked_state_store => ['Aux',					\&project_dir ],
 		effect_profile 			=> ['effect_profiles',		\&project_root],
 		chain_setup 			=> ['Setup.ecs',      		\&project_dir ],
-		user_customization 		=> ['custom.pl',      		\&project_root],
+		user_customization 		=> ['customize.pl',    		\&project_root],
 		project_effect_chains 	=> ['project_effect_chains',\&project_dir ],
 		global_effect_chains  	=> ['global_effect_chains', \&project_root],
 		old_effect_chains  		=> ['effect_chains', 		\&project_root],
@@ -189,10 +190,11 @@ sub definitions {
 		use_pager 						=> 1,
 		use_placeholders 				=> 1,
 		use_git							=> 1,
-		autosave						=> 0,
+		autosave						=> 'undo',
 		volume_control_operator 		=> 'ea', # default to linear scale
 		sync_mixdown_and_monitor_version_numbers => 1, # not implemented yet
-		engine_fade_length_on_start_stop => 0.3, # when starting/stopping transport
+		engine_tcp_port					=> 2868, # 'default' engine
+		engine_fade_length_on_start_stop => 0.18,# when starting/stopping transport
 		engine_fade_default_length 		=> 0.5, # for fade-in, fade-out
 		engine_base_jack_seek_delay 	=> 0.1, # seconds
 		edit_playback_end_margin 		=> 3,
@@ -204,10 +206,9 @@ sub definitions {
 		mute_level 						=> {ea => 0, 	eadb => -96}, 
 		fade_out_level 					=> {ea => 0, 	eadb => -40},
 		unity_level 					=> {ea => 100, 	eadb => 0}, 
-		fade_resolution 				=> 20, # steps per second
+		fade_resolution 				=> 100, # steps per second
 		engine_muting_time				=> 0.03,
 		enforce_channel_bounds			=> 1,
-
 
 		serialize_formats               => 'json',		# for save_system_state()
 
@@ -219,6 +220,10 @@ sub definitions {
 				my $delay = shift();
 				modify_effect($id,2,undef,$delay)
 			},
+		hotkey_beep					=> 'beep -f 250 -l 200',
+	#	this causes beeping during make test
+	#	beep_command					=> 'beep -f 350 -l 700',
+
 	}, 'Audio::Nama::Config';
 
 	{ package Audio::Nama::Config;
@@ -256,8 +261,6 @@ sub definitions {
 	}
 	} # end Audio::Nama::Config package
 
-	$engine = bless {}, 'Audio::Nama::Engine';
-
 	$prompt = "nama ('h' for help)> ";
 
 	$this_bus = 'Main';
@@ -267,33 +270,18 @@ sub definitions {
 
 	$mastering->{track_names} = [ qw(Eq Low Mid High Boost) ];
 
-	$mode->{mastering} = 0;
-
 	init_wav_memoize() if $config->{memoize};
 
 }
 
 sub initialize_interfaces {
 	
-	logsub("&prepare");
-
-	say
-<<BANNER;
-      ////////////////////////////////////////////////////////////////////
-     /                                                                  /
-    /    Nama multitrack recorder v. $VERSION (c)2008-2011 Joel Roth     /
-   /                                                                  /
-  /    Audio processing by Ecasound, courtesy of Kai Vehmanen        /
- /                                                                  /
-////////////////////////////////////////////////////////////////////
-
-BANNER
-
+	logsub("&intialize_interfaces");
 
 	if ( ! $config->{opts}->{t} and Audio::Nama::Graphical::initialize_tk() ){ 
 		$ui = Audio::Nama::Graphical->new();
 	} else {
-		pager3( "Unable to load perl Tk module. Starting in console mode.") if $config->{opts}->{g};
+		pager_newline( "Unable to load perl Tk module. Starting in console mode.") if $config->{opts}->{g};
 		$ui = Audio::Nama::Text->new();
 		can_load( modules =>{ Event => undef})
 			or die "Perl Module 'Event' not found. Please install it and try again. Stopping.";
@@ -303,9 +291,9 @@ BANNER
 	
 	can_load( modules => {AnyEvent => undef})
 			or die "Perl Module 'AnyEvent' not found. Please install it and try again. Stopping.";
+	use AnyEvent::TermKey qw( FORMAT_VIM KEYMOD_CTRL ); 
 	can_load( modules => {jacks => undef})
 		and $jack->{use_jacks}++;
-
 	choose_sleep_routine();
 	$config->{want_logging} = initialize_logger($config->{opts}->{L});
 
@@ -317,19 +305,29 @@ BANNER
 	logpkg(__FILE__,__LINE__,'debug', sub{"Command line options\n".  json_out($config->{opts})});
 
 	read_config(global_config());  # from .namarc if we have one
+
+	# overwrite default hotkey bindings by those in .namarc 
+	$config->{hotkeys} = {
+		%{json_in(get_data_section 'hotkey_bindings') },
+		%{$config->{hotkeys} } 
+	};
 	
 	logpkg(__FILE__,__LINE__,'debug',sub{"Config data\n".Dumper $config});
-
-	start_ecasound();
-
+	
+	select_ecasound_interface();
+		
+	start_osc_listener($config->{osc_listener_port}) 
+		if $config->{osc_listener_port} 
+		and can_load(modules => {'Protocol::OSC' => undef});
+	start_remote_listener($config->{remote_control_port}) if $config->{remote_control_port};
 	logpkg(__FILE__,__LINE__,'debug',"reading config file");
 	if ($config->{opts}->{d}){
-		print "project_root $config->{opts}->{d} specified on command line\n";
+		pager("project_root $config->{opts}->{d} specified on command line\n");
 		$config->{root_dir} = $config->{opts}->{d};
 	}
 	if ($config->{opts}->{p}){
 		$config->{root_dir} = getcwd();
-		print "placing all files in current working directory ($config->{root_dir})\n";
+		pager("placing all files in current working directory ($config->{root_dir})\n");
 	}
 
 	# skip initializations if user (test) supplies project
@@ -337,6 +335,8 @@ BANNER
 	
 	first_run() unless $config->{opts}->{d}; 
 
+	#my $fx_cache_json;
+	#$fx_cache_json = get_data_section("fx_cache") if $config->{opts}->{T};
 	prepare_static_effects_data() unless $config->{opts}->{S};
 	setup_user_customization();	# depends on effect_index() in above
 
@@ -372,7 +372,7 @@ BANNER
 	and process_is_running('jack.plumbing')
 	){
 
-		pager3(<<PLUMB);
+		pager_newline(<<PLUMB);
 Jack.plumbing daemon detected!
 
 Attempting to stop it...  
@@ -396,7 +396,7 @@ Please do one of the following, then restart Nama:
 ....Exiting.) );
 exit;
 		}
-		else { pager3("Stopped.") }
+		else { pager_newline("Stopped.") }
 	}
 		
 	start_midish() if $config->{use_midish};
@@ -411,46 +411,148 @@ exit;
 		$project->{name} = "untitled";
 		$config->{opts}->{c}++; 
 	}
-	print "\nproject_name: $project->{name}\n";
+	pager("\nproject_name: $project->{name}\n");
 	
 	load_project( name => $project->{name}, create => $config->{opts}->{c}) ;
 	1;	
 }
-sub start_ecasound {
- 	my @existing_pids = split " ", qx(pgrep ecasound);
-	select_ecasound_interface();
-	Audio::Nama::Effects::import_engine_subs();
-	sleeper(0.2);
-	@{$engine->{pids}} = grep{ 	my $pid = $_; 
-							! grep{ $pid == $_ } @existing_pids
-						 }	split " ", qx(pgrep ecasound);
+{ my $is_connected_remote;
+sub start_remote_listener {
+    my $port = shift;
+    pager_newline("Starting remote control listener on port $port");
+    $project->{remote_control_socket} = IO::Socket::INET->new( 
+        LocalAddr   => 'localhost',
+        LocalPort   => $port, 
+        Proto       => 'tcp',
+        Type        => SOCK_STREAM,
+        Listen      => 1,
+        Reuse       => 1) || die $!;
+    start_remote_watcher();
+}
+sub start_remote_watcher {
+    $project->{events}->{remote_control} = AE::io(
+        $project->{remote_control_socket}, 0, \&process_remote_command )
+}
+sub remove_remote_watcher {
+    undef $project->{events}->{remote_control};
+}
+sub process_remote_command {
+    if ( ! $is_connected_remote++ ){
+        pager_newline("making connection");
+        $project->{remote_control_socket} =
+            $project->{remote_control_socket}->accept();
+		remove_remote_watcher();
+        $project->{events}->{remote_control} = AE::io(
+            $project->{remote_control_socket}, 0, \&process_remote_command );
+    }
+    my $input;
+    eval {     
+        $project->{remote_control_socket}->recv($input, $project->{remote_control_socket}->sockopt(SO_RCVBUF));
+    };
+    $@ and throw("caught error: $@, resetting..."), reset_remote_control_socket(), revise_prompt(), return;
+    logpkg(__FILE__,__LINE__,'debug',"Got remote control socketput: $input");
+	process_command($input);
+	my $out;
+	{ no warnings 'uninitialized';
+		$out = $text->{eval_result} . "\n";
+	}
+    eval {
+        $project->{remote_control_socket}->send($out);
+    };
+    $@ and throw("caught error: $@, resetting..."), reset_remote_control_socket(), revise_prompt(), return;
+	revise_prompt();
+}
+sub reset_remote_control_socket { 
+    undef $is_connected_remote;
+    undef $@;
+    $project->{remote_control_socket}->shutdown(2);
+    undef $project->{remote_control_socket};
+    remove_remote_watcher();
+	start_remote_listener($config->{remote_control_port});
+}
+}
+
+sub start_osc_listener {
+	my $port = shift;
+	say("Starting OSC listener on port $port");
+	my $osc_in = $project->{osc_socket} = IO::Socket::INET->new(
+		LocalAddr => 'localhost',
+		LocalPort => $port,
+		Proto	  => 'udp',
+		Type	  =>  SOCK_DGRAM) || die $!;
+	$project->{events}->{osc} = AE::io( $osc_in, 0, \&process_osc_command );
+	$project->{osc} = Protocol::OSC->new;
+}
+sub process_osc_command {
+	my $in = $project->{osc_socket};
+	my $osc = $project->{osc};
+	my $source_ip = $in->recv(my $packet, $in->sockopt(SO_RCVBUF));
+	my($err, $hostname, $servicename) = getnameinfo($source_ip, NI_NUMERICHOST);
+	my $p = $osc->parse($packet);
+	my @args = @$p;
+	my ($path, $template, $command, @vals) = @args;
+	$path =~ s(^/)();
+	$path =~ s(/$)();
+	my ($trackname, $fx, $param) = split '/', $path;
+	process_command($trackname);
+	process_command("$command @vals") if $command;
+	process_command("show_effect $fx") if $fx; # select
+	process_command("show_track") if $trackname and not $fx;
+	process_command("show_tracks") if ! $trackname;
+	say "got OSC: ", Dumper $p;
+	say "got args: @args";
+ 	my $osc_out = IO::Socket::INET->new(
+ 		PeerAddr => $hostname,
+ 		PeerPort => $config->{osc_reply_port},
+ 		Proto	  => 'udp',
+ 		Type	  =>  SOCK_DGRAM) || die $!;
+	$osc_out->send(join "",@{$text->{output_buffer}});
+	delete $text->{output_buffer};
+}
+
+sub sanitize_remote_input {
+	my $input = shift;
+	my $error_msg;
+	do{ $input = "" ; $error_msg = "error: perl/shell code is not allowed"}
+		if $input =~ /(^|;)\s*(!|eval\b)/;
+	throw($error_msg) if $error_msg;
+	$input
 }
 sub select_ecasound_interface {
-	pager3('Not initializing engine: options E or A are set.'),
-			return if $config->{opts}->{E} or $config->{opts}->{A};
-
-	# Net-ECI if requested by option, or as fallback 
-	
-	start_ecasound_net_eci(), return if $config->{opts}->{n}
-		or !  can_load( modules => { 'Audio::Ecasound' => undef });
-
-	start_ecasound_libecasoundc();
+	Audio::Nama::Effects::import_engine_subs();
+	my %args;
+	my $class;
+	if ($config->{opts}->{A} or $config->{opts}->{E})
+	{
+		pager_newline("Starting dummy engine only"); 
+		%args = (
+			name => 'Nama', 
+			jack_transport_mode => 'send',
+		);
+		$class = 'Audio::Nama::Engine';
+	}
+	elsif (
+		$config->{opts}->{l} 
+		and can_load( modules => { 'Audio::Ecasound' => undef })
+		and say("loaded Audio::Ecasound")
+	){  
+		%args = (
+			name => 'Nama', 
+			jack_transport_mode => 'send',
+		);
+		$class = 'Audio::Nama::LibEngine';
+	}
+	else { 
+		%args = (
+			name => 'Nama', 
+			port => $config->{engine_tcp_port},
+			jack_transport_mode => 'send',
+		);
+		$class = 'Audio::Nama::NetEngine';
+	}
+	$class->new(%args);
 }
 
-sub start_ecasound_libecasoundc {
-	pager3("Using Ecasound via Audio::Ecasound (libecasoundc)");
-	no warnings qw(redefine);
-	*eval_iam = \&eval_iam_libecasoundc;
-	$engine->{ecasound} = Audio::Ecasound->new();
-}
-	
-sub start_ecasound_net_eci {
-	pager3("Using Ecasound via Net-ECI"); 
-	no warnings qw(redefine);
-	launch_ecasound_server($config->{engine_tcp_port});
-	init_ecasound_socket($config->{engine_tcp_port}); 
-	*eval_iam = \&eval_iam_neteci;
-}
 
 
 sub choose_sleep_routine {
@@ -466,112 +568,6 @@ sub finesleep {
 sub select_sleep {
    my $seconds = shift;
    select( undef, undef, undef, $seconds );
-}
-
-{
-my $default_port = 2868; # Ecasound's default
-sub launch_ecasound_server {
-
-	# we'll try to communicate with an existing ecasound
-	# process provided:
-	#
-	# started with --server option
-	# --server-tcp-port option matches --or--
-	# nama is using Ecasound's default port 2868
-	
-	my $port = shift // $default_port;
-	my $command = "ecasound -K -C --server --server-tcp-port=$port";
-	my $redirect = ">/dev/null &";
-	my $ps = qx(ps ax);
-	pager3("Using existing Ecasound server"), return 
-		if  $ps =~ /ecasound/
-		and $ps =~ /--server/
-		and ($ps =~ /tcp-port=$port/ or $port == $default_port);
-	pager3("Starting Ecasound server");
- 	system("$command $redirect") == 0 or carp "system $command failed: $?\n";
-	sleep 1;
-}
-
-
-sub init_ecasound_socket {
-	my $port = shift // $default_port;
-	pager3("Creating socket on port $port.");
-	$engine->{socket} = new IO::Socket::INET (
-		PeerAddr => 'localhost', 
-		PeerPort => $port, 
-		Proto => 'tcp', 
-	); 
-	die "Could not create socket: $!\n" unless $engine->{socket}; 
-}
-
-sub ecasound_pid {
-	my ($ps) = grep{ /ecasound/ and /server/ } qx(ps ax);
-	my ($pid) = split " ", $ps; 
-	$pid if $engine->{socket}; # conditional on using socket i.e. Net-ECI
-}
-
-
-sub eval_iam { } # stub
-
-sub eval_iam_neteci {
-	my $cmd = shift;
-	my $category = munge_category(shift());
-
-	logit(__LINE__,$category, 'debug', "Net-ECI sent: $cmd");
-
-	$cmd =~ s/\s*$//s; # remove trailing white space
-	$engine->{socket}->send("$cmd\r\n");
-	my $buf;
-	# get socket reply, restart ecasound on error
-	my $result = $engine->{socket}->recv($buf, 65536);
-	defined $result or restart_ecasound(), return;
-
-	my ($return_value, $setup_length, $type, $reply) =
-		$buf =~ /(\d+)# digits
-				 \    # space
-				 (\d+)# digits
-				 \    # space
- 				 ([^\r\n]+) # a line of text, probably one character 
-				\r\n    # newline
-				(.+)  # rest of string
-				/sx;  # s-flag: . matches newline
-
-if(	! $return_value == 256 ){
-	logit(__LINE__,$category,'error',"Net-ECI bad return value: $return_value (expected 256)");
-	restart_ecasound();
-
-}
-	$reply =~ s/\s+$//; 
-
-	if( $type eq 'e')
-	{
-		logit(__LINE__,$category,'error',"ECI error! Command: $cmd. Reply: $reply");
-		#restart_ecasound() if $reply =~ /in engine-status/;
-	}
-	else
-	{ 	logit(__LINE__,$category,'debug',"Net-ECI  got: $reply");
-		$reply
-	}
-	
-}
-
-sub eval_iam_libecasoundc {
-	#logsub("&eval_iam");
-	my $cmd = shift;
-	my $category = munge_category(shift());
-	
-	logit(__LINE__,$category,'debug',"ECI sent: $cmd");
-
-	my (@result) = $engine->{ecasound}->eci($cmd);
-	logit(__LINE__,$category, 'debug',"ECI  got: @result") 
-		if $result[0] and not $cmd =~ /register/ and not $cmd =~ /int-cmd-list/; 
-	my $errmsg = $engine->{ecasound}->errmsg();
-	if( $errmsg ){
-		restart_ecasound() if $errmsg =~ /in engine-status/;
-		$engine->{ecasound}->errmsg(''); 
-		# Audio::Ecasound already prints error
-	}
-	"@result";
 }
 sub munge_category {
 	
@@ -591,10 +587,9 @@ sub munge_category {
 	$cat
 }
 
-}
 sub start_logging { 
 	$config->{want_logging} = initialize_logger($config->{opts}->{L})
 }
-
+sub eval_iam { $this_engine and $this_engine->eval_iam(@_) }
 1;
 __END__

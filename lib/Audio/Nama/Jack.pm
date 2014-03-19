@@ -9,11 +9,11 @@ no warnings 'uninitialized';
 sub poll_jack { 
 		jack_update(); # first time
 		# then repeat
-		$engine->{events}->{poll_jack} = AE::timer(0,5,\&jack_update) 
+		$project->{events}->{poll_jack} = AE::timer(0,5,\&jack_update) 
 }
 
 sub jack_update {
-	logsub("&jack_update");
+	#logsub("&jack_update");
 	# cache current JACK status
 	
 	# skip if Ecasound is busy
@@ -288,7 +288,7 @@ sub connect_jack_ports_list {
 
 	my @source_tracks = 
 		grep{ 	$_->source_type eq 'jack_ports_list' and
-	  	  		$_->rec_status  eq 'REC' 
+	  	  		$_->rec_status  eq REC 
 			} Audio::Nama::ChainSetup::engine_tracks();
 
 	my @send_tracks = 
@@ -335,7 +335,7 @@ sub make_connections {
 	map{  
 		my $track = $_; 
  		my $name = $track->name;
- 		my $ecasound_port = "ecasound:$name\_$direction\_";
+ 		my $ecasound_port = "Nama:$name\_$direction\_";
 		my $file = join_path(project_root(), $track->$ports_list);
 		throw($track->name, 
 			": JACK ports file $file not found. No sources connected."), 

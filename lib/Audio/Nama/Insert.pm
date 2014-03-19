@@ -4,10 +4,10 @@ use Modern::Perl;
 use Carp;
 no warnings qw(uninitialized redefine);
 our $VERSION = 0.1;
-use vars qw(%by_index);
+our %by_index;
 use Audio::Nama::Log qw(logpkg);
 use Audio::Nama::Log qw(logpkg);
-use Audio::Nama::Globals qw($jack $setup $config);
+use Audio::Nama::Globals qw($jack $setup $config :trackrw);
 use Audio::Nama::Object qw(
 	n			
 	class
@@ -65,7 +65,7 @@ sub new {
 				name => $self->wet_name,
 				target => $name,
 				group => 'Insert',
-				rw => 'REC',
+				rw => MON,
 	
 				# don't hide wet track if used for hosting effects
 				
@@ -76,7 +76,7 @@ sub new {
 				target => $name,
 				group => 'Insert',
 				hide => 1,
-				rw => 'REC');
+				rw => MON);
 	map{ Audio::Nama::remove_effect($_)} $wet->vol, $wet->pan, $dry->vol, $dry->pan;
 	map{ my $track = $_;  map{ delete $track->{$_} } qw(vol pan) } $wet, $dry;
 
@@ -99,20 +99,14 @@ sub new {
 
 sub type { (ref $_[0]) =~ /Pre/ ? 'prefader_insert' : 'postfader_insert' }
 
-sub remove {
-	my $self = shift;
-	local $Audio::Nama::this_track;
-	$Audio::Nama::tn{ $self->wet_name }->remove;
-	$Audio::Nama::tn{ $self->dry_name }->remove;
-	delete $by_index{$self->n};
-}
+#sub remove {}
 # subroutine
 #
 sub add_insert {
 	my ($track, $type, $send_id, $return_id) = @_;
 	local $Audio::Nama::this_track;
 	# $type : prefader_insert | postfader_insert
-	say "\n",$track->name , ": adding $type\n";
+	Audio::Nama::pager("\n",$track->name , ": adding $type\n");
 	my $name = $track->name;
 
 	# the input fields will be ignored, since the track will get input
@@ -276,12 +270,19 @@ sub add_paths {
 	$g->add_path($loop, $dry->name, $successor);
 	}
 	
+sub remove {
+	my $self = shift;
+	$Audio::Nama::tn{ $self->wet_name }->remove;
+	$Audio::Nama::tn{ $self->dry_name }->remove;
+	delete $Audio::Nama::Insert::by_index{$self->n};
+}
 }
 {
 package Audio::Nama::PreFaderInsert;
 use Modern::Perl; use Carp; our @ISA = qw(Audio::Nama::Insert);
 use Audio::Nama::Util qw(input_node output_node dest_type);
 use Audio::Nama::Log qw(logpkg);
+use Audio::Nama::Globals qw(:trackrw);
 
 
 # --- source ---------- wet_send_track  wet_return_track -+-- insert_pre -- track
@@ -297,7 +298,7 @@ sub new {
 				target => $self->track,
 				group => 'Insert',
 				hide => 1,
-				rw => 'REC'
+				rw => REC
 	);
 	map{ Audio::Nama::remove_effect($_)} $wet_send->vol, $wet_send->pan;
 	map{ my $track = $_;  map{ delete $track->{$_} } qw(vol pan) } $wet_send;
@@ -370,13 +371,12 @@ sub add_paths {
 		$g->add_path($predecessor, $dry->name, $loop, $name);
 	}
 	
-}
 sub remove {
 	my $self = shift;
-	local $Audio::Nama::this_track;
 	$Audio::Nama::tn{ $self->wet_send_name }->remove;
 	$Audio::Nama::tn{ $self->dry_name }->remove;
 	$Audio::Nama::tn{ $self->wet_name }->remove;
 	delete $Audio::Nama::Insert::by_index{$self->n};
+}
 }
 1;

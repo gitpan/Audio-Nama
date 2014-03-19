@@ -2,6 +2,7 @@
 
 package Audio::Nama;
 use Modern::Perl;
+use Audio::Nama::Log qw(logpkg);
 no warnings 'uninitialized';
 
 sub generate_setup { 
@@ -22,6 +23,15 @@ sub generate_setup {
 
 	Audio::Nama::ChainSetup::initialize();
 
+	
+	# this is our chance to save state without the noise
+	# of temporary tracks, avoiding the issue of getting diffs 
+	# in the project data from each new chain setup.
+	autosave() if $config->{autosave} eq 'setup'
+					and $project->{name}
+					and $config->{use_git} 
+					and $project->{repo};
+	
 	# TODO: use try/catch
 	# catch errors unless testing (no-terminal option)
 	local $@ unless $config->{opts}->{T}; 
@@ -31,7 +41,7 @@ sub generate_setup {
 		:  eval { Audio::Nama::ChainSetup::generate_setup_try(@_) }; 
 	track_unmemoize(); 			# unfreeze track state
 	if ($@){
-		say("error caught while generating setup: $@");
+		throw("error caught while generating setup: $@");
 		Audio::Nama::ChainSetup::initialize();
 		return
 	}
@@ -41,9 +51,8 @@ sub generate_setup {
 { my $old_offset_run_status;
 sub reconfigure_engine {
 
-	my $force = shift;
-
 	logsub("&reconfigure_engine");
+	my $force = shift;
 
 	# skip if command line option is set
 	# don't skip if $force argument given
@@ -55,56 +64,38 @@ sub reconfigure_engine {
 	
 	return if Audio::Nama::ChainSetup::really_recording() and engine_running();
 	
-	# store recorded trackrefs if any for re-record function
+	# store a lists of wav-recording tracks for the rerecord
+	# function
 	
-	# an empty set (e.g. in post-record monitoring)
-	# will not overwrite a previous set
-	
-	if( my @rec_tracks = Audio::Nama::ChainSetup::engine_wav_out_tracks() )
-	{
-		$setup->{_last_rec_tracks} = \@rec_tracks;
-	}
-
 	restart_wav_memoize(); # check if someone has snuck in some files
 	
 	find_duplicate_inputs(); # we will warn the user later
 
-	# reconfigure engine if $setup->{changed} flag is set
-	# or status_snapshot() shows a change in configuration
-
-	if( $setup->{changed} ){ 
+	if( $force or $setup->{changed} ){ 
 		logpkg(__FILE__,__LINE__,'debug',"reconfigure requested");
-		$setup->{changed} = 0; # reset for next time
-	} 
+} 
 	else {
-		my $current = json_out(status_snapshot());
-		my $old = json_out($setup->{_old_snapshot});
+		my $old = $setup->{_old_snapshot};
+		my $current = $setup->{_old_snapshot} = status_snapshot_string();	
 		if ( $current eq $old){
 				logpkg(__FILE__,__LINE__,'debug',"no change in setup");
 				return;
 		}
-		logpkg(__FILE__,__LINE__,'debug',"reconfigure triggered by change in setup");
-		#logpkg(__FILE__,__LINE__,'debug', diff(\$old, \$current));
+		logpkg(__FILE__,__LINE__,'debug',"detected configuration change");
+		logpkg(__FILE__,__LINE__,'debug', diff(\$old, \$current));
 	}
+	$setup->{changed} = 0 ; # reset for next time
 
-	# restore position/running status
-
-	$setup->{_old_snapshot} = status_snapshot();
-	
-	# make sure this is initialized
-	#$setup->{_old_rec_status} //= 
-	#	{ map{$_->name => $_->rec_status } Audio::Nama::Track::all() };
-		
 	$old_offset_run_status = $mode->{offset_run};
 
 	process_command('show_tracks');
 
-	stop_transport('quiet');
+	{ local $quiet = 1; stop_transport() }
 
 	trigger_rec_cleanup_hooks();
 	trigger_rec_setup_hooks();
 	$setup->{_old_rec_status} = { 
-		map{$_->name => $_->rec_status } Audio::Nama::Track::rec_hookable()
+		map{$_->name => $_->rec_status } rec_hookable_tracks()
 	};
 	if ( generate_setup() ){
 	
@@ -112,22 +103,26 @@ sub reconfigure_engine {
 		
 		logpkg(__FILE__,__LINE__,'debug',"I generated a new setup");
 		
-		autosave() if $config->{use_git} and $config->{autosave};
-		connect_transport('quiet');
+		{ local $quiet = 1; connect_transport() }
 		propagate_latency() if $config->{opts}->{Q} and $jack->{jackd_running};
 		show_status();
 
-# 		if( $restore_position and not Audio::Nama::ChainSetup::really_recording()){
-# 			eval_iam("setpos $old_pos") if $old_pos and $old_pos < $setup->{audio_length};
-# 		}
-		start_transport('quiet') if $mode->{preview} =~ /doodle/;
-			# $was_running or
+		eval_iam("setpos $project->{playback_position}")
+ 				if $project->{playback_position}
+					and not Audio::Nama::ChainSetup::really_recording();
+		start_transport('quiet') if $mode->eager 
+								and ($mode->doodle or $mode->preview);
 		transport_status();
 		$ui->flash_ready;
 		1
 	}
 }
 }
+sub request_setup { 
+	my ($package, $filename, $line) = caller();
+    logpkg(__FILE__,__LINE__,'debug',"reconfigure requested in file $filename:$line");
+	$setup->{changed}++
+} 
 
 
 #### status_snapshot() 
@@ -159,22 +154,20 @@ sub reconfigure_engine {
 		source_type
 		send_id
 		send_type
-		rec_defeat
 		rec_status
 		current_version
  );
 sub status_snapshot {
-
-	
 	my %snapshot = ( project 		=> 	$project->{name},
-					 mastering_mode => $mode->{mastering},
+					 mastering_mode => $mode->mastering,
 					 preview        => $mode->{preview},
 					 jack_running	=> $jack->{jackd_running},
 					 tracks			=> [], );
 	map { push @{$snapshot{tracks}}, $_->snapshot(\@relevant_track_fields) }
-	grep{ $_->rec_status ne 'OFF' } Audio::Nama::Track::all();
+	grep{ $_->rec_status ne OFF } grep { $_->group ne 'Temp' } Audio::Nama::all_tracks();
 	\%snapshot;
 }
+sub status_snapshot_string { json_out(status_snapshot()) }
 }
 	
 sub find_duplicate_inputs { # in Main bus only
@@ -186,12 +179,12 @@ sub find_duplicate_inputs { # in Main bus only
 			$setup->{tracks_with_duplicate_inputs}->{$_->name}++ if $setup->{inputs_used}->{$source} ;
 		 	$setup->{inputs_used}->{$source} //= $_->name;
 	} 
-	grep { $_->rw eq 'REC' }
+	grep { $_->rw eq REC }
 	map{ $tn{$_} }
 	$bn{Main}->tracks(); # track names;
 }
 sub load_ecs {
-	my $setup = $file->chain_setup;
+	my $setup = shift;
 	#say "setup file: $setup " . ( -e $setup ? "exists" : "");
 	return unless -e $setup;
 	#say "passed conditional";
@@ -207,15 +200,9 @@ sub teardown_engine {
 }
 
 sub arm {
-
-	# now that we have reconfigure_engine(), use is limited to 
-	# - exiting preview
-	# - automix	
-	
 	logsub("&arm");
 	exit_preview_mode();
-	$setup->{changed}++;
-	generate_setup() and connect_transport();
+	reconfigure_engine('force');
 }
 
 # substitute all live inputs by clock-sync'ed 
@@ -248,41 +235,42 @@ arm();
 
 sub connect_transport {
 	logsub("&connect_transport");
-	my $quiet = shift;
 	remove_riff_header_stubs();
 
 	register_other_ports(); # that don't belong to my upcoming instance
-	load_ecs() or say("No chain setup, engine not ready."), return;
+	load_ecs($file->chain_setup) or throw("No chain setup, engine not ready."), return;
 	valid_engine_setup()
-		or say("Invalid chain setup, engine not ready."),return;
+		or throw("Invalid chain setup, engine not ready."),return;
 	find_op_offsets(); 
 	eval_iam('cs-connect');
-		#or say("Failed to connect setup, engine not ready"),return;
+		#or throw("Failed to connect setup, engine not ready"),return;
 	apply_ops();
 	apply_fades();
 	my $status = eval_iam("engine-status");
 	if ($status ne 'not started'){
-		print("Invalid chain setup, cannot connect engine.\n");
+		throw("Invalid chain setup, cannot connect engine.\n");
 		return;
 	}
 	eval_iam('engine-launch');
 	$status = eval_iam("engine-status");
 	if ($status ne 'stopped'){
-		print "Failed to launch engine. Engine status: $status\n";
+		throw("Failed to launch engine. Engine status: $status\n");
 		return;
 	}
 	$setup->{audio_length} = eval_iam('cs-get-length'); # returns zero if unknown
 	sync_effect_parameters();
 	register_own_ports(); # as distinct from other Nama instances
 	$ui->length_display(-text => colonize($setup->{audio_length}));
-	eval_iam("cs-set-length $setup->{audio_length}") if $tn{Mixdown}->rec_status eq 'REC' and $setup->{audio_length};
+	eval_iam("cs-set-length $setup->{audio_length}") if $tn{Mixdown}->rec_status eq REC and $setup->{audio_length};
 	$ui->clock_config(-text => colonize(0));
 	sleeper(0.2); # time for ecasound engine to launch
 
 	# set delay for seeking under JACK
+	# we use a heuristic based on the number of tracks
+	# but it should be based on the number of PLAY tracks
 	
 	my $track_count; map{ $track_count++ } Audio::Nama::ChainSetup::engine_tracks();
-	$engine->{jack_seek_delay} = $jack->{jackd_running}
+	$jack->{seek_delay} = $jack->{jackd_running}
 		?  $config->{engine_base_jack_seek_delay} * ( 1 + $track_count / 20 )
 		:  0;
 	connect_jack_ports_list();
@@ -295,10 +283,10 @@ sub connect_transport {
 sub transport_status {
 	
 	map{ 
-		say("Warning: $_: input ",$tn{$_}->source,
+		pager("Warning: $_: input ",$tn{$_}->source,
 		" is already used by track ",$setup->{inputs_used}->{$tn{$_}->source},".")
 		if $setup->{tracks_with_duplicate_inputs}->{$_};
-	} grep { $tn{$_}->rec_status eq 'REC' } $bn{Main}->tracks;
+	} grep { $tn{$_}->rec_status eq REC } $bn{Main}->tracks;
 
 
 	# assume transport is stopped
@@ -307,16 +295,16 @@ sub transport_status {
 	my $end    = Audio::Nama::Mark::loop_end();
 	#print "start: $start, end: $end, loop_enable: $mode->{loop_enable}\n";
 	if (ref $setup->{cooked_record_pending} and %{$setup->{cooked_record_pending}}){
-		say join(" ", keys %{$setup->{cooked_record_pending}}), ": ready for caching";
+		pager(join(" ", keys %{$setup->{cooked_record_pending}}), ": ready for caching");
 	}
 	if ($mode->{loop_enable} and $start and $end){
 		#if (! $end){  $end = $start; $start = 0}
-		say "looping from ", heuristic_time($start),
-				 	"to ",   heuristic_time($end);
+		pager("looping from ", heuristic_time($start),
+				 	"to ",   heuristic_time($end));
 	}
-	say "\nNow at: ", current_position();
-	say "Engine is ". ( engine_running() ? "running." : "ready.");
-	say "\nPress SPACE to start or stop engine.\n"
+	pager("\nNow at: ", current_position());
+	pager("Engine is ". ( engine_running() ? "running." : "ready."));
+	pager("\nPress SPACE to start or stop engine.\n")
 		if $config->{press_space_to_start};
 }
 
@@ -324,27 +312,27 @@ sub trigger_rec_setup_hooks {
 	map { system($_->rec_setup_script) } 
 	grep
 	{ 
-		logpkg(__FILE__,__LINE__,'debug',
+		logpkg(__FILE__,__LINE__,'trace',
 			join "\n",
 			"track ".$_->name,
 			"rec status is: ".$_->rec_status,
-			"old rec status: ".$setup->{_old_rec_status},
+			"old rec status: ".$setup->{_old_rec_status}->{$_->name},
 			"script was ". (-e $_->rec_setup_script ) ? "found" : "not found"
 		);
-		$_->rec_status eq 'REC' 
-		and $setup->{_old_rec_status}->{$_->name} ne 'REC'
+		$_->rec_status eq REC 
+		and $setup->{_old_rec_status}->{$_->name} ne REC
 		and -e $_->rec_setup_script
 	} 
-	Audio::Nama::Track::rec_hookable();
+	rec_hookable_tracks();
 }	
  sub trigger_rec_cleanup_hooks {
  	map { system($_->rec_cleanup_script) } 
 	grep
-	{ 	$_->rec_status ne 'REC' 
-		and $setup->{_old_rec_status}->{$_->name} eq 'REC'
+	{ 	$_->rec_status ne REC 
+		and $setup->{_old_rec_status}->{$_->name} eq REC
 		and -e $_->rec_cleanup_script
 	}
-	Audio::Nama::Track::rec_hookable();
+	rec_hookable_tracks();
 }
 1;
 __END__

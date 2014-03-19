@@ -9,7 +9,7 @@ sub check_level {
 
 	# disable Master so unused tracks are pruned
 	
-	$tn{Master}->set(rw => 'OFF'); 
+	$tn{Master}->set(rw => OFF); 
 
 	# direct target track to null
 	
@@ -17,7 +17,7 @@ sub check_level {
 	sub { 	my $g = shift;
 			$g->add_path($track->name, output_node('null')) };
 	generate_setup($null_routing) 
-		or say("check_level: generate_setup failed!"), return;
+		or throw("check_level: generate_setup failed!"), return;
 	connect_transport();
 	
 	eval_iam('start'); # don't use heartbeat
@@ -34,8 +34,8 @@ sub check_level {
 	# restore previous state
 	
 	remove_effect($ev);
-	$tn{Master}->set(rw => 'MON'); 
-	$setup->{changed}++;
+	$tn{Master}->set(rw => MON); 
+	Audio::Nama::request_setup();
 }
 
 sub automix {
@@ -43,15 +43,15 @@ sub automix {
 	# get working track set
 	
 	my @tracks = grep{
-					$tn{$_}->rec_status eq 'MON' or
-					$bn{$_} and $tn{$_}->rec_status eq 'REC'
+					$tn{$_}->rec_status eq PLAY or
+					$bn{$_} and $tn{$_}->rec_status eq REC
 				 } $bn{Main}->tracks;
 
-	say "tracks: @tracks";
+	pager("tracks: @tracks");
 
 	## we do not allow automix if inserts are present	
 
-	say("Cannot perform automix if inserts are present. Skipping."), return
+	throw("Cannot perform automix if inserts are present. Skipping."), return
 		if grep{$tn{$_}->prefader_insert || $tn{$_}->postfader_insert} @tracks;
 
 	#use Smart::Comments '###';
@@ -75,7 +75,7 @@ sub automix {
 
 	## accommodate ea and eadb volume controls
 
-	my $vol_operator = type($tn{$tracks[0]}->vol);
+	my $vol_operator = fxn($tn{$tracks[0]}->vol)->type;
 
 	my $reduce_vol_command  = $vol_operator eq 'ea' ? 'vol / 10' : 'vol - 10';
 	my $restore_vol_command = $vol_operator eq 'ea' ? 'vol * 10' : 'vol + 10';
@@ -87,7 +87,7 @@ sub automix {
 	process_command('show');
 
 	generate_setup('automix') # pass a bit of magic
-		or say("automix: generate_setup failed!"), return;
+		or throw("automix: generate_setup failed!"), return;
 	connect_transport();
 	
 	# start_transport() does a rec_cleanup() on transport stop
@@ -112,9 +112,9 @@ sub automix {
 	
 	if ( $multiplier < 0.00001 ){
 
-		say "Signal appears to be silence. Skipping.";
+		throw("Signal appears to be silence. Skipping.");
 		for (@tracks){ process_command("$_  $restore_vol_command") }
-		$tn{Master}->set(rw => 'MON');
+		$tn{Master}->set(rw => MON);
 		return;
 	}
 

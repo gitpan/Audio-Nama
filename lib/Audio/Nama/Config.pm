@@ -9,7 +9,6 @@
 
 package Audio::Nama;
 
-my $logger = Log::Log4perl->get_logger("Audio::Nama::Config");
 use Modern::Perl;
 no warnings 'uninitialized';
 
@@ -32,7 +31,7 @@ sub global_config {
 	# 3. .namarc in the home directory, i.e. ~/.namarc
 	# 4. .namarc in the project root directory, i.e. ~/nama/.namarc
 	if( $config->{opts}->{f} ){
-		pager3("reading config file $config->{opts}->{f}\n");
+		pager_newline("reading config file $config->{opts}->{f}\n");
 		return read_file($config->{opts}->{f});
 	}
 	my @search_path = (project_dir(), $ENV{HOME}, project_root() );
@@ -78,6 +77,7 @@ sub read_config {
 	$config->{root_dir} = $config->{opts}->{d} if $config->{opts}->{d};
 	$config->{root_dir} = expand_tilde($config->{root_dir});
 	$config->{sample_rate} = $cfg{abbreviations}{frequency};
+	$config->{hotkeys}->{' '} = $config->{hotkeys}->{Space}; 
 
 	$config->{use_git} and ! git_executable_found() and 
 		say("Config file requests Git version control,

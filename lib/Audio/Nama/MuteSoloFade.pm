@@ -5,13 +5,23 @@ use Modern::Perl;
 
 sub mute {
 	return if $config->{opts}->{F};
-	return if $tn{Master}->rw eq 'OFF' or Audio::Nama::ChainSetup::really_recording();
+	return if $tn{Master}->rw eq OFF or Audio::Nama::ChainSetup::really_recording();
 	$tn{Master}->mute;
 }
 sub unmute {
 	return if $config->{opts}->{F};
-	return if $tn{Master}->rw eq 'OFF' or Audio::Nama::ChainSetup::really_recording();
+	return if $tn{Master}->rw eq OFF or Audio::Nama::ChainSetup::really_recording();
 	$tn{Master}->unmute;
+}
+sub fade_around {
+	my ($coderef, @args) = @_;
+	if( engine_running() )
+	{
+		mute();
+		$coderef->(@args);
+		unmute();
+	}
+	else { $coderef->(@args) }
 }
 sub fade {
 	my ($id, $param, $from, $to, $seconds) = @_;
@@ -31,22 +41,17 @@ sub fade {
 		modify_effect( $id, $param, '+', $size);
 		sleeper( $wink );
 	}		
-	effect_update_copp_set( 
-		$id, 
-		--$param, 
-		$to);
-	
 }
 
 sub fadein {
 	my ($id, $to) = @_;
-	my $from  = $config->{fade_out_level}->{type($id)};
+	my $from  = $config->{fade_out_level}->{fxn($id)->type};
 	fade( $id, 1, $from, $to, $config->{engine_fade_length_on_start_stop});
 }
 sub fadeout {
 	my $id    = shift;
-	my $from  =	params($id)->[0];
-	my $to	  = $config->{fade_out_level}->{type($id)};
+	my $from  =	fxn($id)->params->[0];
+	my $to	  = $config->{fade_out_level}->{fxn($id)->type};
 	fade( $id, 1, $from, $to, $config->{engine_fade_length_on_start_stop} );
 }
 

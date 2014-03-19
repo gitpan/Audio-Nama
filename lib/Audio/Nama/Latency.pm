@@ -100,9 +100,10 @@ sub track_ops_latency {
 }
 sub op_latency {
 	my $op = shift;
-	return 0 if is_controller($op); # skip controllers
+	my $FX = fxn($op);
+	return 0 if $FX->is_controller; # skip controllers
 	my $p = latency_param($op);
-	defined $p and ! bypassed($op)
+	defined $p and ! $FX->bypassed
 		? get_live_param($op, $p) 
 		: 0
 }
@@ -314,7 +315,7 @@ sub add_latency_compensation_op {
 
 
 sub reset_latency_compensation {
- 	map{ compensate_latency($_, 0) } grep{ $_->latency_op } Audio::Nama::Track::all();
+ 	map{ compensate_latency($_, 0) } grep{ $_->latency_op } Audio::Nama::audio_tracks();
  }
 
 { my %reverse = qw(input output output input);
@@ -344,11 +345,11 @@ sub jack_port_latency {
 	my ($client, $port) = client_port($name);
 	logpkg(__FILE__,__LINE__,'debug',"name: $name, client: $client, port: $port, dir: $dir, direction: $direction");
 	my $node = jack_client($client)
-		or Audio::Nama::pager3("$name: non existing JACK client"),
+		or Audio::Nama::pager_newline("$name: non existing JACK client"),
 		return;
 	$node->{$port}->{latency}->{$direction}->{min}
 		ne $node->{$port}->{latency}->{$direction}->{max}
-	and Audio::Nama::pager3('encountered unmatched latencies', 
+	and Audio::Nama::pager_newline('encountered unmatched latencies', 
 		sub{ json_out($node) });
 	$node->{$port}->{latency}->{$direction}->{min}
 }
@@ -369,8 +370,9 @@ sub get_live_param { # for effect, not controller
 					 # $param is position, starting at one
 	local $config->{category} = 'ECI_FX';
 	my ($op, $param) = @_;
-	my $n = chain($op);
-	my $i = ecasound_effect_index($op);
+	my $FX = fxn($op);
+	my $n = $FX->chain;
+	my $i = $FX->ecasound_effect_index;
 	eval_iam("c-select $n");
 	eval_iam("cop-select $i");
 	eval_iam("copp-select $param");

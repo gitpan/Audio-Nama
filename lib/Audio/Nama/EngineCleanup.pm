@@ -1,35 +1,53 @@
 # ----------- Engine cleanup (post-recording) -----------
 package Audio::Nama;
 use Modern::Perl;
+use Cwd;
 use Audio::Nama::Globals qw(:all);
 
 sub rec_cleanup {  
 	logsub("&rec_cleanup");
 	logpkg(__FILE__,__LINE__,'debug',"transport still running, can't cleanup"),return if transport_running();
-	if( my (@files) = new_files_were_recorded() ){
-		say join $/, "Now reviewing your recorded files...", (@files);
-		if( grep /Mixdown/, @files){
-			mixdown_postprocessing();
+	if( my (@files) = new_files_were_recorded() )
+	{
+		if( my @rec_tracks = Audio::Nama::ChainSetup::engine_wav_out_tracks() )
+		{
+			pager("wav_out_tracks found");
+			$setup->{_last_rec_tracks} = \@rec_tracks;
+			pager(Audio::Nama::Dumper \@rec_tracks);
 		}
+
+		if( grep /Mixdown/, @files) { mixdown_postprocessing() }
 		else { post_rec_configure() }
-		reconfigure_engine();
 	}
 }
-
 sub mixdown_postprocessing {
 	logsub("&mixdown_postprocessing");
 	process_command('mixplay');
-	my $mixdownfile = $tn{Mixdown}->full_path;
-	my $linkname = current_branch() || $project->{name};
+	my ($oldfile) = $tn{Mixdown}->full_path =~ m{([^/]+)$};
+	$oldfile = join_path('.wav',$oldfile);
+	my $tag_name = join '-', $project->{name}, current_branch();
 	my $version = $tn{Mixdown}->monitor_version;
-	$linkname =~ s/-branch$//;
-	$linkname .= "_$version";
-	my $tag_name = $linkname;
-	$linkname .= '.wav';
-	my $symlinkpath = join_path(project_dir(), $linkname);
-	symlink $mixdownfile, $symlinkpath;
-	#process_command('branch');
-	tag_mixdown_commit($tag_name, $symlinkpath, $mixdownfile) if $config->{use_git};
+
+	# simplify the tagname basename 
+	# 
+	# 	untitled-master        -> untitled
+	#   untitled-premix-branch -> untitled-premix
+	
+	$tag_name =~ s/-branch$//;
+	$tag_name =~ s/-master$//;
+	$tag_name .= "_$version";
+
+	delete_existing_mixdown_tag_and_convenience_encodings($tag_name);
+
+	# create symlink in project_dir()
+	
+	my $was_in = getcwd;
+	chdir project_dir() or die "couldn't chdir: $!";
+	my $newfile = "$tag_name.wav";
+	logpkg(__FILE__,__LINE__,'debug',"symlinking oldfile: $oldfile, newfile: $newfile");
+	symlink $oldfile, $newfile or throw("symlink didn't work: $!");
+	tag_mixdown_commit($tag_name, $newfile, $oldfile) if $config->{use_git};
+
 	my $sha = git_sha(); # possibly undef
 	my $encoding = $config->{mixdown_encodings};
 	my $comment;
@@ -41,28 +59,40 @@ sub mixdown_postprocessing {
 		$comment .= "(commit $sha)" if $sha;
 	}
 	$tn{Mixdown}->add_system_version_comment($version, $comment);
-	pager3($comment);	
-	encode_mixdown_file($mixdownfile,$tag_name);
+	pager_newline($comment);	
+	encode_mixdown_file($oldfile,$tag_name);
+	chdir $was_in;
 }
 sub tag_mixdown_commit {
 	logsub('&tag_mixdown_commit');
-	my ($name, $symlinkpath, $mixdownfile) = @_;
+	my ($name, $newfile, $mixdownfile) = @_;
 	logpkg(__FILE__,__LINE__,'debug',"tag_mixdown_commit: @_");
 
-	my ($sym) = $symlinkpath =~ m([^/]+$);
+	my ($sym) = $newfile =~ m([^/]+$);
 	my ($mix) = $mixdownfile =~ m([^/]+$);
 
 	# we want to tag the normal playback state
-	mixoff('quiet');
+	
+	local $quiet = 1;
+	mixoff();
 
-	save_state();
 	my $msg = "State for $sym ($mix)";
 	git_snapshot($msg);
-	git_tag($name, $msg);
+	git('tag', $name, '-m', $mix);
 
 	# rec_cleanup wants to audition the mixdown
-	mixplay('quiet');
+	mixplay();
 }
+sub delete_existing_mixdown_tag_and_convenience_encodings {
+	logsub('&delete_existing_mixdown_tag_and_convenience_encodings');
+	my $name = shift;
+	logpkg(__FILE__,__LINE__,'debug',"name: $name");
+		git('tag', '-d', $name);
+		foreach( qw(mp3 ogg wav) ){
+			my $file = join_path(project_dir(),"$name.$_");
+			unlink $file if -e $file;
+		}
+	}
 sub encode_mixdown_file {
 	state $shell_encode_command = {
 		mp3 => q(lame -h --ta "$artist" --ty $year --tt "$title" $input_file $output_file),
@@ -88,25 +118,31 @@ sub encode_mixdown_file {
 }
 		
 sub adjust_offset_recordings {
-	map {
-		$_->set(playat => $setup->{offset_run}->{mark});
-		say $_->name, ": offsetting to $setup->{offset_run}->{mark}";
-	} Audio::Nama::ChainSetup::engine_wav_out_tracks();
+	for( Audio::Nama::ChainSetup::engine_wav_out_tracks()){
+		no warnings 'uninitialized';
+		if (my $mark = $setup->{offset_run}->{mark}){
+			$_->set(playat => $mark);
+			logpkg(__FILE__,__LINE__,'debug',$_->name, ": offsetting to $mark");
+		}
+	}
 }
 sub post_rec_configure {
 
 		$ui->global_version_buttons(); # recreate
 		adjust_offset_recordings();
 
-		# toggle recorded tracks to MON for auditioning
+		# toggle recorded tracks to PLAY for auditioning
 		
-		map{ $_->set(rw => 'MON') } @{$setup->{_last_rec_tracks}};
+		map{ $_->set(rw => PLAY) } @{$setup->{_last_rec_tracks}};
 		
 		undef $mode->{offset_run} if ! defined $this_edit;
+		no warnings 'uninitialized';
 		$mode->{midish_transport_sync} = 'play' 
 			if $mode->{midish_transport_sync} eq 'record';
 
 		$ui->refresh();
+		request_setup();
+		reconfigure_engine();
 }
 sub new_files_were_recorded {
  	return unless my @files = Audio::Nama::ChainSetup::really_recording();
@@ -125,7 +161,7 @@ sub new_files_were_recorded {
 		} @files;
 	if(@recorded){
 		restart_wav_memoize();
-		say join $/,"recorded:",@recorded;
+		pager(join $/, "recorded:",@recorded);
 	}
 	map{ _get_wav_info($_) } @recorded;
 	@recorded 

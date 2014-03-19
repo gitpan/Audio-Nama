@@ -5,28 +5,45 @@ use Modern::Perl;
 *bn = \%Audio::Nama::Bus::by_name;
 *tn = \%Audio::Nama::Track::by_name;
 *ti = \%Audio::Nama::Track::by_index;
+*mn = \%Audio::Nama::Mark::by_name;
+*en = \%Audio::Nama::Engine::by_name;
 
 # and the graph
 
 *g = \$Audio::Nama::ChainSetup::g;
 
 use Exporter;
+use constant {
+	REC	=> 'REC',
+	PLAY => 'PLAY',
+	MON => 'MON',
+	OFF => 'OFF',
+};
 our @ISA = 'Exporter';
 our @EXPORT_OK = qw(
 
 $this_track
 $this_bus
-$this_op
-$this_param
+$this_bus_o
 $this_mark
 $this_edit
+$this_sequence
+$this_engine
+$this_user
 $prompt
 %tn
 %ti
 %bn
+%mn
+%en
 $g
 $debug
 $debug2
+$quiet
+REC
+MON
+PLAY
+OFF
 $ui
 $mode
 $file
@@ -36,7 +53,6 @@ $config
 $jack
 $fx
 $fx_cache
-$engine
 $text
 $gui
 $midi
@@ -63,6 +79,7 @@ $this_track_name
 
 our %EXPORT_TAGS = 
 (
+	trackrw => [qw(REC PLAY MON OFF)],
 	singletons => [qw( 	
 
 $ui
@@ -70,11 +87,14 @@ $mode
 $file
 $graph
 $setup
+
+
+
+
 $config
 $jack
 $fx
 $fx_cache
-$engine
 $text
 $gui
 $midi
@@ -96,17 +116,26 @@ $project
 
 $this_track
 $this_bus
-$this_op
-$this_param
+$this_bus_o
 $this_mark
 $this_edit
+$this_sequence
+$this_engine
+$this_user
 $prompt
 %tn
 %ti
 %bn
+%mn
+%en
 $g
 $debug
 $debug2
+$quiet
+REC
+MON
+PLAY
+OFF
 
 
 	)],

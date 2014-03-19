@@ -12,11 +12,11 @@ use Data::Dumper::Concise;
 use Carp;
 use Exporter qw(import);
 use Storable qw(dclone);
+use Audio::Nama::Effects qw(fxn);
 use Audio::Nama::Log qw(logpkg logsub);
 use Audio::Nama::Assign qw(json_out);
-use Audio::Nama::Effects qw(fx);
 
-use Audio::Nama::Globals qw($fx_cache %tn $this_op);
+use Audio::Nama::Globals qw($fx_cache %tn $fx);
 
 our $AUTOLOAD;
 our $VERSION = 0.001;
@@ -44,8 +44,11 @@ use Audio::Nama::Object qw(
 							
 							
 							
+		region				
 							
 		attrib 				
+
+		class				
 
 
 
@@ -95,6 +98,7 @@ use Audio::Nama::Object qw(
 			track_cache	
 	) ;
 
+%is_attribute = map{ $_ => 1 } @attributes;
 initialize();
 
 # for compatibility with standard effects
@@ -121,27 +125,27 @@ sub params {
 }
 
 sub initialize {
-	$n = 1;
+	$n = 0;
 	%by_index = ();	
-	@Audio::Nama::global_effect_chain_data = ();  # for save/restore
-    @Audio::Nama::project_effect_chain_data = (); 
-	%is_attribute = map{ $_ => 1 } @attributes;
 }
+sub new_index { $n++; $by_index{$n} ?  new_index() : $n }
 sub new {
 	# arguments: ops_list, ops_data, inserts_data
 	# ops_list => [id1, id2, id3,...];
 	my $class = shift;	
 	defined $n or die "key var $n is undefined";
 	my %vals = @_;
-	my $n;
 
-	# not need to massage data if we are merely restoring
-	if ($n = $vals{n} ) {} 	
-	else {
+	# we need to so some preparation if we are creating
+	# an effect chain for the first time (as opposed
+	# to restoring a serialized effect chain)
 
-		# move attributes to "attrib" hash
+	if (! $vals{n} ) {
+
+		# move secondary attributes to $self->{attrib}->{...}
 		move_attributes(\%vals);
 
+		$vals{n} = new_index();
 		$vals{inserts_data} ||= [];
 		$vals{ops_list} 	||= [];
 		$vals{ops_data} 	||= {};
@@ -155,16 +159,13 @@ sub new {
 		logpkg(__FILE__,__LINE__,'warn',"Nether ops_list or nor insert_data is present") 
 			if ! scalar @{$vals{ops_list}} and ! scalar @{$vals{inserts_data}};
 
-		my $n = $vals{n} || ++$n;
-
 		my $ops_data = {};
-		# ops data can either be 
-		# + provided explicitly with ops_data argument, e.g.convert_effect_chains() 
-		# + or taken from existing effects, e.g. $fx->{applied}
-		#
-		# in either case, we want to clone the data structures
-		# to ensure we don't damage objects in the original
-		# structure.
+		# ops data is taken preferentially 
+		# from ops_data argument, with fallback
+		# to existing effects, e.g. $fx->{applied}
+		
+		# in both cases, we clone the data structures
+		# to ensure we don't damage the original
 		
 		map { 	
 
@@ -175,8 +176,8 @@ sub new {
 			}
 			else
 			{
-				$ops_data->{$_} 		  = dclone( Audio::Nama::fx(    $_) );  # copy
-				$ops_data->{$_}->{params} = dclone( Audio::Nama::params($_) );  # copy;
+				$ops_data->{$_} 		  = dclone( $fx->{applied}->{$_} );# copy
+				$ops_data->{$_}->{params} = dclone( $fx->{params }->{$_} );# copy;
 				# our op IDs are ALL CAPS, so will not conflict
 				# with params when accessing via key
 				#
@@ -261,14 +262,8 @@ sub new {
 
 		#say Audio::Nama::json_out($vals{inserts_data}) if $vals{inserts_data};
 	}
-
-	my $object = bless 
-		{ 
-			n => $n, 
-			%vals,
-
-		}, $class;
-	$by_index{$n} = $object;
+	my $object = bless { %vals }, $class;
+	$by_index{$vals{n}} = $object;
 	logpkg(__FILE__,__LINE__,'debug',sub{$object->dump});
 	$object;
 }
@@ -283,21 +278,29 @@ sub AUTOLOAD {
 ### apply effect chain to the specified track
 
 sub add_ops {
-	my($self, $track, $successor) = @_;
+	my($self, $track, $ec_args) = @_;
 	
 	# Higher priority: track argument 
 	# Lower priority:  effect chain's own track name attribute
 	$track ||= $tn{$self->track_name} if $tn{$self->track_name};
 	
-	local $this_op; # restore to present value on exiting subroutine
-					# i.e. avoid save/restore using $old_this_op 
-
 	logpkg(__FILE__,__LINE__,'debug',$track->name,
 			qq(: adding effect chain ), $self->name, Dumper $self
 		 
 		);
 
-	$successor ||= $track->vol; # place effects before volume 
+	# Exclude restoring vol/pan for track_caching.
+	# (This conditional is a hack that would be better 
+	# implemented by subclassing EffectChain 
+	# for cache/uncache)
+	
+	my @restore_ops_list;
+	if( $self->track_cache ){
+		@restore_ops_list = grep{ $_ ne $track->vol and $_ ne $track->pan }
+								@{$self->ops_list}
+	} else {
+		@restore_ops_list = @{$self->ops_list};
+	}
 	map 
 	{	
 		my $args = 
@@ -308,14 +311,15 @@ sub add_ops {
 			parent_id 	=> $self->parent($_),
 		};
 
-		$args->{effect_id} = $_ unless fx($_);
+		$args->{effect_id} = $_ unless fxn($_);
 
 		logpkg(__FILE__,__LINE__,'debug',"args ", json_out($args));
 		# avoid incorrectly calling _insert_effect 
 		# (and controllers are not positioned relative to other  effects)
 		# 
 		
-		$args->{before} = $successor unless $args->{parent_id};
+		$args->{before} = $ec_args->{before} unless $args->{parent_id};
+		$args->{surname} = $ec_args->{surname} if $ec_args->{surname};
 
 
 		my $new_id = Audio::Nama::add_effect($args);
@@ -333,10 +337,7 @@ sub add_ops {
 			map{ $self->parent($_) =~ s/^$orig_id$/$new_id/  } @{$self->ops_list}
 		}
 		
-		
-	} @{$self->ops_list};
-
-
+	} @restore_ops_list
 }
 sub add_inserts {
 	my ($self, $track) = @_;
@@ -357,24 +358,26 @@ sub add_inserts {
 		#$Audio::Nama::by_index{$dry_effect_chain}->add($insert->dry_name, $tn{$insert->dry_name}->vol)
 	} @{$self->inserts_data};
 }
+sub add_region {
+	my ($self, $track) = @_;
+	Audio::Nama::throw($track->name.": track already has region definition\n",
+		"failed to apply region @$self->{region}\n"), return
+		if $track->is_region;
+	$track->set(region_start => $self->{region}->[0],
+				region_end	 => $self->{region}->[1]);
+}
 
 sub add_all {
 	my($self, $track, $successor) = @_;
 }
-sub clobber_ops {
-	my($self, $track) = @_;
-}
-sub clobber_inserts {
-	my($self, $track) = @_;
-}
-sub clobber_all {
-	my($self, $track) = @_;
-}
-
 sub add {
 	my ($self, $track, $successor) = @_;
-	$self->add_ops($track, $successor);
+	my $args = {};
+	$args->{before} = $successor;
+	$args->{surname} = $self->name if $self->name;
+	$self->add_ops($track, $args);
 	$self->add_inserts($track);
+	$self->add_region($track) if $self->region;
 
 }
 sub destroy {
@@ -452,11 +455,21 @@ sub move_attributes {
 sub DESTROY {}
 
 }
-
 {	
-####  Effect profile routines
+####  Effect-chain and -profile routines
 
 package Audio::Nama;
+sub add_effect_chain {
+	my ($name, $track, $successor) = @_;
+	my ($ec) = Audio::Nama::EffectChain::find(
+		unique => 1, 
+		user   => 1, 
+		name   => $name,
+	);
+	if( $ec ){ $ec->add($Audio::Nama::this_track, $successor) }
+	else { Audio::Nama::throw("$name: effect chain not found") }
+	1;
+}
 sub new_effect_profile {
 	logsub("&new_effect_profile");
 	my ($bunch, $profile) = @_;
@@ -492,7 +505,11 @@ sub apply_effect_profile {  # overwriting current effects
 	# add effect chains
 	map{ $_->add } @chains;
 }
-
+sub is_effect_chain {
+	my $name = shift;
+	my ($fxc) = Audio::Nama::EffectChain::find(name => $name, unique => 1);
+	$fxc
+}
 }
 1;
 __END__

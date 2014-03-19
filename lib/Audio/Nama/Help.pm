@@ -3,13 +3,16 @@
 package Audio::Nama;
 use Modern::Perl;
 
+{
+no warnings 'uninitialized';
 sub helpline {
 	my $cmd = shift;
 	my $out = "Command: $cmd\n";
 	$out .=  "Shortcuts: $text->{commands}->{$cmd}->{short}\n"
 			if $text->{commands}->{$cmd}->{short};	
 	$out .=  "Category: $text->{commands}->{$cmd}->{type}\n";
-	$out .=  "Description: $text->{commands}->{$cmd}->{what}\n";
+	my $what = munge_help($text->{commands}->{$cmd}->{what});
+	$out .=  "Description: $what\n";
 	$out .=  "Usage: $cmd "; 
 
 	if ( $text->{commands}->{$cmd}->{parameters} 
@@ -18,6 +21,7 @@ sub helpline {
 	}
 	$out .= "\n";
 	my $example = $text->{commands}->{$cmd}->{example};
+	$example = munge_help($example);
 	#$example =~ s/!n/\n/g;
 	if ($example){
 		$out .=  "Example: ";
@@ -30,6 +34,13 @@ sub helpline {
 	}
 	($/, ucfirst $out, $/);
 	
+}
+sub munge_help {
+	my $text = shift;
+	$text =~ s/(^\s*)!(\s*#)/$1 $2/mg;
+	$text =~ s/(^\s*!)/#/mg;
+	$text
+}
 }
 sub helptopic {
 	my $user_input = shift;
@@ -61,7 +72,7 @@ sub help {
 	my $name = shift;
 	chomp $name;
 	#print "seeking help for argument: $name\n";
-	$text->{iam}->{$name} and print <<IAM;
+	$text->{iam}->{$name} and pager(<<IAM);
 
 $name is an Ecasound command.  See 'man ecasound-iam'.
 IAM
@@ -101,7 +112,7 @@ IAM
 	}
 	if (@output){
 		Audio::Nama::pager( @output ); 
-	} else { print "$name: no help found.\n"; }
+	} else { throw("$name: no help found.\n"); }
 	
 }
 sub help_effect {
@@ -139,7 +150,7 @@ sub help_effect {
 Type 'man ecasound' at a shell prompt for details.);
 	}
 
-	if( $no_match ){ print "No effects were found matching: $input\n\n"; }
+	if( $no_match ){ throw("No effects were found matching: $input\n\n"); }
 	else { Audio::Nama::pager(@output) }
 }
 
@@ -155,7 +166,7 @@ sub find_effect {
 	} @{$fx_cache->{user_help}};
 	if ( @matches ){
 	Audio::Nama::pager( $text->{wrap}->paragraphs(@matches) , "\n" );
-	} else { print join " ", "No effects were found matching:",@keys,"\n\n" }
+	} else { throw(join " ", "No effects were found matching:",@keys,"\n\n") }
 }
 
 
@@ -321,10 +332,11 @@ track => <<TRACK,
 
  - rw_status
 
-   rec                     -  set track to REC  
-   mon                     -  set track to MON
-   off, z                  -  set track OFF (omit from setup)
-   rec_defeat, rd          -  toggle track WAV recording on/off
+   rec                     -  set track to REC (live signal source)
+   mon                     -  set track to PLAY (WAV file playback)
+   off                     -  set track OFF (omit from setup)
+   write_defeat, wd        -  toggle track WAV recording off
+   write_enable, we        -  toggle track WAV recording on
 
  - vol/pan 
 
@@ -340,7 +352,7 @@ track => <<TRACK,
                               sax vol * 3  (multiply by 3)
                               sax vol / 2  (cut by half) 
    mute, c, cut            -  mute volume 
-   unmute, uncut, cc       -  restore muted volume
+   unmute, nomute, uncut, C -  restore muted volume
 
  - chain object modifiers
 
@@ -354,13 +366,13 @@ track => <<TRACK,
    ecanormalize, normalize, norm 
                            - run ecanormalize on current track version
    ecafixdc, fixdc         - run ecafixdc on current track version
-   autofix_tracks, autofix - fixdc and normalize selected versions of all MON
+   autofix_tracks, autofix - fixdc and normalize selected versions of all PLAY
                              tracks
 
  - cutting and time shifting
 
    set_region,    srg      - specify a track region using times or mark names
-   new_region,    nrg      - define a region creating an auxiliary track
+   add_region,    arg      - define a region creating an auxiliary track
    remove_region, rrg      - remove auxiliary track or region definition
    shift_track,   shift    - set playback delay for track/region
    unshift_track, unshift  - eliminate playback delay for track/region
@@ -442,12 +454,11 @@ effects => <<EFFECTS,
    add_effect,     afx        - add an effect to the current track
    add_controller, acl        - add an Ecasound controller
    insert_effect,  ifx        - insert an effect before another effect
-   modify_effect,  mfx,
-     modify_controller, mcl   - set, increment or decrement effect parameter
-   remove_effect, rfx         
-     remove_controller, rcl   - remove an effect or controller
-   append_effect              - add effect to the end of current track
-                                effect list 
+   modify_effect,  mfx        - set, increment or decrement effect parameter
+   remove_effect,  rfx        - remove an effect or controller
+   append_effect, apfx        - add effect to the end of current track effect list 
+   bypass_effects, bypass, bye   - suspend current track effects except vol/pan
+   restore_effects, restore, ref - restore track effects
 
 -  send/receive inserts
 
@@ -458,12 +469,11 @@ effects => <<EFFECTS,
 
 -  effect chains (presets, each consisting of multiple effects)
 
-   new_effect_chain, nec         - define a new effect chain
-   add_effect_chain, aec         - add an effect chain to the current track
-   delete_effect_chain, dec      - delete an effect chain
-   list_effect_chains, lec       - list effect chains and their parameters
-   bypass_effects, bypass, bye   - suspend current track effects except vol/pan
-   restore_effects, restore, ref - restore track effects
+   list_effect_chains,     lec   - list effect chains and their parameters
+   new_effect_chain,       nec   - define a new effect chain
+   overwrite_effect_chain, oec   - as above, but overwite existing definition
+   add_effect_chain,       aec   - add an effect chain to the current track
+   delete_effect_chain,    dec   - delete an effect chain definition
 
 -  effect profiles (effect chains for a group of tracks)
 
@@ -478,7 +488,7 @@ EFFECTS
 
 group => <<GROUP,
    group_rec, grec, R         - group REC mode 
-   group_mon, gmon, M         - group MON mode 
+   group_mon, gmon, M         - group PLAY mode 
    group_off, goff, Z         - group OFF mode 
    group_version, gver, gv    - select default group version 
                               - used for switching among 
@@ -502,10 +512,11 @@ group => <<GROUP,
                            example: for rec; off
                             (operates on tracks in current bus set to 'rec')
                            example: for OFF; off
-                            (operates on tracks in current bus w/status 'OFF')
+                            (operates on tracks in current bus w/status OFF)
 GROUP
 
 bus => <<BUS,
+   list_buses,          lbs   - list bus data
    add_send_bus_raw,    asbr  - create bus and slave tracks for 
                                 sending pre-fader track signals
    add_send_bus_cooked, asbc  - as above, for post-fader signals
@@ -637,7 +648,6 @@ help is available for the following topics:
 13 Fades
 14 Command line options
 15 Man page
-911  All other issues
 
 HELP
 

@@ -10,7 +10,7 @@ use Carp qw(carp confess croak cluck);
 use YAML::Tiny;
 use File::Slurp;
 use File::HomeDir;
-use Audio::Nama::Log qw(logsub);
+use Audio::Nama::Log qw(logsub logpkg);
 use Storable qw(nstore retrieve);
 use JSON::XS;
 use Data::Dumper::Concise;
@@ -39,8 +39,6 @@ our @EXPORT = ();
 
 our $to_json = JSON::XS->new->utf8->allow_blessed->pretty->canonical(1) ;
 use Carp;
-
-my $logger = Log::Log4perl->get_logger();
 
 {my $var_map = { qw(
 
@@ -74,7 +72,7 @@ my $logger = Log::Log4perl->get_logger();
 	$use_group_numbering 			$config->{use_group_numbering}
 	$press_space_to_start_transport $config->{press_space_to_start}
 	$execute_on_project_load 		$config->{execute_on_project_load}
-	$initial_user_mode 				$config->{initial_mode}
+	$initial_mode 					$config->{initial_mode}
 	$midish_enable 					$config->{use_midish}
 	$quietly_remove_tracks 			$config->{quietly_remove_tracks}
 	$use_jack_plumbing 				$config->{use_jack_plumbing}
@@ -86,13 +84,18 @@ my $logger = Log::Log4perl->get_logger();
 	$use_git						$config->{use_git}
 	$autosave						$config->{autosave}
 	$beep_command 					$config->{beep_command}
+	$hotkey_beep					$config->{hotkey_beep}
+	$eager							$mode->{eager}
+	$alias							$config->{alias}
+	$hotkeys						$config->{hotkeys}
+	$new_track_rw					$config->{new_track_rw}
+	$hotkeys_always					$config->{hotkeys_always}
 	$use_pager     					$config->{use_pager}
 	$use_placeholders  				$config->{use_placeholders}
     $edit_playback_end_margin  		$config->{edit_playback_end_margin}
     $edit_crossfade_time  			$config->{edit_crossfade_time}
 	$default_fade_length 			$config->{engine_fade_default_length}
 	$fade_time 						$config->{engine_fade_length_on_start_stop}
-	$seek_delay    					$config->{engine_jack_seek_delay}
 	%mute_level						$config->{mute_level}
 	%fade_out_level 				$config->{fade_out_level}
 	$fade_resolution 				$config->{fade_resolution}
@@ -102,6 +105,10 @@ my $logger = Log::Log4perl->get_logger();
 	$midi_output_dev   				$midi->{output_dev}
 	$controller_ports				$midi->{controller_ports}
     $midi_inputs					$midi->{inputs}
+	$osc_listener_port 				$config->{osc_listener_port}
+	$osc_reply_port 				$config->{osc_reply_port}
+	$remote_control_port 			$config->{remote_control_port}
+	$engines						$config->{engines}
 
 ) };
 sub var_map {  $var_map } # to allow outside access while keeping
@@ -121,27 +128,27 @@ sub assign {
 	
 	my %h = @_; # parameters appear in %h
 	my $class;
-	$logger->logcarp("didn't expect scalar here") if ref $h{data} eq 'SCALAR';
-	$logger->logcarp("didn't expect code here") if ref $h{data} eq 'CODE';
+	logpkg(__FILE__,__LINE__,'logcarp',"didn't expect scalar here") if ref $h{data} eq 'SCALAR';
+	logpkg(__FILE__,__LINE__,'logcarp',"didn't expect code here") if ref $h{data} eq 'CODE';
 	# print "data: $h{data}, ", ref $h{data}, $/;
 
 	if ( ref $h{data} !~ /^(HASH|ARRAY|CODE|GLOB|HANDLE|FORMAT)$/){
 		# we guess object
 		$class = ref $h{data}; 
-		$logger->debug("I found an object of class $class");
+		logpkg(__FILE__,__LINE__,'debug',"I found an object of class $class");
 	} 
 	$class = $h{class};
  	$class .= "::" unless $class =~ /::$/;  # SKIP_PREPROC
 	my @vars = @{ $h{vars} };
 	my $ref = $h{data};
 	my $type = ref $ref;
-	$logger->debug(<<ASSIGN);
+	logpkg(__FILE__,__LINE__,'debug',<<ASSIGN);
 	data type: $type
 	data: $ref
 	class: $class
 	vars: @vars
 ASSIGN
-	#$logger->debug(sub{json_out($ref)});
+	#logpkg(__FILE__,__LINE__,'debug',sub{json_out($ref)});
 
 	# index what sigil an identifier should get
 
@@ -154,25 +161,25 @@ ASSIGN
 		my ($dummy, $old_identifier) = /^([\$\%\@])([\-\>\w:\[\]{}]+)$/;
 		$var = $var_map->{$var} if $h{var_map} and $var_map->{$var};
 
-		$logger->debug("oldvar: $oldvar, newvar: $var") unless $oldvar eq $var;
+		logpkg(__FILE__,__LINE__,'debug',"oldvar: $oldvar, newvar: $var") unless $oldvar eq $var;
 		my ($sigil, $identifier) = $var =~ /([\$\%\@])(\S+)/;
 			$sigil{$old_identifier} = $sigil;
 			$ident{$old_identifier} = $identifier;
 	} @vars;
 
-	$logger->debug(sub{"SIGIL\n". json_out(\%sigil)});
+	logpkg(__FILE__,__LINE__,'debug',sub{"SIGIL\n". json_out(\%sigil)});
 	#%ident = map{ @$_ } grep{ $_->[0] ne $_->[1] } map{ [$_, $ident{$_}]  }  keys %ident; 
 	my %ident2 = %ident;
 	while ( my ($k,$v) = each %ident2)
 	{
 		delete $ident2{$k} if $k eq $v
 	}
-	$logger->debug(sub{"IDENT\n". json_out(\%ident2)});
+	logpkg(__FILE__,__LINE__,'debug',sub{"IDENT\n". json_out(\%ident2)});
 	
 	#print join " ", "Variables:\n", @vars, $/ ;
 	croak "expected hash" if ref $ref !~ /HASH/;
 	my @keys =  keys %{ $ref }; # identifiers, *no* sigils
-	$logger->debug(sub{ join " ","found keys: ", keys %{ $ref },"\n---\n"});
+	logpkg(__FILE__,__LINE__,'debug',sub{ join " ","found keys: ", keys %{ $ref },"\n---\n"});
 	map{  
 		my $eval;
 		my $key = $_;
@@ -184,13 +191,13 @@ ASSIGN
 			# use the supplied class unless the variable name
 			# contains \:\:
 			
-		$logger->debug(<<DEBUG);
+		logpkg(__FILE__,__LINE__,'debug',<<DEBUG);
 key:             $key
 sigil:      $sigil
 full_class_path: $full_class_path
 DEBUG
 		if ( ! $sigil ){
-			$logger->debug(sub{
+			logpkg(__FILE__,__LINE__,'debug',sub{
 			"didn't find a match for $key in ", join " ", @vars, $/;
 			});
 		} 
@@ -235,9 +242,9 @@ DEBUG
 				}
 			}
 			else { die "unsupported assignment: ".ref $val }
-			$logger->debug("eval string: $eval"); 
+			logpkg(__FILE__,__LINE__,'debug',"eval string: $eval"); 
 			eval($eval);
-			$logger->logcarp("failed to eval $eval: $@") if $@;
+			logpkg(__FILE__,__LINE__,'logcarp',"failed to eval $eval: $@") if $@;
 		}  # end if sigil{key}
 	} @keys;
 	1;
@@ -256,11 +263,14 @@ $mode
 $file
 $graph
 $setup
+
+
+
+
 $config
 $jack
 $fx
 $fx_cache
-$engine
 $text
 $gui
 $midi
@@ -290,9 +300,9 @@ sub assign_singletons {
 					$key,
 					'}',
 					' = $data->{$ident}->{$key}';
-				$logger->debug("eval: $cmd");
+				logpkg(__FILE__,__LINE__,'debug',"eval: $cmd");
 				eval $cmd;
-				$logger->logcarp("error during eval: $@") if $@;
+				logpkg(__FILE__,__LINE__,'logcarp',"error during eval: $@") if $@;
 			} keys %{ $data->{$ident} }
 		}
 	} @singleton_idents;  # list of "singleton" variables
@@ -338,7 +348,7 @@ sub serialize {
 
  	$class //= "Audio::Nama";
 	$class =~ /::$/ or $class .= '::'; # SKIP_PREPROC
-	$logger->debug("file: $file, class: $class\nvariables...@vars");
+	logpkg(__FILE__,__LINE__,'debug',"file: $file, class: $class\nvariables...@vars");
 
 	# first we marshall data into %state
 
@@ -347,7 +357,7 @@ sub serialize {
 	map{ 
 		my ($sigil, $identifier, $key) = /$parse_re/;
 
-	$logger->debug("found sigil: $sigil, ident: $identifier, key: $key");
+	logpkg(__FILE__,__LINE__,'debug',"found sigil: $sigil, ident: $identifier, key: $key");
 
 # note: for  YAML::Reader/Writer  all scalars must contain values, not references
 # more YAML adjustments 
@@ -372,7 +382,7 @@ sub serialize {
 							. $identifier
 							. ($key ? qq(->{$key}) : q());
 
-		$logger->debug("value: $value");
+		logpkg(__FILE__,__LINE__,'debug',"value: $value");
 
 			
 		 my $eval_string =  q($state{')
@@ -383,12 +393,12 @@ sub serialize {
 							. $value;
 
 		if ($identifier){
-			$logger->debug("attempting to eval $eval_string");
-			eval($eval_string) 
-				or $logger->error("eval returned zero or failed ($@)");
+			logpkg(__FILE__,__LINE__,'debug',"attempting to eval $eval_string");
+			eval($eval_string);
+			logpkg(__FILE__,__LINE__,'error', "eval failed ($@)") if $@;
 		}
 	} @vars;
-	$logger->debug(sub{join $/,'\%state', Dumper \%state});
+	logpkg(__FILE__,__LINE__,'debug',sub{join $/,'\%state', Dumper \%state});
 
 	# YAML out for screen dumps
 	return( json_out(\%state) ) unless $h{file};
@@ -417,25 +427,6 @@ sub json_in {
 	$data_ref
 }
 
-sub yaml_out {
-	logsub("&yaml_out");
-	my ($data_ref) = shift; 
-	#use Devel::Cycle;
-	#use Data::Dumper::Concise;
-	#say(Dumper $data_ref);
-	find_cycle($data_ref);
-	my $type = ref $data_ref;
-	$logger->debug("data ref type: $type");
-	$logger->logcarp("can't yaml-out a Scalar!!") if ref $data_ref eq 'SCALAR';
-	$logger->logcroak("attempting to code wrong data type: $type")
-		if $type !~ /HASH|ARRAY/;
-	my $output;
-	#$logger->debug(join " ",keys %$data_ref);
-	$logger->debug("about to write YAML as string");
-	my $y = YAML::Tiny->new;
-	$y->[0] = $data_ref;
-	my $yaml = $y->write_string() . "...\n";
-}
 sub yaml_in {
 	
 	# logsub("&yaml_in");
@@ -449,7 +440,7 @@ sub yaml_in {
 	$yaml =~ s/^\n+//  ; # remove leading newline at start of file
 	$yaml =~ s/\n*$/\n/; # make sure file ends with newline
 	my $y = YAML::Tiny->read_string($yaml);
-	print "YAML::Tiny read error: $YAML::Tiny::errstr\n" if $YAML::Tiny::errstr;
+	Audio::Nama::throw("YAML::Tiny read error: $YAML::Tiny::errstr\n") if $YAML::Tiny::errstr;
 	$y->[0];
 }
 

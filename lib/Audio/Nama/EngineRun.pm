@@ -42,8 +42,6 @@ sub mixing_only {
 	
 sub start_transport { 
 
-	my $quiet = shift;
-
 	# set up looping event if needed
 	# mute unless recording
 	# start
@@ -54,10 +52,10 @@ sub start_transport {
 	# sleep 1s
 
 	logsub("&start_transport");
-	say("\nCannot start. Engine is not configured.\n"),return 
+	throw("\nCannot start. Engine is not configured.\n"),return 
 		unless eval_iam("cs-connected");
 
-	say "\n\nStarting at ", current_position() unless $quiet;
+	pager("\n\nStarting at ", current_position()) unless $quiet;
 	schedule_wraparound();
 	mute();
 	start_midish_transport() 
@@ -73,7 +71,7 @@ sub start_transport {
 		or edit_mode() 
 		or defined $setup->{runtime_limit};
 		# TODO and live processing
- 	#$engine->{events}->{post_start_unmute} = AE::timer(0.5, 0, sub{unmute()});
+ 	#$project->{events}->{post_start_unmute} = AE::timer(0.5, 0, sub{unmute()});
 	sleeper(0.5);
 	unmute();
 	sleeper(0.5);
@@ -83,9 +81,9 @@ sub start_transport {
 }
 sub stop_transport { 
 
-	my $quiet = shift;
 	logsub("&stop_transport"); 
-	my $pos = eval_iam('getpos') if eval_iam('cs-connected');
+	my $pos;
+	$pos = eval_iam('getpos') if eval_iam('cs-connected');
 	mute();
 	stop_command();
 	stop_midish_transport() 
@@ -120,21 +118,21 @@ sub engine_is {
 }
 sub engine_status { 
 	my ($pos, $before_newlines, $after_newlines) = @_;
-	say "\n" x $before_newlines, engine_is($pos), "\n" x $after_newlines;
+	pager("\n" x $before_newlines, engine_is($pos), "\n" x $after_newlines);
 }
 sub current_position { 
 	my $pos = eval_iam("getpos"); 
 	colonize(int($pos || 0)) 
 }
 sub start_heartbeat {
- 	$engine->{events}->{poll_engine} = AE::timer(0, 1, \&Audio::Nama::heartbeat);
+ 	$project->{events}->{poll_engine} = AE::timer(0, 1, \&Audio::Nama::heartbeat);
 }
 
 sub stop_heartbeat {
 	# the following test avoids double-tripping rec_cleanup()
 	# following manual stop
-	return unless $engine->{events}->{poll_engine};
-	undef $engine->{events}->{poll_engine};
+	return unless $project->{events}->{poll_engine};
+	undef $project->{events}->{poll_engine};
 	$ui->reset_engine_mode_color_display();
 	rec_cleanup() 
 }
@@ -185,23 +183,23 @@ sub schedule_wraparound {
 	}
 }
 sub cancel_wraparound {
-	$engine->{events}->{wraparound} = undef;
+	$project->{events}->{wraparound} = undef;
 }
 sub limit_processing_time {
 	my $length = shift;
- 	$engine->{events}->{processing_time} 
+ 	$project->{events}->{processing_time} 
 		= AE::timer($length, 0, sub { Audio::Nama::stop_transport(); print prompt() });
 }
 sub disable_length_timer {
-	$engine->{events}->{processing_time} = undef; 
+	$project->{events}->{processing_time} = undef; 
 	undef $setup->{runtime_limit};
 }
 sub wraparound {
 	package Audio::Nama;
 	my ($diff, $start) = @_;
 	#print "diff: $diff, start: $start\n";
-	$engine->{events}->{wraparound} = undef;
-	$engine->{events}->{wraparound} = AE::timer($diff,0, sub{set_position($start)});
+	$project->{events}->{wraparound} = undef;
+	$project->{events}->{wraparound} = AE::timer($diff,0, sub{set_position($start)});
 }
 sub ecasound_select_chain {
 	my $n = shift;
@@ -238,16 +236,15 @@ sub _stop_do_start {
 		$result
 }
 sub restart_ecasound {
-	pager3("killing ecasound processes @{$engine->{pids}}");
+	pager_newline("killing ecasound processes @{$this_engine->{pids}}");
 	kill_my_ecasound_processes();
-	pager3(q(restarting Ecasound engine - your may need to use the "arm" command));	
+	pager_newline(q(restarting Ecasound engine - your may need to use the "arm" command));	
 	select_ecasound_interface();
-	#$setup->{changed}++;
-	reconfigure_engine();
+	reconfigure_engine('force');
 }
 sub kill_my_ecasound_processes {
 	my @signals = (15, 9);
-	map{ kill $_, @{$engine->{pids}}; sleeper(1)} @signals;
+	map{ kill $_, @{$this_engine->{pids}}; sleeper(1)} @signals;
 }
 
 
