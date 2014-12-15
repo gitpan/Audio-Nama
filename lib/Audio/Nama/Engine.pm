@@ -1,183 +1,216 @@
-{
-package Audio::Nama::Engine;
-our $VERSION = 1.0;
-use Modern::Perl;
-use Carp;
-our @ISA;
-our %by_name;
-our @ports = (57000..57050);
-our %port = (
-	fof => 57201,
-	bus => 57202,
-);
-use Audio::Nama::Globals qw(:all);
-use Audio::Nama::Object qw( 
-				name
-				port
-				jack_seek_delay
-				jack_transport_mode
-				events
-				socket
-				pids
-				ecasound
-				buffersize
-				on_reconfigure
-    			on_exit
-				 );
+# ------------- Realtime control routines -----------
 
-initialize();
+## loading and running the Ecasound engine
 
-sub initialize {
-	%by_name = ();	
-}
-sub new {
-	my $class = shift;	
-	my %vals = @_;
-	croak "undeclared field: @_" if grep{ ! $_is_field{$_} } keys %vals;
-	Audio::Nama::pager_newline("$vals{name}: returning existing engine"), 
-		return $by_name{$vals{name}} if $by_name{$vals{name}};
-	my $self = bless { name => 'default', %vals }, $class;
-	#print "object class: $class, object type: ", ref $self, $/;
-	$by_name{ $self->name } = $self;
-	$self->initialize_ecasound();
-	$Audio::Nama::this_engine = $self;
-}
-sub initialize_ecasound { 
-	my $self = shift;
- 	my @existing_pids = split " ", qx(pgrep ecasound);
-	$self->launch_ecasound_server;
-	$self->{pids} = [ 
-		grep{ 	my $pid = $_; ! grep{ $pid == $_ } @existing_pids }	
-		split " ", qx(pgrep ecasound) 
-	];
-}
-sub launch_ecasound_server {}
-sub eval_iam {}
-}
-{
-package Audio::Nama::NetEngine;
-our $VERSION = 1.0;
-use Modern::Perl;
-use Audio::Nama::Log qw(logpkg);
-use Audio::Nama::Globals qw(:all);
-use Audio::Nama::Log qw(logit);
-use Carp qw(carp);
-our @ISA = 'Audio::Nama::Engine';
+package Audio::Nama;
+use Modern::Perl; use Carp;
+no warnings 'uninitialized';
+use Audio::Nama::Util qw(process_is_running);
 
-sub init_ecasound_socket {
-	my $self = shift;
-	my $port = $self->port;
-	Audio::Nama::pager_newline("Creating socket on port $port.");
-	$self->{socket} = new IO::Socket::INET (
-		PeerAddr => 'localhost', 
-		PeerPort => $port, 
-		Proto => 'tcp', 
-	); 
-	die "Could not create socket: $!\n" unless $self->{socket}; 
+sub valid_engine_setup {
+	eval_iam("cs-selected") and eval_iam("cs-is-valid");
 }
-sub launch_ecasound_server {
-	my $self = shift;
-	my $port = $self->port;
+sub engine_running {
+	eval_iam("engine-status") eq "running"
+};
+
+
+sub mixing_only {
+	my $i;
+	my $am_mixing;
+	for (Audio::Nama::ChainSetup::really_recording()){
+		$i++;
+		$am_mixing++ if /Mixdown/;
+	}
+	$i == 1 and $am_mixing
+}
 	
-	# we'll try to communicate with an existing ecasound
-	# process provided:
-	#
-	# started with --server option
-	# --server-tcp-port option matches 
-	
-	my $command = "ecasound -K -C --server --server-tcp-port=$port";
-	my $redirect = ">/dev/null &";
-	my $ps = qx(ps ax);
-	if ( $ps =~ /ecasound/ and $ps =~ /--server/ and ($ps =~ /tcp-port=$port/) )
-	{ 
-		Audio::Nama::pager_newline("Found existing Ecasound server on port $port") 
+sub start_transport { 
+
+	my $quiet = shift;
+
+	# set up looping event if needed
+	# mute unless recording
+	# start
+	# wait 0.5s
+	# unmute
+	# start heartbeat
+	# report engine status
+	# sleep 1s
+
+	logsub("&start_transport");
+	say("\nCannot start. Engine is not configured.\n"),return 
+		unless eval_iam("cs-connected");
+
+	say "\n\nStarting at ", current_position() unless $quiet;
+	schedule_wraparound();
+	mute();
+	eval_iam('start');
+	limit_processing_time($setup->{runtime_limit}) 
+		if mixing_only() or edit_mode() or defined $setup->{runtime_limit};
+		# TODO and live processing
+ 	#$engine->{events}->{post_start_unmute} = AE::timer(0.5, 0, sub{unmute()});
+	sleeper(0.5);
+	unmute();
+	sleeper(0.5);
+	$ui->set_engine_mode_color_display();
+	start_heartbeat();
+	engine_status() unless $quiet;
+}
+sub stop_transport { 
+
+	my $quiet = shift;
+	logsub("&stop_transport"); 
+	mute();
+	my $pos = eval_iam('getpos');
+	eval_iam('stop');	
+	disable_length_timer();
+	if ( ! $quiet ){
+		sleeper(0.5);
+		engine_status(current_position(),2,0);
 	}
-	else 
-	{ 
-		
-		Audio::Nama::pager_newline("Starting Ecasound server on port $port");
-		system("$command $redirect") == 0 or carp("system $command failed: $?\n")
+	unmute();
+	stop_heartbeat();
+	$ui->project_label_configure(-background => $gui->{_old_bg});
+	eval_iam("setpos $pos");
+}
+
+sub transport_running { eval_iam('engine-status') eq 'running'  }
+
+sub disconnect_transport {
+	return if transport_running();
+	teardown_engine();
+}
+sub engine_is {
+	my $pos = shift;
+	"Engine is ". eval_iam("engine-status"). ( $pos ? " at $pos" : "" )
+}
+sub engine_status { 
+	my ($pos, $before_newlines, $after_newlines) = @_;
+	say "\n" x $before_newlines, engine_is($pos), "\n" x $after_newlines;
+}
+sub current_position { colonize(int eval_iam("getpos")) }
+
+sub start_heartbeat {
+ 	$engine->{events}->{poll_engine} = AE::timer(0, 1, \&Audio::Nama::heartbeat);
+}
+
+sub stop_heartbeat {
+	$engine->{events}->{poll_engine} = undef; 
+	$ui->reset_engine_mode_color_display();
+	rec_cleanup() }
+
+sub heartbeat {
+
+	#	print "heartbeat fired\n";
+
+	my $here   = eval_iam("getpos");
+	my $status = eval_iam('engine-status');
+	if( $status =~ /finished|error/ ){
+		engine_status(current_position(),2,1);
+		revise_prompt();
+		stop_heartbeat();
+		sleeper(0.2);
+		set_position(0);
 	}
-	sleep 1;
-	$self->init_ecasound_socket();
-}
-sub eval_iam {
-	my $self = shift;
-	my $cmd = shift;
-	#my $category = Audio::Nama::munge_category(shift());
-	my $category = "ECI";
+		#if $status =~ /finished|error|stopped/;
+	#print join " ", $status, colonize($here), $/;
+	my ($start, $end);
+	$start  = Audio::Nama::Mark::loop_start();
+	$end    = Audio::Nama::Mark::loop_end();
+	schedule_wraparound() 
+		if $mode->{loop_enable} 
+		and defined $start 
+		and defined $end 
+		and ! Audio::Nama::ChainSetup::really_recording();
 
-	logit(__LINE__,$category, 'debug', "Net-ECI sent: $cmd");
-
-	$cmd =~ s/\s*$//s; # remove trailing white space
-	$this_engine->{socket}->send("$cmd\r\n");
-	my $buf;
-	# get socket reply, restart ecasound on error
-	my $result = $this_engine->{socket}->recv($buf, 65536);
-	defined $result or restart_ecasound(), return;
-
-	my ($return_value, $setup_length, $type, $reply) =
-		$buf =~ /(\d+)# digits
-				 \    # space
-				 (\d+)# digits
-				 \    # space
- 				 ([^\r\n]+) # a line of text, probably one character 
-				\r\n    # newline
-				(.+)  # rest of string
-				/sx;  # s-flag: . matches newline
-
-if(	! $return_value == 256 ){
-	logit(__LINE__,$category,'error',"Net-ECI bad return value: $return_value (expected 256)");
-	# restart_ecasound(); # TODO
+	update_clock_display();
 
 }
-	no warnings 'uninitialized';
-	$reply =~ s/\s+$//; 
 
-	if( $type eq 'e')
-	{
-		logit(__LINE__,$category,'error',"ECI error! Command: $cmd. Reply: $reply");
-		#restart_ecasound() if $reply =~ /in engine-status/;
+sub update_clock_display { 
+	$ui->clock_config(-text => current_position());
+}
+sub schedule_wraparound {
+
+	return unless $mode->{loop_enable};
+	my $here   = eval_iam("getpos");
+	my $start  = Audio::Nama::Mark::loop_start();
+	my $end    = Audio::Nama::Mark::loop_end();
+	my $diff = $end - $here;
+	logit(__LINE__,'Audio::Nama::Engine','debug', "here: $here, start: $start, end: $end, diff: $diff");
+	if ( $diff < 0 ){ # go at once
+		set_position($start);
+		cancel_wraparound();
+	} elsif ( $diff < 3 ) { #schedule the move
+		wraparound($diff, $start);
 	}
-	else
-	{ 	logit(__LINE__,$category,'debug',"Net-ECI  got: $reply");
-		$reply
-	}
-	
 }
-} # end package
-{
-package Audio::Nama::LibEngine;
-our $VERSION = 1.0;
-use Modern::Perl;
-use Audio::Nama::Globals qw(:all);
-use Audio::Nama::Log qw(logit);
-our @ISA = 'Audio::Nama::Engine';
-sub launch_ecasound_server {
-	my $self = shift;
-	Audio::Nama::pager_newline("Using Ecasound via Audio::Ecasound (libecasoundc)");
-	$self->{ecasound} = Audio::Ecasound->new();
+sub cancel_wraparound {
+	$engine->{events}->{wraparound} = undef;
 }
-sub eval_iam {
-	#logsub("&eval_iam");
-	my $self = shift;
-	my $cmd = shift;
-	my $category = Audio::Nama::munge_category(shift());
-	
-	logit(__LINE__,$category,'debug',"ECI sent: $cmd");
+sub limit_processing_time {
+	my $length = shift // $setup->{audio_length};
+ 	$engine->{events}->{processing_time} 
+		= AE::timer($length, 0, sub { Audio::Nama::stop_transport(); print prompt() });
+}
+sub disable_length_timer {
+	$engine->{events}->{processing_time} = undef; 
+	undef $setup->{runtime_limit};
+}
+sub wraparound {
+	package Audio::Nama;
+	my ($diff, $start) = @_;
+	#print "diff: $diff, start: $start\n";
+	$engine->{events}->{wraparound} = undef;
+	$engine->{events}->{wraparound} = AE::timer($diff,0, sub{set_position($start)});
+}
+sub ecasound_select_chain {
+	my $n = shift;
+	my $cmd = "c-select $n";
 
-	my (@result) = $this_engine->{ecasound}->eci($cmd);
-	logit(__LINE__,$category, 'debug',"ECI  got: @result") 
-		if $result[0] and not $cmd =~ /register/ and not $cmd =~ /int-cmd-list/; 
-	my $errmsg = $this_engine->{ecasound}->errmsg();
-	if( $errmsg ){
-		restart_ecasound() if $errmsg =~ /in engine-status/;
-		$this_engine->{ecasound}->errmsg(''); 
-		# Audio::Ecasound already prints error
-	}
-	"@result";
-}
-}
-1
+	if( 
+		# specified chain exists in the chain setup
+		Audio::Nama::ChainSetup::is_ecasound_chain($n)
 
+		# engine is configured
+		and eval_iam( 'cs-connected' ) =~ /$file->{chain_setup}->[0]/
+
+	){ 	eval_iam($cmd); 
+		return 1 
+
+	} else { 
+		logit(__LINE__,'Audio::Nama::Engine','logcarp', 
+			"c-select $n: attempted to select non-existing Ecasound chain"); 
+		return 0
+	}
+}
+sub stop_do_start {
+	my ($coderef, $delay) = @_;
+	engine_running() ?  _stop_do_start( $coderef, $delay)
+					 : $coderef->()
+
+}
+sub _stop_do_start {
+	my ($coderef, $delay) = @_;
+		eval_iam('stop-sync');
+		$coderef->();
+		sleeper($delay) if $delay;
+		eval_iam('start');
+}
+sub restart_ecasound {
+	logit(__LINE__,'info',"killing ecasound processes @{$engine->{pids}}");
+	kill_my_ecasound_processes();
+	logit(__LINE__,'info',q(restarting Ecasound engine - your may need to use the "arm" command));	
+	select_ecasound_interface();
+	#$setup->{changed}++;
+	reconfigure_engine();
+}
+sub kill_my_ecasound_processes {
+	my @signals = (15, 9);
+	map{ kill $_, @{$engine->{pids}}; sleeper(1)} @signals;
+}
+
+
+1;
 __END__

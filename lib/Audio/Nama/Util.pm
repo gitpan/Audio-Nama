@@ -9,7 +9,7 @@ use Carp;
 use Data::Dumper::Concise;
 use Audio::Nama::Assign qw(json_out);
 use Audio::Nama::Globals qw(:all);
-use Audio::Nama::Log qw(logit logsub logpkg);
+use Audio::Nama::Log qw(logit);
 
 no warnings 'uninitialized';
 
@@ -34,7 +34,6 @@ our %EXPORT_TAGS = ( 'all' => [ qw(
 	time_tag
 	heuristic_time
 	dest_type
-	dest_string
 
 	create_dir
 	join_path
@@ -66,35 +65,31 @@ my %bus_logic = (
 		{
 			my ($bus, $track) = @_;
 			$track->set_rec;
+			$bus->set(rw => 'REC');
 		},
 
-	# setting a mix track to PLAY
+	# setting a mix track to MON 
 	
-		PLAY => sub
-		{
-			my ($bus, $track) = @_;
-			$track->set_play;
-		},
-
-	# setting a mix track to MON
+	# currently we set feeding bus to OFF
+	
+	# TODO skip connecting forward to
+	# a MON status track.
 	
 		MON => sub
 		{
 			my ($bus, $track) = @_;
 			$track->set_mon;
-		},
 
-	# setting mix track to OFF
-	
+			
+			$bus->set(rw => 'OFF');
+		},
 		OFF => sub
 		{
+
+	# setting mix track to OFF 
+	
 			my ($bus, $track) = @_;
-
 			$track->set_off;
-
-			# with the mix track off, 
-			# the member tracks get pruned 
-			# from the graph 
 		}
 	},
 	member_track =>
@@ -105,12 +100,10 @@ my %bus_logic = (
 		REC => sub 
 		{ 
 			my ($bus, $track) = @_;
-
-			$track->set_rec() or return;
-
-			$bus->set(rw => MON);
-			$tn{$bus->send_id}->busify 
-				if $bus->send_type eq 'track' and $tn{$bus->send_id};
+			$bus->set(rw => 'REC');
+			$track->set_rec;
+			$tn{$bus->send_id}->busify;
+			Audio::Nama::restore_preview_mode();
 			
 		},
 
@@ -119,19 +112,11 @@ my %bus_logic = (
 		MON => sub
 		{ 
 			my ($bus, $track) = @_;
-			$bus->set(rw => MON) if $bus->rw eq 'OFF';
+			$bus->set(rw => 'REC') if $bus->rw eq 'OFF';
 			$track->set_mon;
-		},
-
-	# setting member track to PLAY
-	
-		PLAY => sub
-		{ 
-			my ($bus, $track) = @_;
-			$bus->set(rw => MON) if $bus->rw eq 'OFF';
-			$track->set_play;
 
 		},
+
 	# setting member track to OFF 
 
 		OFF => sub
@@ -141,12 +126,7 @@ my %bus_logic = (
 		},
 	},
 );
-# for track commands 'rec', 'mon','off' we 
-# may toggle rw state of the bus as well
-#
-
 sub rw_set {
-	logsub("&rw_set");
 	my ($bus,$track,$rw) = @_;
 	my $type = $track->is_mix_track
 		? 'mix_track'
@@ -225,38 +205,32 @@ sub heuristic_time {
 
 sub dest_type {
 	my $dest = shift;
-	if($dest eq undef )			{ undef			}
+	my $type;
+	given( $dest ){
+		when( undef )			{ $type = undef}
 
-	# non JACK related
+		# non JACK related
 
-	if($dest eq 'bus')		 	{ 'bus'			}
-	elsif($dest eq 'null')	 	{ 'null'		}
-	elsif($dest eq 'rtnull')	{ 'rtnull'		}
-	elsif($dest =~ /^loop,/)	{ 'loop'		}
-	elsif($dest !~ /\D/)		{ 'soundcard'	} # digits only
+		when('bus')			 	{ $type = 'bus'			   }
+		when('null')		 	{ $type = 'null'			}
+		when(/^loop,/)		 	{ $type = 'loop'			}
+		when(! /\D/)			{ $type = 'soundcard'	   } # digits only
 
-	# JACK related
+		# JACK related
 
-	elsif($dest =~ /^man/)		{ 'jack_manual'	}
-	elsif($dest eq 'jack')		{ 'jack_manual'	}
-	elsif($dest =~  /(^\w+\.)?ports/)	{ 'jack_ports_list' }
-	else 						{ 'jack_client'	} 
-}
-sub dest_string {
-	my ($type, $id, $width) = @_;
-	if ($type eq 'soundcard'){
-		my $ch = $id;
-		my @channels;
-		push @channels, $_ for $ch .. ($ch + $width - 1);
-		join '/', @channels
+		when(/^man/)			{ $type = 'jack_manual'	 }
+		when('jack')			{ $type = 'jack_manual'	 }
+		when(/(^\w+\.)?ports/)	{ $type = 'jack_ports_list' }
+		default					{ $type = 'jack_client'	 } 
+
 	}
-	else { $id }
+	$type
 }
 
 sub create_dir {
 	my @dirs = @_;
 	map{ my $dir = $_;
-	logpkg(__FILE__,__LINE__,'debug',"creating directory [ $dir ]");
+	logit(__LINE__,'Audio::Nama::Util','debug',"creating directory [ $dir ]");
 		-e $dir 
 #and (carp "create_dir: '$dir' already exists, skipping...\n") 
 			or system qq( mkdir -p $dir)

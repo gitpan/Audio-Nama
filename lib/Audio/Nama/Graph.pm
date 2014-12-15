@@ -3,12 +3,16 @@ use Modern::Perl;
 use Carp;
 use Graph;
 use Audio::Nama::Util qw(input_node output_node);
-use Audio::Nama::Log qw(logsub logpkg);
-use Audio::Nama::Globals qw(:trackrw);
+use Log::Log4perl;
+use Audio::Nama::Log qw(logsub);
 use vars qw(%reserved);
 # this dispatch table also identifies labels reserved
 # for signal sources and sinks.
 *reserved = \%Audio::Nama::IO::io_class;
+
+our $logger;
+
+sub initialize_logger { $logger = Log::Log4perl->get_logger() }
 
 sub add_path_for_rec {
 
@@ -31,13 +35,12 @@ sub add_path_for_rec {
 		# temporary track by providing the data as 
 		# graph edge attributes)
 
-		logpkg(__FILE__,__LINE__,'debug',"rec file link for ".$track->name);
+		$logger->debug("rec file link for ".$track->name);
 		my $name = $track->name . '_rec_file';
 		my $anon = Audio::Nama::SlaveTrack->new( 
 			target => $track->name,
-			rw => OFF,
+			rw => 'OFF',
 			group => 'Temp',
-			hide => 1,
 			name => $name);
 
 		# connect writepath: source --> temptrackname --> wav_out
@@ -72,6 +75,7 @@ sub add_path_for_rec {
 
 		# generally a sub bus 
 
+		# - has 'rec_defeat' set (therefore doesn't reach here)
 		# - receives a stereo input
 		# - mix track width is set to stereo (default)
 
@@ -101,38 +105,17 @@ sub add_path_for_rec {
 }
 sub add_path_for_aux_send {
 	my ($g, $track) = @_;
-	add_path_for_send($g, map{ $track->$_ } qw(name send_type send_id) );
-}
-sub add_path_for_send {
-	my ($g, $name, $send_type, $send_id)  = @_;
-
-	logsub("&add_path_for_aux_send: track ".$name);
-	logpkg(__FILE__,__LINE__,'debug',"args: graph: $g, name: $name, send_type, $send_type, send_id: $send_id");
-
-	# for track 'sax', send_type 'track' send_id 'vocal'
-	#
-	my @path;
-
-	if ( $send_type eq 'track'){
-		@path = ($name, $send_id)
-	}
-	else {
-		
+		logsub("&add_path_for_aux_send: track ".$track->name);
 		# for track 'sax', send_type 'jack_client', create route as 
-		# sax -> sax_aux_send -> jack_client_out
-		
-		my $nameof = $name . '_aux_send';
-		my $anon = Audio::Nama::SlaveTrack->new( 
-			target => $name,
-			rw => OFF,
-			group => 'Temp',
-			hide => 1,
-			name => $nameof);
-
-		@path= ($name, $nameof, output_node($send_type));
-	}
-	logpkg(__FILE__,__LINE__,'debug',"adding path ", join '-',@path);
-	$g->add_path(@path);
+		# sax-jack_client_out
+		my @edge = ($track->name, output_node($track->send_type));
+		$g->add_edge(@edge);
+		 $g->set_edge_attributes(
+				@edge,
+			  	{	track => $track->name,
+					width => 2, # force stereo output width
+					chain_id => 'S'.$track->n,
+				});
 }
 {
 my %seen;
@@ -145,28 +128,28 @@ sub expand_graph {
 	
 	for ($g->edges){
 		my($a,$b) = @{$_}; 
-		logpkg(__FILE__,__LINE__,'debug',"$a-$b: processing...");
-		logpkg(__FILE__,__LINE__,'debug',"$a-$b: already seen") if $seen{"$a-$b"};
+		$logger->debug("$a-$b: processing...");
+		$logger->debug("$a-$b: already seen") if $seen{"$a-$b"};
 		next if $seen{"$a-$b"};
 
 		# case 1: both nodes are tracks: default insertion logic
 	
 		if ( is_a_track($a) and is_a_track($b) ){ 
-			logpkg(__FILE__,__LINE__,'debug',"processing track-track edge: $a-$b");
+			$logger->debug("processing track-track edge: $a-$b");
 			add_loop($g,$a,$b) } 
 
 		# case 2: fan out from track: use near side loop
 
 		elsif ( is_a_track($a) and $g->successors($a) > 1 ) {
-			logpkg(__FILE__,__LINE__,'debug',"fan_out from track $a");
+			$logger->debug("fan_out from track $a");
 			add_near_side_loop($g,$a,$b,out_loop($a));}
 	
 		# case 3: fan in to track: use far side loop
 		
 		elsif ( is_a_track($b) and $g->predecessors($b) > 1 ) {
-			logpkg(__FILE__,__LINE__,'debug',"fan in to track $b");
+			$logger->debug("fan in to track $b");
 			add_far_side_loop($g,$a,$b,in_loop($b));}
-		else { logpkg(__FILE__,__LINE__,'debug',"$a-$b: no action taken") }
+		else { $logger->debug("$a-$b: no action taken") }
 	}
 	
 }
@@ -184,11 +167,11 @@ sub add_inserts {
 
 sub add_loop {
 	my ($g,$a,$b) = @_;
-	logpkg(__FILE__,__LINE__,'debug',"adding loop");
+	$logger->debug("adding loop");
 	my $fan_out = $g->successors($a);
-	logpkg(__FILE__,__LINE__,'debug',"$a: fan_out $fan_out");
+	$logger->debug("$a: fan_out $fan_out");
 	my $fan_in  = $g->predecessors($b);
-	logpkg(__FILE__,__LINE__,'debug',"$b: fan_in $fan_in");
+	$logger->debug("$b: fan_in $fan_in");
 	if ($fan_out > 1){
 		add_near_side_loop($g,$a,$b, out_loop($a))
 	} elsif ($fan_in  > 1){
@@ -242,9 +225,14 @@ sub add_loop {
 #  with, for example, multiple edges to a soundcard.
 #
 #  Send buses create new tracks to provide connections.
+#
+# I will be moving edges (along with their attributes)
+# but I cannot assign chain_id them because I have
+# no way of knowing which is the edge that will use
+# the track number and will therefore get the track effects
 
  	my ($g, $a, $b, $loop) = @_;
- 	logpkg(__FILE__,__LINE__,'debug',"$a-$b: insert near side loop");
+ 	$logger->debug("$a-$b: insert near side loop");
 	# we will insert loop _after_ processing successor
 	# edges so $a-$loop will not be picked up 
 	# in successors list.
@@ -263,7 +251,7 @@ sub add_loop {
 		track => $Audio::Nama::tn{$a}->name});
 	map{ 
  		my $attr = $g->get_edge_attributes($a,$_);
- 		logpkg(__FILE__,__LINE__,'debug',"deleting edge: $a-$_");
+ 		$logger->debug("deleting edge: $a-$_");
  		$g->delete_edge($a,$_);
 		$g->add_edge($loop, $_);
 		$g->set_edge_attributes($loop,$_, $attr) if $attr;
@@ -275,14 +263,14 @@ sub add_loop {
 
 sub add_far_side_loop {
  	my ($g, $a, $b, $loop) = @_;
- 	logpkg(__FILE__,__LINE__,'debug',"$a-$b: insert far side loop");
+ 	$logger->debug("$a-$b: insert far side loop");
 	
 	$g->set_vertex_attributes($loop,{
 		n => $Audio::Nama::tn{$a}->n, j => 'a',
 		track => $Audio::Nama::tn{$a}->name});
 	map{ 
  		my $attr = $g->get_edge_attributes($_,$b);
- 		logpkg(__FILE__,__LINE__,'debug',"deleting edge: $_-$b");
+ 		$logger->debug("deleting edge: $_-$b");
  		$g->delete_edge($_,$b);
 		$g->add_edge($_,$loop);
 		$g->set_edge_attributes($_,$loop, $attr) if $attr;
@@ -296,8 +284,7 @@ sub add_far_side_loop {
 sub in_loop{ "$_[0]_in" }
 sub out_loop{ "$_[0]_out" }
 sub is_a_track{ $Audio::Nama::tn{$_[0]} }  # most reliable
-sub is_terminal { $reserved{$_[0]} or is_port($_[0]) }
-sub is_port { $_[0] =~ /^[^:]+:[^:]+$/ }
+sub is_terminal { $reserved{$_[0]} }
 sub is_a_loop{
 	my $name = shift;
 	return if $reserved{$name};
@@ -305,16 +292,22 @@ sub is_a_loop{
 		return ($root, $suffix);
 	} 
 }
+sub is_a_jumper { 		! is_terminal($_[0])
+				 	and ! is_a_track($_[0]) 
+					and ! is_a_loop($_[0]) }
+	
+
 sub inputless_tracks {
 	my $g = shift;
 	(grep{ is_a_track($_) and $g->is_source_vertex($_) } $g->vertices)
 }	
 sub remove_out_of_bounds_tracks {
 	my $g = shift;
-	my @names = $g->successors('wav_in');  # PLAY status tracks
+	my @names = $g->successors('wav_in');  # MON status tracks
 	map{ remove_tracks($g, $_) } 
 	grep{
-		Audio::Nama::edit_case(Audio::Nama::edit_vars($Audio::Nama::tn{$_})) =~ /out_of_bounds/
+		Audio::Nama::set_edit_vars($Audio::Nama::tn{$_});
+		Audio::Nama::edit_case() =~ /out_of_bounds/
 	} @names;
 }
 
@@ -343,36 +336,70 @@ sub remove_tracks {
 		} @names;
 }
 
-# for latency-related graph transformations
-
-sub remove_branch {
-	my ($g, $v) = @_;
-	my @p = $g->predecessors($v);
-	$g->delete_vertex($v) if $g->is_sink_vertex($v);
-	remove_branch($g, $_) for @p;
-}
-
-sub remove_isolated_vertices {
+### we need jack clients latency 
+sub add_jack_io {
 	my $g = shift;
-	map{ $g->delete_vertex($_) } 
-	grep{ $g->is_isolated_vertex($_) } $g->vertices();	
-}
+		
 
-sub simplify_send_routing {
-	my $g = shift;
-	for( grep { is_a_track($_) } $g->vertices ){
-		my $aux = "$_\_aux_send";
-		my @successors;
-		if( $g->has_edge($_, $aux)
-			and @successors = $g->successors($_)
-			and scalar @successors == 1
-		){
-			my ($output) = $g->successors($aux);
-			$g->delete_path($_, $aux, $output);
-			$g->add_edge($_, $output);
-		}	
-	}
 }
-
+	
+		
+		
 1;
 __END__
+
+The graphic routing system is complicated enough that some comment is
+warranted.
+
+The first step of routing is to create a graph that expresses the signal flow.
+
+	soundcard_in -> sax -> Master -> soundcard_out
+
+If we are to record the input, we need:
+
+	sax -> wav_out
+
+If we add an instrument monitor on a separate channel for the sax player, we need:
+
+	sax -> soundcard_out
+
+Ecasound requires that we insert loop devices wherever the signals
+must fan out or fan in.
+
+	soundcard_in -> sax -> sax_out -> Master -> soundcard_out
+
+	                       sax_out -> wav_out
+
+	                       sax_out -> soundcard_out
+
+Here 'sax_out' is a loop device.
+
+All routing functions follow these rules.
+
+We then process each edge to generate a line for the Ecasound chain setup
+file.
+
+Master -> soundcard_out is easy to process, because the track
+Master knows what it's outputs should be.
+
+The edge sax_out -> soundcard_out, an auxiliary send, needs to know its
+associated track, the chain_id (identifier for the Ecasound
+chain corresponding to this edge) and in the final step
+the soundcard channel number.
+
+We can provide this information as edge attributes.
+
+We also allow vertexes, for example a track or loop device, to carry data is
+well, for example to tell the dispatcher to override the 
+chain_id of a temporary track.
+
+An Ecasound chain setup is a graph comprised of multiple 
+signal processing chains, each of which consists 
+of exactly one input and one output.
+ 
+The dispatch process transforms the graph edges into a group of 
+IO objects, each with enough information to create
+the input or output fragment of a chain.
+
+Finally, these objects are processed into the Ecasound
+chain setup file. 

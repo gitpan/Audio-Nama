@@ -28,7 +28,7 @@ our $VERSION = 1.0;
 # provide following vars to all packages
 our ($config, $jack, %tn);
 our (%by_name); # index for $by_name{trackname}->{input} = $object
-use Audio::Nama::Globals qw($config $jack %tn $setup :trackrw);
+use Audio::Nama::Globals qw($config $jack %tn $setup);
 use Try::Tiny;
 
 sub initialize { %by_name = () }
@@ -41,8 +41,8 @@ our %io_class = qw(
 	null_out				Audio::Nama::IO::to_null
 	soundcard_in 			Audio::Nama::IO::from_soundcard
 	soundcard_out 			Audio::Nama::IO::to_soundcard
-	soundcard_device_in 	Audio::Nama::IO::from_alsa_soundcard_device
-	soundcard_device_out 	Audio::Nama::IO::to_alsa_soundcard_device
+	soundcard_device_in 	Audio::Nama::IO::from_soundcard_device
+	soundcard_device_out 	Audio::Nama::IO::to_soundcard_device
 	wav_in 					Audio::Nama::IO::from_wav
 	wav_out 				Audio::Nama::IO::to_wav
 	loop_source				Audio::Nama::IO::from_loop
@@ -72,12 +72,12 @@ our %io_class = qw(
 #
 # which receives input from JACK node: 
 #
-#  + Nama:piano_in,
+#  + ecasound:piano_in,
 # 
 # If piano is stereo, the actual ports will be:
 #
-#  + Nama:piano_in_1
-#  + Nama:piano_in_2
+#  + ecasound:piano_in_1
+#  + ecasound:piano_in_2
 
 # (CLASS Audio::Nama::IO::to_jack_port is similar)
 
@@ -108,77 +108,24 @@ sub new {
 	# join IO objects to graph
 	my $name;
 	try{ $name  = $self->name }
-	catch {};  # we do nothing
+	catch {  say "name method blew up for this object"  }; 
 
 	{ no warnings 'uninitialized';
-	Audio::Nama::logpkg(__FILE__,__LINE__,'debug',"I belong to track $name\n",
+	Audio::Nama::logit(__LINE__,"Audio::Nama::IO","debug","I belong to track $name\n",
 		sub{Dumper($self)} );
 	}
 	
 	if($name){
 		$by_name{$name}->{$direction} = $self;
 	}
+	else {say "DOES NOT HAVE ASSOCIATED TRACK"}
 	$self
 }
 
 # latency stubs
-sub capture_latency {
-	my $self = shift;
-	return unless $self->client;
-	Audio::Nama::jack_port_latency('input', $self->client);
-}
-sub playback_latency {
-	my $self = shift;
-	return unless $self->client;
-	Audio::Nama::jack_port_latency('output', $self->client);
-}
-
-# we need at least stubs for subclasses' methods 
-# for AUTOLOAD to be happy - so we include
-
-sub client {}
-
-#### JACK related methods
-
-# inherited by all, the methods defined below are called in 
-# these classes: 
-# 
-#		to_jack_multi, 
-#		from_jack_multi 
-#		to_jack_client
-#		from_jack_client
-#
-# They have no function in other classes.
-
-
-sub target_id {
-	my $self = shift;
-	$self->direction eq 'input' 
-		? $self->source_id
-		: $self->send_id;
-}
-sub target_type {
-	my $self = shift;
-	$self->direction eq 'input' 
-		? $self->source_type
-		: $self->send_type;
-}
-sub target_channel {
-	my $self = shift;
-	$self->target_id =~ /^(\d+)$/ ? $1 : 1
-}
-sub ports {
-	my $self = shift;
-	my $client_direction = $self->direction eq 'input' ? 'output' : 'input';
-	Audio::Nama::IO::jack_multi_ports( $self->client,
-							$client_direction,
-							$self->target_channel,
-							$self->width, 
-							Audio::Nama::try{$self->name} 
-	) if $self->client
-}
-
-
+sub capture_latency { die "capture stub" }
+sub playback_latency { die "playback stub" }
+sub ports { die "ports stub" }
 
 sub ecs_string {
 	my $self = shift;
@@ -192,7 +139,7 @@ sub ecs_string {
 ## (e.g. -f:f32_le,2,48000) if the _format_template() method
 ## returns a signal format template (e.g. f32_le,N,48000)
 
-sub _format { 
+sub format { 
 	my $self = shift;
 	Audio::Nama::signal_format($self->format_template, $self->width)
 		if $self->format_template and $self->width
@@ -221,22 +168,25 @@ sub AUTOLOAD {
 		# ->can is reliable here because Track has no AUTOLOAD
 	}
 	}
-	my $msg = "Autoload fell through. Object type: ". (ref $self). " illegal method call: $call\n";
-	Audio::Nama::throw($msg,$self->dump);
-	croak
+	print $self->dump;
+	croak "Autoload fell through. Object type: ", (ref $self), ", illegal method call: $call\n";
 }
 
 sub DESTROY {}
 
+
+# The following methods were moved here from the Track class
+# because they are only used in generating chain setups.
+# They retain $track as the $self variable.
+
 sub _mono_to_stereo{
-	
-	# copy mono track to stereo if we have a pan control and a mono source
 
 	# Truth table
+
 	#REC status, Track width stereo: null
 	#REC status, Track width mono:   chcopy
-	#PLAY status, WAV width mono:   chcopy
-	#PLAY status, WAV width stereo: null
+	#MON status, WAV width mono:   chcopy
+	#MON status, WAV width stereo: null
 	#Higher channel count (WAV or Track): null
 
 	my $self   = shift;
@@ -245,26 +195,23 @@ sub _mono_to_stereo{
 	my $nocopy = "";
 	my $is_mono_track = sub { $self->width == 1 };
 	my $is_mono_wav   = sub { Audio::Nama::channels($self->wav_format) == 1};
-	if  ( 
-			($self->track and $tn{$self->track}->pan)
-			and
-		  (	$status =~ /REC|MON/ and $is_mono_track->() 
-			or $status eq PLAY and $is_mono_wav->() )
-	)
-	{ $copy } else { $nocopy }
+	if  (      $status eq 'REC' and $is_mono_track->()
+			or $status eq 'MON' and $is_mono_wav->() )
+		 { $copy }
+	else { $nocopy }
 }
 sub _playat_output {
 	my $track = shift;
-	return unless $track->shifted_playat_time;
+	return unless $track->adjusted_playat_time;
 		# or $track->latency_offset;
-	join ',',"playat" , $track->shifted_playat_time 
+	join ',',"playat" , $track->adjusted_playat_time 
 		# + $track->latency_offset
 }
 sub _select_output {
 	my $track = shift;
 	no warnings 'uninitialized';
-	my $start = $track->shifted_region_start_time + $config->hardware_latency();
-	my $end   = $track->shifted_region_end_time;
+	my $start = $track->adjusted_region_start_time + $config->hardware_latency();
+	my $end   = $track->adjusted_region_end_time;
 	return unless $config->hardware_latency() or defined $start and defined $end;
 	my $setup_length;
 	# CASE 1: a region is defined 
@@ -306,9 +253,7 @@ sub jack_multi_route {
 
 sub jack_multi_ports {
 	my ($client, $direction, $start, $width, $trackname)  = @_;
-	no warnings 'uninitialized';
-	Audio::Nama::logpkg(__FILE__,__LINE__,'debug',"trackname: $trackname, client $client, direction $direction, start: $start, width $width");
-
+	#say "client $client, $direction $direction, start: $start, width $width";
 	# can we route to these channels?
 	my $end   = $start + $width - 1;
 
@@ -316,28 +261,25 @@ sub jack_multi_ports {
 	# non-existent client, and correctly handles
 	# the case of a portname (containing colon)
 	
- 	my $channel_count = scalar @{$jack->{clients}->{$client}{$direction}};
-	my $source_or_send = $direction eq 'input' ? 'send' : 'source';
-  	die(qq(
-Track $trackname: $source_or_send would cover channels $start - $end,
-out of bounds for JACK client "$client" ($channel_count channels max).
-Change $source_or_send setting, or set track OFF.)) 
-	if $end > $channel_count and $config->{enforce_channel_bounds};
+ 	my $max = scalar @{$jack->{clients}->{$client}{$direction}};
+ 	die qq(track $trackname: JACK client "$client", direction: $direction channel ($end) is out of bounds. $max channels maximum.\n) if $end > $max
+		and $config->{enforce_channel_bounds};
+
 		return @{$jack->{clients}->{$client}{$direction}}[$start-1..$end-1]
 		 	if $jack->{clients}->{$client}{$direction};
 
 }
 #sub one_port { $jack->{clients}->{$client}->{$direction}->[$start-1] }
-
+sub default_jack_ports_list {
+	my ($track_name) = shift;
+	"$track_name.ports"
+}
 sub quote_jack_port {
 	my $port = shift;
 	($port =~ /\s/ and $port !~ /^"/) ? qq("$port") : $port
 }
-sub rectified { # client name from number
-	$_[0] =~ /^\d+$/ 
-		? 'system'
-		: $_[0]
-}
+
+
 ### subclass definitions
 
 ### method names with a preceding underscore 
@@ -346,25 +288,25 @@ sub rectified { # client name from number
 {
 package Audio::Nama::IO::from_null;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub _device_id { 'null' }  
+sub _device_id { 'null' } # 
 }
 
 {
 package Audio::Nama::IO::to_null;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub _device_id { 'null' }
+sub _device_id { 'null' }  # underscore for testing
 }
 
 {
 package Audio::Nama::IO::from_rtnull;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub _device_id { 'rtnull' }  
+sub _device_id { 'rtnull' } # 
 }
 
 {
 package Audio::Nama::IO::to_rtnull;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub _device_id { 'rtnull' }  
+sub _device_id { 'rtnull' }  # underscore for testing
 }
 
 {
@@ -380,9 +322,8 @@ sub device_id {
 	join(q[,],@modifiers);
 }
 sub ecs_extra { $_[0]->mono_to_stereo}
-sub client { 'system' if $jack->{jackd_running} } # since we share latency value
-sub ports { 'system:capture_1' }
 }
+
 {
 package Audio::Nama::IO::to_wav;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
@@ -398,7 +339,6 @@ sub new {
 	my %vals = @_;
 	$class->SUPER::new( %vals, device_id => "loop,$vals{endpoint}");
 }
-sub format {}
 }
 {
 package Audio::Nama::IO::to_loop;
@@ -426,16 +366,43 @@ sub new {
 {
 package Audio::Nama::IO::to_jack_multi;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
-sub client { 
+sub client {
 	my $self = shift;
-#  	say "to_jack_multi: target_id: ",$self->target_id;
-#  	say "to_jack_multi: rectified target_id: ",Audio::Nama::IO::rectified($self->target_id);
-	Audio::Nama::IO::rectified($self->target_id)
+	my $client = $self->direction eq 'input' 
+		? $self->source_id
+		: $self->send_id;
 }
 sub device_id { 
 	my $self = shift;
 	Audio::Nama::IO::jack_multi_route($self->ports)
 }
+sub ports {
+	my $self = shift;
+	# maybe source_id is an input number
+	my $client = $self->client;
+	my $channel = 1;
+	# we want the direction with respect to the client, i.e.  # reversed
+	my $client_direction = $self->direction eq 'input' ? 'output' : 'input';
+	if( Audio::Nama::dest_type($client) eq 'soundcard'){
+		$channel = $client;
+		$client = Audio::Nama::IO::soundcard_input_device_string(); # system, okay for output
+	}
+	Audio::Nama::IO::jack_multi_ports($client,$client_direction,$channel,$self->width, Audio::Nama::try{$self->name} );
+}
+
+sub capture_latency {
+	my $self = shift;
+	my @names = $self->ports();
+	#say "found ports: @names";
+	Audio::Nama::jack_client_node_latency($names[0], 'input');
+}
+sub playback_latency {
+	my $self = shift;
+	my @names = $self->ports();
+	#say "found ports: @names";
+	Audio::Nama::jack_client_node_latency($names[0], 'input');
+}
+
 }
 
 {
@@ -449,8 +416,6 @@ package Audio::Nama::IO::to_jack_port;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub format_template { $config->{devices}->{jack}->{signal_format} }
 sub device_id { 'jack,,'.$_[0]->port_name.'_out' }
-sub ports { "Nama:".$_[0]->port_name. '_out_1' } # at least this one port
-	# HARDCODED port name
 }
 
 {
@@ -458,15 +423,12 @@ package Audio::Nama::IO::from_jack_port;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO::to_jack_port';
 sub device_id { 'jack,,'.$_[0]->port_name.'_in' }
 sub ecs_extra { $_[0]->mono_to_stereo }
-sub ports { "Nama:".$_[0]->port_name. '_in_1' } # at least this one port
-	# HARDCODED port name
 }
 
 {
 package Audio::Nama::IO::to_jack_client;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub device_id { "jack," . Audio::Nama::IO::quote_jack_port($_[0]->send_id); }
-sub client { Audio::Nama::IO::rectified($_[0]->send_id) }
 }
 
 {
@@ -474,11 +436,10 @@ package Audio::Nama::IO::from_jack_client;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub device_id { 'jack,'.  Audio::Nama::IO::quote_jack_port($_[0]->source_id); }
 sub ecs_extra { $_[0]->mono_to_stereo}
-sub client { Audio::Nama::IO::rectified($_[0]->source_id) }
 }
 
 {
-package Audio::Nama::IO::from_alsa_soundcard_device;
+package Audio::Nama::IO::from_soundcard_device;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub ecs_extra { join ' ', $_[0]->rec_route, $_[0]->mono_to_stereo }
 sub device_id { $config->{devices}->{$config->{alsa_capture_device}}->{ecasound_id} }
@@ -498,7 +459,7 @@ sub rec_route {
 }
 }
 {
-package Audio::Nama::IO::to_alsa_soundcard_device;
+package Audio::Nama::IO::to_soundcard_device;
 use Modern::Perl; use vars qw(@ISA); @ISA = 'Audio::Nama::IO';
 sub device_id { $config->{devices}->{$config->{alsa_playback_device}}{ecasound_id} }
 sub ecs_extra {route($_[0]->width,$_[0]->output_channel) }

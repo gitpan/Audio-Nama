@@ -9,9 +9,7 @@ no warnings qw(uninitialized);
 our @ISA;
 use vars qw($n %by_index);
 use Audio::Nama::Globals qw(:singletons %tn @fade_data); 
-use Audio::Nama::Log qw(logsub logpkg);
-use Audio::Nama::Effects qw(remove_effect add_effect effect_update_copp_set);
-# we don't import 'type' as it would clobber our $fade->type attribute
+use Audio::Nama::Log qw(logit);
 use Audio::Nama::Object qw( 
 				 n
 				 type
@@ -56,7 +54,7 @@ sub new {
 
 	$by_index{$object->n} = $object;
 
-	logpkg(__FILE__,__LINE__,'debug',"object class: $class, object type: ", ref $object);
+	logit(__LINE__,'Audio::Nama::Fade','debug',"object class: $class, object type: ", ref $object);
 
 	my $id = add_fader($object->track);	# only when necessary
 	
@@ -73,17 +71,14 @@ sub new {
 
 sub refresh_fade_controller {
 	my $track = shift;
-	my $operator  = Audio::Nama::fxn($track->fader)->type;
+	my $operator  = $fx->{applied}->{$track->fader}->{type};
 	my $off_level = $config->{mute_level}->{$operator};
 	my $on_level  = $config->{unity_level}->{$operator};
-	my $controller;
-	($controller) = @{Audio::Nama::fxn($track->fader)->owns} if $track->fader;
-	if( $controller )
-	{
-		logpkg(__FILE__,__LINE__,'debug',$track->name, ": existing controller: $controller");
-		logpkg(__FILE__,__LINE__,'debug',"removing fade controller");
-		remove_effect($controller);
-	}
+	my $controller; # effect ID
+	($controller) = @{$fx->{applied}->{$track->fader}{owns}} if $track->fader;
+
+	logit(__LINE__,'Audio::Nama::Fade','debug',"removing fade controller");
+	Audio::Nama::remove_effect($controller) if $controller;
 
 	return unless
 		my @pairs = fader_envelope_pairs($track); 
@@ -93,11 +88,9 @@ sub refresh_fade_controller {
 	add_fader($track->name);	
 
 	# add controller
-	logpkg(__FILE__,__LINE__,'debug',"applying fade controller");
-
-	# we try to re-use the controller ID
-	add_effect({
-		effect_id		=> $controller,
+	logit(__LINE__,'Audio::Nama::Fade','debug',"applying fade controller");
+	Audio::Nama::add_effect({
+		cop_id		=> $controller,
 		parent_id 	=> $track->fader,
 		type		=> 'klg',	  		 # Ecasound controller
 		values		=> [	1,				 # Ecasound parameter 1
@@ -112,15 +105,13 @@ sub refresh_fade_controller {
 	# 	first fade is type 'out' : 100%
 	
 	 
-	effect_update_copp_set($track->fader,0, initial_level($track->name) * 100)
+	Audio::Nama::effect_update_copp_set($track->fader,0, initial_level($track->name))
 }
 
 
 sub all_fades {
 	my $track_name = shift;
-	sort { 
-		$Audio::Nama::Mark::by_name{$a->mark1}->{time} <=> $Audio::Nama::Mark::by_name{$b->mark1}->{time}
-	} grep { $_->track eq $track_name } values %by_index
+	grep{ $_->track eq $track_name } values %by_index
 }
 sub fades {
 
@@ -129,19 +120,33 @@ sub fades {
 	my $track_name = shift;
 	my $track = $tn{$track_name};
 	my @fades = all_fades($track_name);
-	return @fades if ! $mode->{offset_run};
 
-	# handle offset run mode
-	my @in_bounds;
-	my $play_end = Audio::Nama::play_end_time();
-	my $play_start_time = Audio::Nama::play_start_time();
-	my $length = $track->wav_length;
-	for my $fade (@fades){
+	
+	if($mode->{offset_run}){
+
+		# get end time
+		
+		my $length = $track->wav_length;
+		my $play_end = Audio::Nama::play_end_time();
 		my $play_end_time = $play_end ?  min($play_end, $length) : $length;
-		my $time = $Audio::Nama::Mark::by_name{$fade->mark1}->{time};
-		push @in_bounds, $fade if $time >= $play_start_time and $time <= $play_end_time;
+
+		# get start time
+	
+		my $play_start_time = Audio::Nama::play_start_time();
+	
+		# throw away fades that are not in play region
+	
+		@fades = grep
+			{ my $time = $Audio::Nama::Mark::by_name{$_->mark1}->{time};
+					$time >= $play_start_time
+				and $time <= $play_end_time
+			} @fades 
 	}
-	@in_bounds
+
+	# sort remaining fades by unadjusted mark1 time
+	sort{ $Audio::Nama::Mark::by_name{$a->mark1}->{time} <=>
+		  $Audio::Nama::Mark::by_name{$b->mark1}->{time}
+	} @fades;
 }
 
 # our envelope must include a straight segment from the
@@ -158,7 +163,7 @@ sub fades {
 #   (otherwise 100%)
 
 # although we can get the precise start and endpoints,
-# I'm using 0 and $track->shifted_playat_time + track length
+# I'm using 0 and $track->adjusted_playat_time + track length
 
 sub initial_level {
 	# return 0, 1 or undef
@@ -186,7 +191,7 @@ sub final_pair {   # duration: .... to length
 	defined $exit_level or return ();
 	my $track = $tn{$track_name};
 	(
-		$track->shifted_playat_time + $track->wav_length,
+		$track->adjusted_playat_time + $track->wav_length,
 		$exit_level
 	);
 }
@@ -211,22 +216,21 @@ sub fader_envelope_pairs {
 				$marktime1 -= $fade->duration
 			} 
 		else { $fade->dumpp; die "fade processing failed" }
-		logpkg(__FILE__,__LINE__,'debug',"marktime1: $marktime1, marktime2: $marktime2");
+		logit(__LINE__,'Audio::Nama::Fade','debug',"marktime1: $marktime1, marktime2: $marktime2");
 		push @specs, 
 		[ 	$marktime1, 
 			$marktime2, 
 			$fade->type, 
-			Audio::Nama::fxn($track->fader)->type,
+			$fx->{applied}->{$track->fader}->{type},
 		];
 }
 	# sort fades -  may not need this
 	@specs = sort{ $a->[0] <=> $b->[0] } @specs;
-	logpkg(__FILE__,__LINE__,'debug',sub{Audio::Nama::json_out( \@specs)});
+	logit(__LINE__,'Audio::Nama::Fade','debug',sub{Audio::Nama::yaml_out( \@specs)});
 
 	my @pairs = map{ spec_to_pairs($_) } @specs;
 
-#   WEIRD message - try to figure this out
-#   XXX results in bug via AUTOLOAD for Edit
+#   XXX results in bug via AUTOLOAD for EditTrack
 #	@pairs = (initial_pair($track->name), @pairs, final_pair($track->name)); 
 
 	# add flat segments 
@@ -248,7 +252,7 @@ sub fader_envelope_pairs {
 
 sub spec_to_pairs {
 	my ($from, $to, $type, $op) = @{$_[0]};
-	logpkg(__FILE__,__LINE__,'debug',"from: $from, to: $to, type: $type");
+	logit(__LINE__,'Audio::Nama::Fade','debug',"from: $from, to: $to, type: $type");
 	my $cutpos;
 	my @pairs;
 
@@ -307,7 +311,7 @@ sub remove {
 	
 	my @track_fades = all_fades($fade->track);
 	if ( ! @track_fades ){ 
-		remove_effect($track->fader);
+		Audio::Nama::remove_effect($track->fader);
 		$tn{$fade->track}->set(fader => undef);
 	}
 	else { refresh_fade_controller($track) }
@@ -323,30 +327,25 @@ sub add_fader {
 	
 	if (! $id){	
 		my $first_effect = $track->ops->[0];
-		$id = add_effect({
+		$id = Audio::Nama::add_effect({
 				before 	=> $first_effect, 
 				track	=> $track,
 				type	=> $config->{fader_op}, 
-				values	=> [0], # HARDCODED
+				values	=> [0],
 		});
 		$track->set(fader => $id);
 	}
 	$id
 }
+
 package Audio::Nama;
 
-sub fade_uses_mark {
-	my $mark_name = shift;
-	grep{ $_->mark1 eq $mark_name or $_->mark2 eq $mark_name } values %Audio::Nama::Fade::by_index;
-}
-	
 sub apply_fades { 
-	# + data from Fade objects residing in %Audio::Nama::Fade::by_name
-	# + apply to tracks 
-	#     * that are part of current chain setup
-	#     * that have a fade operator (i.e. most user tracks)
+	# use info from Fade objects in %Audio::Nama::Fade::by_name
+	# applying to tracks that are part of current
+	# chain setup
 	map{ Audio::Nama::Fade::refresh_fade_controller($_) }
-	grep{$_->{fader} }
+	grep{$_->{fader} }  # only if already exists
 	Audio::Nama::ChainSetup::engine_tracks();
 }
 	

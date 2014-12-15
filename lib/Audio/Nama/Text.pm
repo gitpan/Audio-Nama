@@ -1,7 +1,6 @@
 # -------- Text Interface -----------
 ## The following subroutines/methods belong to the Text interface class
-## the grammar of the command processor is defined in
-# grammar_body.pl with subroutines in Grammar.p
+## See Grammar.pm for the command grammar and support routines used by 
 
 package Audio::Nama::Text;
 use Modern::Perl; use Carp;
@@ -16,15 +15,13 @@ sub hello {"hello world!";}
 
 sub loop {
 	package Audio::Nama;
-	initialize_prompt();
+	issue_first_prompt();
 	$Event::DIED = sub {
-		my ($event, $errmsg) = @_;
-		throw($errmsg);
-		$text->{term_attribs}->{line_buffer} = q();
-		if($text->{term}){
-			$text->{term}->clear_message();
-			$text->{term}->rl_reset_line_state();
-		}
+	   my ($event, $errmsg) = @_;
+	   say $errmsg;
+	   $text->{term_attribs}->{line_buffer} = q();
+	   $text->{term}->clear_message();
+	   $text->{term}->rl_reset_line_state();
 	};
 	use Data::Dumper::Concise;
 	Event::loop();

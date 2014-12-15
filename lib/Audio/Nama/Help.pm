@@ -3,16 +3,13 @@
 package Audio::Nama;
 use Modern::Perl;
 
-{
-no warnings 'uninitialized';
 sub helpline {
 	my $cmd = shift;
 	my $out = "Command: $cmd\n";
 	$out .=  "Shortcuts: $text->{commands}->{$cmd}->{short}\n"
 			if $text->{commands}->{$cmd}->{short};	
 	$out .=  "Category: $text->{commands}->{$cmd}->{type}\n";
-	my $what = munge_help($text->{commands}->{$cmd}->{what});
-	$out .=  "Description: $what\n";
+	$out .=  "Description: $text->{commands}->{$cmd}->{what}\n";
 	$out .=  "Usage: $cmd "; 
 
 	if ( $text->{commands}->{$cmd}->{parameters} 
@@ -21,7 +18,6 @@ sub helpline {
 	}
 	$out .= "\n";
 	my $example = $text->{commands}->{$cmd}->{example};
-	$example = munge_help($example);
 	#$example =~ s/!n/\n/g;
 	if ($example){
 		$out .=  "Example: ";
@@ -35,44 +31,20 @@ sub helpline {
 	($/, ucfirst $out, $/);
 	
 }
-sub munge_help {
-	my $text = shift;
-	$text =~ s/(^\s*)!(\s*#)/$1 $2/mg;
-	$text =~ s/(^\s*!)/#/mg;
-	$text
-}
-}
 sub helptopic {
-	my $user_input = shift;
-
-	# we expect topic number or topic name
-	
-	my ($index, $name);
-	if( $user_input =~ /(\D+)/ ){ 
-		$name = $1;
-	}
-	else { 
-		$index = $user_input;
-		$name = $help->{arr_topic}->[$index];
-	}
-	#system("man","nama") if $index== 15;
-	format_help_topic($index, $name);
-}
-
-sub format_help_topic {
-	my ($index, $name) = @_;
+	my $index = shift;
+	$index =~ /^(\d+)$/ and $index = $help->{arr_topic}->[$index];
 	my @output;
-	push @output, "\n-- ", ucfirst $name, " --\n\n";
-	push @output, $help->{topic}->{$name}, $/;
-	push @output, $help->{usage} if $index == 14;
-	@output
+	push @output, "\n-- ", ucfirst $index, " --\n\n";
+	push @output, $help->{topic}->{$index}, $/;
+	@output;
 }
 
 sub help { 
 	my $name = shift;
 	chomp $name;
 	#print "seeking help for argument: $name\n";
-	$text->{iam}->{$name} and pager(<<IAM);
+	$text->{iam}->{$name} and print <<IAM;
 
 $name is an Ecasound command.  See 'man ecasound-iam'.
 IAM
@@ -112,7 +84,7 @@ IAM
 	}
 	if (@output){
 		Audio::Nama::pager( @output ); 
-	} else { throw("$name: no help found.\n"); }
+	} else { print "$name: no help found.\n"; }
 	
 }
 sub help_effect {
@@ -141,16 +113,16 @@ sub help_effect {
 		push @output, grep{ /$id/  } @{$fx_cache->{user_help}};
 	}
 
-	# full help for LADSPA/LV2 plugins
+	# full help for LADSPA plugins
 	
-	elsif ( $id =~ /el:/  ) { @output = $fx_cache->{ladspa_help}->{$id} }
-	elsif ( $id =~ /elv2:/) { @output = $fx_cache->{lv2_help}->{$id}    }
-	else { 
+	elsif ( $id =~ /el:/) {
+		@output = $fx_cache->{ladspa_help}->{$id};
+	} else { 
 		@output = qq("$id" is an Ecasound chain operator.
 Type 'man ecasound' at a shell prompt for details.);
 	}
 
-	if( $no_match ){ throw("No effects were found matching: $input\n\n"); }
+	if( $no_match ){ print "No effects were found matching: $input\n\n"; }
 	else { Audio::Nama::pager(@output) }
 }
 
@@ -166,7 +138,7 @@ sub find_effect {
 	} @{$fx_cache->{user_help}};
 	if ( @matches ){
 	Audio::Nama::pager( $text->{wrap}->paragraphs(@matches) , "\n" );
-	} else { throw(join " ", "No effects were found matching:",@keys,"\n\n") }
+	} else { print join " ", "No effects were found matching:",@keys,"\n\n" }
 }
 
 
@@ -199,10 +171,9 @@ sub find_effect {
                     mixdown
                     prompt 
                     diagnostics
-					edits
 					fades
-					command_line_options
-					man_page
+					edits
+
                 ) ;
 
 %{$help->{topic}} = (
@@ -218,28 +189,14 @@ HELP
 
 project => <<PROJECT,
    load_project, load        - load an existing project 
-   project_name, name        - show the current project name
+   project_name, name          - show the current project name
    create_project, create    - create a new project directory tree 
    list_projects, lp         - list all Nama projects
-   get_state, get            - retrieve named file or tag
-   save_state, keep, save    - save state as file or tag
-   exit, quit                - exit program, saving state 
-
- (Version control)
-
-   save                      - save, commit and tag with <tagname>
-   get                       - checkout tag <tagname> 
-                               or associated branch and load
-   branch, br                - switch to designated branch and load
-   list_branches, lbr        - list branches and tags (without arguments)
-   new_branch, nbr           - create a new branch starting at the current 
-                               commit or a specified commit 
-   tag                       - tag current commit with a name and optional 
-                               message
-   
-   memoize                   - enable WAV directory cache
+   get_state, recall, retrieve, restore  - retrieve saved settings
+   save_state, keep, save    - save project settings to disk
+   memoize                   - enable WAV directory cache (default OFF)
    unmemoize                 - disable WAV directory cache
-   
+   exit, quit                - exit program, saving state 
 PROJECT
 
 chain_setup => <<SETUP,
@@ -332,11 +289,10 @@ track => <<TRACK,
 
  - rw_status
 
-   rec                     -  set track to REC (live signal source)
-   mon                     -  set track to PLAY (WAV file playback)
-   off                     -  set track OFF (omit from setup)
-   write_defeat, wd        -  toggle track WAV recording off
-   write_enable, we        -  toggle track WAV recording on
+   rec                     -  set track to REC  
+   mon                     -  set track to MON
+   off, z                  -  set track OFF (omit from setup)
+   rec_defeat, rd          -  toggle track WAV recording on/off
 
  - vol/pan 
 
@@ -352,7 +308,7 @@ track => <<TRACK,
                               sax vol * 3  (multiply by 3)
                               sax vol / 2  (cut by half) 
    mute, c, cut            -  mute volume 
-   unmute, nomute, uncut, C -  restore muted volume
+   unmute, uncut, cc       -  restore muted volume
 
  - chain object modifiers
 
@@ -366,13 +322,13 @@ track => <<TRACK,
    ecanormalize, normalize, norm 
                            - run ecanormalize on current track version
    ecafixdc, fixdc         - run ecafixdc on current track version
-   autofix_tracks, autofix - fixdc and normalize selected versions of all PLAY
+   autofix_tracks, autofix - fixdc and normalize selected versions of all MON
                              tracks
 
  - cutting and time shifting
 
    set_region,    srg      - specify a track region using times or mark names
-   add_region,    arg      - define a region creating an auxiliary track
+   new_region,    nrg      - define a region creating an auxiliary track
    remove_region, rrg      - remove auxiliary track or region definition
    shift_track,   shift    - set playback delay for track/region
    unshift_track, unshift  - eliminate playback delay for track/region
@@ -382,11 +338,12 @@ track => <<TRACK,
    cache_track,   cache,   ct  - store effects-processed track signal as new version
    uncache_track, uncache, unc - select uncached track version, replace effects
 
- - hazardous or destructive commands for advanced users
+ - hazardous commands for advanced users
 
    set_track               - directly set current track parameters
 
    destroy_current_wav     - unlink current track's selected WAV version.
+                             Destructive command! USE WITH CARE!!
 
 TRACK
 
@@ -454,11 +411,12 @@ effects => <<EFFECTS,
    add_effect,     afx        - add an effect to the current track
    add_controller, acl        - add an Ecasound controller
    insert_effect,  ifx        - insert an effect before another effect
-   modify_effect,  mfx        - set, increment or decrement effect parameter
-   remove_effect,  rfx        - remove an effect or controller
-   append_effect, apfx        - add effect to the end of current track effect list 
-   bypass_effects, bypass, bye   - suspend current track effects except vol/pan
-   restore_effects, restore, ref - restore track effects
+   modify_effect,  mfx,
+     modify_controller, mcl   - set, increment or decrement effect parameter
+   remove_effect, rfx         
+     remove_controller, rcl   - remove an effect or controller
+   append_effect              - add effect to the end of current track
+                                effect list 
 
 -  send/receive inserts
 
@@ -469,11 +427,12 @@ effects => <<EFFECTS,
 
 -  effect chains (presets, each consisting of multiple effects)
 
-   list_effect_chains,     lec   - list effect chains and their parameters
-   new_effect_chain,       nec   - define a new effect chain
-   overwrite_effect_chain, oec   - as above, but overwite existing definition
-   add_effect_chain,       aec   - add an effect chain to the current track
-   delete_effect_chain,    dec   - delete an effect chain definition
+   new_effect_chain, nec         - define a new effect chain
+   add_effect_chain, aec         - add an effect chain to the current track
+   delete_effect_chain, dec      - delete an effect chain
+   list_effect_chains, lec       - list effect chains and their parameters
+   bypass_effects, bypass, bye   - suspend current track effects except vol/pan
+   restore_effects, restore, ref - restore track effects
 
 -  effect profiles (effect chains for a group of tracks)
 
@@ -488,7 +447,7 @@ EFFECTS
 
 group => <<GROUP,
    group_rec, grec, R         - group REC mode 
-   group_mon, gmon, M         - group PLAY mode 
+   group_mon, gmon, M         - group MON mode 
    group_off, goff, Z         - group OFF mode 
    group_version, gver, gv    - select default group version 
                               - used for switching among 
@@ -512,11 +471,10 @@ group => <<GROUP,
                            example: for rec; off
                             (operates on tracks in current bus set to 'rec')
                            example: for OFF; off
-                            (operates on tracks in current bus w/status OFF)
+                            (operates on tracks in current bus w/status 'OFF')
 GROUP
 
 bus => <<BUS,
-   list_buses,          lbs   - list bus data
    add_send_bus_raw,    asbr  - create bus and slave tracks for 
                                 sending pre-fader track signals
    add_send_bus_cooked, asbc  - as above, for post-fader signals
@@ -646,9 +604,6 @@ help is available for the following topics:
 11 Diagnostics
 12 Edits
 13 Fades
-14 Command line options
-15 Man page
-
 HELP
 
 1;

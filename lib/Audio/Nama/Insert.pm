@@ -4,11 +4,11 @@ use Modern::Perl;
 use Carp;
 no warnings qw(uninitialized redefine);
 our $VERSION = 0.1;
-our %by_index;
-use Audio::Nama::Log qw(logpkg);
-use Audio::Nama::Log qw(logpkg);
-use Audio::Nama::Globals qw($jack $setup $config :trackrw);
+use vars qw(%by_index);
+use Audio::Nama::Globals qw($jack $setup $config);
+use Audio::Nama::Log qw(logit);
 use Audio::Nama::Object qw(
+	insert_type 
 	n			
 	class
 	send_type
@@ -40,11 +40,13 @@ sub idx { # return first free index
 
 sub wet_name {
 	my $self = shift;
-	join('-', $self->track, $self->n, 'wet'); 
+	# use the field if available for backward compatibility (pre 1.054)
+	$self->{wet_name} || join('-', $self->track, $self->n, 'wet'); 
 }
 sub dry_name {
 	my $self = shift;
-	join('-', $self->track, $self->n, 'dry'); 
+	# use the field if available for backward compatibility (pre 1.054)
+	$self->{dry_name} || join('-', $self->track, $self->n, 'dry'); 
 }
 sub new {
 	my $class = shift;
@@ -58,14 +60,11 @@ sub new {
 					%vals,
 								}, $class;
 	my $name = $vals{track};
-
-	# this is the wet return track
-	
 	my $wet = Audio::Nama::SlaveTrack->new( 
 				name => $self->wet_name,
 				target => $name,
 				group => 'Insert',
-				rw => MON,
+				rw => 'REC',
 	
 				# don't hide wet track if used for hosting effects
 				
@@ -76,9 +75,9 @@ sub new {
 				target => $name,
 				group => 'Insert',
 				hide => 1,
-				rw => MON);
+				rw => 'REC');
+
 	map{ Audio::Nama::remove_effect($_)} $wet->vol, $wet->pan, $dry->vol, $dry->pan;
-	map{ my $track = $_;  map{ delete $track->{$_} } qw(vol pan) } $wet, $dry;
 
 	$self->{dry_vol} = Audio::Nama::add_effect({
 		track  => $dry, 
@@ -99,14 +98,19 @@ sub new {
 
 sub type { (ref $_[0]) =~ /Pre/ ? 'prefader_insert' : 'postfader_insert' }
 
-#sub remove {}
+sub remove {
+	my $self = shift;
+	local $Audio::Nama::this_track;
+	$Audio::Nama::tn{ $self->wet_name }->remove;
+	$Audio::Nama::tn{ $self->dry_name }->remove;
+	delete $by_index{$self->n};
+}
 # subroutine
 #
 sub add_insert {
 	my ($track, $type, $send_id, $return_id) = @_;
-	local $Audio::Nama::this_track;
 	# $type : prefader_insert | postfader_insert
-	Audio::Nama::pager("\n",$track->name , ": adding $type\n");
+	say "\n",$track->name , ": adding $type\n";
 	my $name = $track->name;
 
 	# the input fields will be ignored, since the track will get input
@@ -162,37 +166,103 @@ sub is_local_effects_host { ! $_[0]->send_id }
 sub set_wetness {
 	my ($self, $p) = @_;
 	$self->{wetness} = $p;
-	Audio::Nama::modify_effect($self->wet_vol, 1, undef, $p);
+	Audio::Nama::modify_effect($self->wet_vol, 0, undef, $p);
 	Audio::Nama::sleeper(0.1);
-	Audio::Nama::modify_effect($self->dry_vol, 1, undef, 100 - $p);
+	Audio::Nama::modify_effect($self->dry_vol, 0, undef, 100 - $p);
 }
-sub is_via_soundcard { 
+
+
+### Insert Latency calculation
+#    
+#    In brief, the maximum latency for the two arms is the
+#    latency of any effects on the wet track plus the additional
+#    latency of the JACK client and JACK connection. (We
+#    assume send/receive from the same client.)
+#    
+#    Here is the long explanation:
+#    
+#    We need to calculate and compensate the latency
+#    of the two arms of the insert.
+#    
+#    $setup->{latency}->{sibling} is the maximum latency value
+#    measured among a group of parallel tracks (i.e.
+#    bus members).
+#    
+#    For example, Low, Mid and High tracks for mastering
+#    are siblings. When we get the maximum for the
+#    group, we set $setup->{latency}->{sibling}->{track_name} = $max
+#    
+#    $setup->{latency}->{track}->{track_name}->{total} is the latency
+#    calculated for a track (including predecessor tracks when
+#    that is significant.)
+#    
+#    So later on, when we get to adjusting latency, the
+#    amount is given by
+#    
+#    $setup->{latency}->{sibling}->{track_name}
+#    - $setup->{latency}->{track}->{track_name}
+#    
+sub latency { 
+
+		# return value in milliseconds
+
+# 		track_insert_latency
+# 		track_insert_jack_client_latency
+
 	my $self = shift;
-	
-	for (qw(source send)){
-		my $type = "$_\_type";
-		my $id   = "$_\_id";
-		return 0 unless is_channel($self->$id) 
-						or $self->$type eq 'soundcard' 
-						or is_jack_soundcard($self->$id)
+	my $jack_related_latency;
+
+	# get the latency associated with the JACK client, if any
+	if($self->send_type eq "jack_client")
+	{
+
+		my $client_latency_frames 
+			= $jack->{clients}->{$_->send_id}->{playback}->{max} 
+				+ $jack->{clients}->{$_->send_id}->{capture}->{max};
+		my $jack_connection_latency_frames = $jack->{period}; 
+
+		$jack_related_latency
+			= $setup->{latency}->{track}->{$_->track}->{insert_jack}
+			= ($client_latency_frames + $jack_connection_latency_frames) 
+				/ $config->{sample_rate}
+				* 1000;
 	}
-	sub is_channel { $_[0] =~ /^\d+$/ }
-	sub is_jack_soundcard { $_[0] =~ /^system/ }
+	
+
+	# set the track and sibling(i.e. max) latency values
+	# for wet and dry arms (tracks)
+	
+	# In $setup->{latency}->{track}->{track_name}
+	# we include latency of the loop device added by the insert
+	# which affects both wet and dry tracks
+	# 
+	# We do not include latency of predecessor tracks
+	
+	my $dry_track_latency  # total
+		= $setup->{latency}->{track}->{$_->dry_name}->{total}
+		= Audio::Nama::track_ops_latency($Audio::Nama::tn{$_->dry_name}) + Audio::Nama::loop_device_latency();
+		#	+ insert_latency($Audio::Nama::tn{$_->dry_name});
+	
+	my $wet_track_ops_latency
+		= $setup->{latency}->{track}->{$_->wet_name}->{ops}
+		= Audio::Nama::track_ops_latency($Audio::Nama::tn{$_->wet_name});
+
+	# sibling latency (i.e. max), is same as wet track latency
+	
+	my $wet_track_latency
+	= $setup->{latency}->{track}->{$_->wet_name}->{total}
+	= $setup->{latency}->{sibling}->{$_->wet_name}
+	= $setup->{latency}->{sibling}->{$_->dry_name} 
+	= $wet_track_ops_latency + $jack_related_latency + Audio::Nama::loop_device_latency();
+		# + insert_latency($Audio::Nama::tn{$_->wet_name}) # for inserts within inserts
 }
-sub soundcard_delay {
-	my $track_name = shift;
-	my ($insert) = grep{ $_->wet_name eq $track_name } values %by_index;
-	my $delta = 0;
-	$delta = $config->{soundcard_loopback_delay} 
-		if defined $insert and $insert->is_via_soundcard;
-	Audio::Nama::Lat->new($delta,$delta)
-}
+
 }
 {
 package Audio::Nama::PostFaderInsert;
 use Modern::Perl; use Carp; our @ISA = qw(Audio::Nama::Insert);
 use Audio::Nama::Util qw(input_node output_node dest_type);
-use Audio::Nama::Log qw(logpkg);
+use Audio::Nama::Log qw(logit);
 sub add_paths {
 
 	# Since this routine will be called after expand_graph, 
@@ -201,12 +271,12 @@ sub add_paths {
 	
 	my ($self, $g, $name) = @_;
 	no warnings qw(uninitialized);
-	Audio::Nama::logpkg(__FILE__,__LINE__,'debug', "add_insert for track: $name");
+	logit(__LINE__,'Audio::Nama::Insert','debug', "add_insert for track: $name");
 
 	my $t = $Audio::Nama::tn{$name}; 
 
 
-	Audio::Nama::logpkg(__FILE__,__LINE__,'debug', "insert structure: ", sub{$self->dump});
+	logit(__LINE__,'Audio::Nama::Insert','debug', "insert structure: ", sub{$self->dump});
 
 	my ($successor) = $g->successors($name);
 
@@ -218,7 +288,7 @@ sub add_paths {
 	my $wet = $Audio::Nama::tn{$self->wet_name};
 	my $dry = $Audio::Nama::tn{$self->dry_name};
 
-	Audio::Nama::logpkg(__FILE__,__LINE__,'debug', "found wet: ", $wet->name, " dry: ",$dry->name);
+	logit(__LINE__,'Audio::Nama::Insert','debug', "found wet: ", $wet->name, " dry: ",$dry->name);
 
 	# if no insert target, our insert will 
 	# a parallel effects host with wet/dry dry branches
@@ -244,7 +314,7 @@ sub add_paths {
 		# wet send path (no extra track): track -> loop -> output
 
 		my @edge = ($loop, output_node($self->{send_type}));
-		Audio::Nama::logpkg(__FILE__,__LINE__,'debug', "edge: @edge");
+		logit(__LINE__,'Audio::Nama::Insert','debug', "edge: @edge");
 		$g->add_path( $name, @edge);
 		$g->set_vertex_attributes($loop, {n => $t->n});
 		$g->set_edge_attributes(@edge, { 
@@ -270,81 +340,49 @@ sub add_paths {
 	$g->add_path($loop, $dry->name, $successor);
 	}
 	
-sub remove {
-	my $self = shift;
-	$Audio::Nama::tn{ $self->wet_name }->remove;
-	$Audio::Nama::tn{ $self->dry_name }->remove;
-	delete $Audio::Nama::Insert::by_index{$self->n};
-}
 }
 {
 package Audio::Nama::PreFaderInsert;
 use Modern::Perl; use Carp; our @ISA = qw(Audio::Nama::Insert);
 use Audio::Nama::Util qw(input_node output_node dest_type);
-use Audio::Nama::Log qw(logpkg);
-use Audio::Nama::Globals qw(:trackrw);
-
-
-# --- source ---------- wet_send_track  wet_return_track -+-- insert_pre -- track
-#                                                         |
-# --- source ------------------ dry track ----------------+
-
-sub new {
-	my ($class, %args) = @_;
-	my $self = $class->SUPER::new(%args);
-
-	my $wet_send = Audio::Nama::SlaveTrack->new( 
-				name => $self->wet_send_name,
-				target => $self->track,
-				group => 'Insert',
-				hide => 1,
-				rw => REC
-	);
-	map{ Audio::Nama::remove_effect($_)} $wet_send->vol, $wet_send->pan;
-	map{ my $track = $_;  map{ delete $track->{$_} } qw(vol pan) } $wet_send;
-	$self
-} 
-sub wet_send_name {
-	my $self = shift;
-	join('-', $self->track, $self->n, 'wet-send'); 
-}
-	
-	
-
+use Audio::Nama::Log qw(logit);
 sub add_paths {
+
+# --- predecessor --+-- wet-send    wet-return ---+-- insert_pre -- track
+#                   |                             |
+#                   +-------------- dry ----------+
+           
+
 	my ($self, $g, $name) = @_;
 	no warnings qw(uninitialized);
-	Audio::Nama::logpkg(__FILE__,__LINE__,'debug', "add_insert for track: $name");
+	logit(__LINE__,'Audio::Nama::Insert','debug', "add_insert for track: $name");
 
 	my $t = $Audio::Nama::tn{$name}; 
 
 
-	Audio::Nama::logpkg(__FILE__,__LINE__,'debug', "insert structure:", sub{$self->dump});
+	logit(__LINE__,'Audio::Nama::Insert','debug', "insert structure:", sub{$self->dump});
 
-		# get track source
-		
 		my ($predecessor) = $g->predecessors($name);
-
-		# delete source connection to track
-		
 		$g->delete_edge($predecessor, $name);
 		my $loop = "$name\_insert_pre";
+		my $wet = $Audio::Nama::tn{$self->wet_name};
+		my $dry = $Audio::Nama::tn{$self->dry_name};
 
-		my $wet 		= $Audio::Nama::tn{$self->wet_name};
-		my $dry 		= $Audio::Nama::tn{$self->dry_name};
-		my $wet_send 	= $Audio::Nama::tn{$self->wet_send_name};
+		logit(__LINE__,'Audio::Nama::Insert','debug', "found wet: ", $wet->name, " dry: ",$dry->name);
 
-		Audio::Nama::logpkg(__FILE__,__LINE__,'debug', "found wet: ", $wet->name, " dry: ",$dry->name);
 
-		#pre:  wet send path: wet_send_name (slave) -> output
+		#pre:  wet send path (no track): predecessor -> output
 
-		my @edge = ($self->wet_send_name, output_node($self->send_type));
-		$g->add_path($predecessor, @edge);
-		Audio::Nama::logpkg(__FILE__,__LINE__,'debug', "edge: @edge");
-		$g->set_vertex_attributes($self->wet_send_name, { 
+		my @edge = ($predecessor, output_node($self->{send_type}));
+		logit(__LINE__,'Audio::Nama::Insert','debug', "edge: @edge");
+		$g->add_path(@edge);
+		$g->set_edge_attributes(@edge, { 
 			send_id => $self->{send_id},
 			send_type => $self->{send_type},
-			mono_to_stereo => '', # disable for prefader send path 
+			mono_to_stereo => '', # override
+			width => $t->width,
+			track => $name,
+			n => $t->n,
 		});
 
 		#pre:  wet return path: input -> wet_track (slave) -> loop
@@ -371,12 +409,5 @@ sub add_paths {
 		$g->add_path($predecessor, $dry->name, $loop, $name);
 	}
 	
-sub remove {
-	my $self = shift;
-	$Audio::Nama::tn{ $self->wet_send_name }->remove;
-	$Audio::Nama::tn{ $self->dry_name }->remove;
-	$Audio::Nama::tn{ $self->wet_name }->remove;
-	delete $Audio::Nama::Insert::by_index{$self->n};
-}
 }
 1;

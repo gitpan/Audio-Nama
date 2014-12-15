@@ -5,23 +5,13 @@ use Modern::Perl;
 
 sub mute {
 	return if $config->{opts}->{F};
-	return if $tn{Master}->rw eq OFF or Audio::Nama::ChainSetup::really_recording();
+	return if $tn{Master}->rw eq 'OFF' or Audio::Nama::ChainSetup::really_recording();
 	$tn{Master}->mute;
 }
 sub unmute {
 	return if $config->{opts}->{F};
-	return if $tn{Master}->rw eq OFF or Audio::Nama::ChainSetup::really_recording();
+	return if $tn{Master}->rw eq 'OFF' or Audio::Nama::ChainSetup::really_recording();
 	$tn{Master}->unmute;
-}
-sub fade_around {
-	my ($coderef, @args) = @_;
-	if( engine_running() )
-	{
-		mute();
-		$coderef->(@args);
-		unmute();
-	}
-	else { $coderef->(@args) }
 }
 sub fade {
 	my ($id, $param, $from, $to, $seconds) = @_;
@@ -29,30 +19,35 @@ sub fade {
 	# no fade without Timer::HiRes
 	# no fade unless engine is running
 	if ( ! engine_running() or ! $config->{hires_timer} ){
-		effect_update_copp_set ( $id, --$param, $to );
+		effect_update_copp_set ( $id, $param, $to );
 		return;
 	}
 
 	my $steps = $seconds * $config->{fade_resolution};
 	my $wink  = 1/$config->{fade_resolution};
 	my $size = ($to - $from)/$steps;
-	logpkg(__FILE__,__LINE__,'debug', "id: $id, param: $param, from: $from, to: $to, seconds: $seconds");
+	logit(__LINE__,'Audio::Nama::Mute','debug', "id: $id, param: $param, from: $from, to: $to, seconds: $seconds");
 	for (1..$steps - 1){
 		modify_effect( $id, $param, '+', $size);
 		sleeper( $wink );
 	}		
+	effect_update_copp_set( 
+		$id, 
+		$param, 
+		$to);
+	
 }
 
 sub fadein {
 	my ($id, $to) = @_;
-	my $from  = $config->{fade_out_level}->{fxn($id)->type};
-	fade( $id, 1, $from, $to, $config->{engine_fade_length_on_start_stop});
+	my $from  = $config->{fade_out_level}->{$fx->{applied}->{$id}->{type}};
+	fade( $id, 0, $from, $to, $config->{engine_fade_length_on_start_stop});
 }
 sub fadeout {
 	my $id    = shift;
-	my $from  =	fxn($id)->params->[0];
-	my $to	  = $config->{fade_out_level}->{fxn($id)->type};
-	fade( $id, 1, $from, $to, $config->{engine_fade_length_on_start_stop} );
+	my $from  =	$fx->{params}->{$id}[0];
+	my $to	  = $config->{fade_out_level}->{$fx->{applied}->{$id}->{type}};
+	fade( $id, 0, $from, $to, $config->{engine_fade_length_on_start_stop} );
 }
 
 sub solo {
@@ -66,7 +61,7 @@ sub solo {
 						 Audio::Nama::Track::user();
 	}
 
-	logpkg(__FILE__,__LINE__,'debug', join " ", "already muted:", sub{map{$_->name} @{$fx->{muted}}});
+	logit(__LINE__,'Audio::Nama::Mute','debug', join " ", "already muted:", sub{map{$_->name} @{$fx->{muted}}});
 
 	# convert bunches to tracks
 	my @names = map{ bunch_tracks($_) } @args;
@@ -144,7 +139,7 @@ sub do_many_tracks {
 	# args: { tracks => [ name list ], method => method_name }
 	my $args = shift;
 	my $method = $args->{method};
-	my $delay = $args->{delay} || $config->{engine_muting_time};
+	my $delay = $args->{delay} || $config->{no_fade_mute_delay};
 	map{ $tn{$_}->$method('nofade'); sleeper($delay) } @{$args->{tracks}};
 }
 

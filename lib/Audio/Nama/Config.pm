@@ -2,13 +2,14 @@
 
 # To create a new config var:
 #
-# add the mapping, e.g. "$mix_to_disk_format $config->{mix_to_disk_format}"
-# (without quotes) to file config_map
+# add the symbol e.g. $eager_mode to @config_vars in var_type.pl
+# add the mapping (e.g. $eager_mode $mode->{_eager_opt} ) to file var_map
 
 # these subs are in the main namespace
 
 package Audio::Nama;
 
+my $logger = Log::Log4perl->get_logger("Audio::Nama::Config");
 use Modern::Perl;
 no warnings 'uninitialized';
 
@@ -31,7 +32,7 @@ sub global_config {
 	# 3. .namarc in the home directory, i.e. ~/.namarc
 	# 4. .namarc in the project root directory, i.e. ~/nama/.namarc
 	if( $config->{opts}->{f} ){
-		pager_newline("reading config file $config->{opts}->{f}\n");
+		print("reading config file $config->{opts}->{f}\n");
 		return read_file($config->{opts}->{f});
 	}
 	my @search_path = (project_dir(), $ENV{HOME}, project_root() );
@@ -70,39 +71,15 @@ sub read_config {
 	walk_tree(\%cfg); # second pass completes substitutions
 	assign( 
 		data => \%cfg,
-		vars => [ config_vars() ],
+		vars => [ @config_vars ], # config file format doesnt change
 		class => 'Audio::Nama',
 		var_map => 1,
 	);
 	$config->{root_dir} = $config->{opts}->{d} if $config->{opts}->{d};
 	$config->{root_dir} = expand_tilde($config->{root_dir});
 	$config->{sample_rate} = $cfg{abbreviations}{frequency};
-	$config->{hotkeys}->{' '} = $config->{hotkeys}->{Space}; 
-
-	$config->{use_git} and ! git_executable_found() and 
-		say("Config file requests Git version control,
-but the git executable could not be found.
-Please check that the git executable directory is included
-in your shell's \$PATH variable (currently $ENV{PATH}). 
-
-Falling back to the file paradigm. :-(
-
-Note that the command
-
-  nama> save initial_mix 
-
-creates initial_mix.json, not a tagged commit. 
-
-  nama> get initial_mix
-
-loads initial_mix.json");
-
-	$config->{use_git} = $config->{use_git} && git_executable_found() ? 1 : 0;
-
+	set_default_globals(); # in case they are undefined
 }
-
-sub git_executable_found { qx(which git) }
-
 sub walk_tree {
 	#logsub("&walk_tree");
 	my $ref = shift;
@@ -113,15 +90,15 @@ sub walk_tree {
 sub substitute{
 	my ($parent, $key)  = @_;
 	my $val = $parent->{$key};
-	#logpkg(__FILE__,__LINE__,'debug', qq(key: $key val: $val\n) );
+	#logit(__LINE__,'Audio::Nama::Config','debug', qq(key: $key val: $val\n) );
 	ref $val and walk_tree($val)
 		or map{$parent->{$key} =~ s/$_/$subst{$_}/} keys %subst;
 }
 sub first_run {
 	return if $config->{opts}->{f};
-	my $config_file = '.namarc';
-	my $config_path = "$ENV{HOME}/$config_file";
-	logpkg(__FILE__,__LINE__,'debug', "config path: $config_path" );
+	my $config_path = config_file();
+	$config_path = "$ENV{HOME}/$config_path" unless -e $config_path;
+	logit(__LINE__,'Audio::Nama::Config','debug', "config path: $config_path" );
 	if ( ! -e $config_path and ! -l $config_path  ) {
 
 	# check for missing components
@@ -184,11 +161,9 @@ PROJECT_ROOT
 		#   - project name 'untitled', the default project, and
 		#   - project untitled's hidden directory for holding WAV files
 		
-		my $default_project_root = join_path($ENV{HOME}, 'nama');
-		mkpath( join_path($default_project_root, qw(untitled .wav)) );
-		$config->{root_dir} = $default_project_root; 
-		# needed for $file->user_customization() to resolve in next line
-		write_file($file->user_customization(), get_data_section('custom_pl'));
+		mkpath( join_path($ENV{HOME}, qw(nama untitled .wav)) );
+
+		 write_file(user_customization_file(), get_data_section('custom_pl'));
 		
 	} else {
 		print <<OTHER;
@@ -205,6 +180,16 @@ OTHER
 	print "Exiting.\n"; 
 	exit;	
 	}
+}
+
+sub set_default_globals {
+
+	$config->{engine_globals_general} ||= "-z:mixmode,sum";
+	$config->{engine_globals_realtime} ||= "-z:db,100000 -z:nointbuf";
+	$config->{engine_globals_nonrealtime} ||= "-z:nodb -z:intbuf";
+	$config->{engine_buffersize_realtime} ||= 256; 
+	$config->{engine_buffersize_nonrealtime} ||= 1024;
+
 }
 
 1;

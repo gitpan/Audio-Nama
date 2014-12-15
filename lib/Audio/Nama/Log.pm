@@ -4,90 +4,58 @@ package Audio::Nama::Log;
 use Modern::Perl;
 use Log::Log4perl qw(get_logger :levels);
 use Exporter;
-use Carp qw(carp cluck confess croak);
+use Carp;
 our @ISA = 'Exporter';
-our @EXPORT_OK = qw(logit loggit logpkg logsub initialize_logger);
+our @EXPORT_OK = qw(logit logsub initialize_logger);
 our $appender;
 
 sub initialize_logger {
 	my $cat_string = shift;
 
 	my @all_cats = qw(
-Audio::Nama::AnalyseLV2
-Audio::Nama::Assign
-Audio::Nama::Bunch
-Audio::Nama::Bus
-Audio::Nama::CacheTrack
-Audio::Nama::ChainSetup
-Audio::Nama::Config
-Audio::Nama::Custom
-Audio::Nama::Edit
-Audio::Nama::EffectChain
-Audio::Nama::Effects
-Audio::Nama::EffectsRegistry
-Audio::Nama::Engine
-Audio::Nama::EngineCleanup
-Audio::Nama::EngineRun
-Audio::Nama::EngineSetup
-Audio::Nama::Fade
-Audio::Nama::Git
-Audio::Nama::Globals
-Audio::Nama::Grammar
-Audio::Nama::Graph
-Audio::Nama::Graphical
-Audio::Nama::Help
-Audio::Nama::IO
-Audio::Nama::Initializations
-Audio::Nama::Insert
-Audio::Nama::Jack
-Audio::Nama::Lat
-Audio::Nama::Latency
-Audio::Nama::Log
-Audio::Nama::Mark
-Audio::Nama::Memoize
-Audio::Nama::Midi
-Audio::Nama::Mix
-Audio::Nama::Modes
-Audio::Nama::MuteSoloFade
-Audio::Nama::Nama
-Audio::Nama::Object
-Audio::Nama::Options
-Audio::Nama::Persistence
-Audio::Nama::Plug
-Audio::Nama::Project
-Audio::Nama::RegionComp
-Audio::Nama::Regions
-Audio::Nama::Sequence
-Audio::Nama::Terminal
-Audio::Nama::Text
-Audio::Nama::Track
-Audio::Nama::Util
-Audio::Nama::Wav
-Audio::Nama::Wavinfo
-
+CacheTrack
+Engine_cleanup
+Util
+Config
+Insert
+IO
+Engine_setup
+Bunch
+Custom
+Track
+Mode
+Effects
+Latency
+Engine
+Persistence
+Fade
+Terminal
+Jack
+Grammar
+Effects_registry
+Project
+Mute
+EffectChain
+Mark
 	);
-	push @all_cats, 'ECI','SUB';
 
-	my %negate;
-	%negate = map{ $_ => 1} map{ s/^#//; $_ } grep{ /^#/ } 
-		expand_cats(split q(,), $cat_string) if $cat_string;
-	#say("negate\n",Audio::Nama::json_out(\%negate));
+	my %negate = map{ $_ => 1} map{ s/^!//; $_ } grep{ /^!/ } 
+		expand_cats(split q(,), $cat_string);
+	#say("negate\n",Audio::Nama::yaml_out(\%negate));
 
 	my $layout = "[\%r] %c %m%n"; # backslash to protect from source filter
-	my $logfile = $ENV{NAMA_LOGFILE};
+	my $logfile = $ENV{NAMA_LOGFILE} || "";
 	$SIG{ __DIE__ } = sub { Carp::confess( @_ ) } if $cat_string;
 	
 	$appender = $logfile ? 'FILE' : 'STDERR';
-	$logfile //= "/dev/null";
 
-	my @cats;
-	@cats = expand_cats(split ',', $cat_string) if $cat_string;
-	#logpkg(__FILE__,__LINE__,'debug',"initial logging categories: @cats");
-	#logpkg(__FILE__,__LINE__,'trace',"all cats: @all_cats");
+	my @cats = expand_cats(split ',', $cat_string);
+	#say "log cats: @cats";
 	
-	@cats = grep{ ! $negate{$_} } @all_cats if grep {$_ eq 'ALL'} @cats;
-	
-	#logpkg(__FILE__,__LINE__,'debug',"Final logging categories: @cats");
+	@cats = grep{ ! $negate{$_} } expand_cats(@all_cats) if grep {$_ eq 'ALL'} @cats;
+	#say "Logging categories: @cats" if @cats;
+
+	#say Dumper %log_cats;
 
 	my $conf = qq(
 		#log4perl.rootLogger			= DEBUG, $appender
@@ -106,7 +74,7 @@ Audio::Nama::Wavinfo
 		# file appender
 		log4perl.appender.FILE		= Log::Log4perl::Appender::File
 		log4perl.appender.FILE.filename	= $logfile
-		log4perl.appender.FILE.layout	= Log::Log4perl::Layout::PatternLayout
+		log4perl.appender.FILE.layout	= Log::Log3perl::Layout::PatternLayout
 		log4perl.appender.FILE.layout.ConversionPattern = $layout
 
 		#log4perl.additivity.SUB			= 0 # doesn't work... why?
@@ -120,12 +88,9 @@ Audio::Nama::Wavinfo
 sub cat_line { "log4perl.category.$_[0]			= DEBUG, $appender" }
 
 sub expand_cats {
-	# Convert Module  -> Audio::Nama::Module  -> Audio::Nama::Module
-	# Convert !Module -> !Audio::Nama::Module -> !Audio::Nama::Module
-	no warnings 'uninitialized';
 	my @cats = @_;
-	map { s/^(#)?::/$1Audio::Nama::/; $_}                    # SKIP_PREPROC
-	map { s/^(#)?/$1::/ unless /^::/ or /^#?ECI/ or /^#?SUB/ or /^ALL$/; $_ }# SKIP_PREPROC
+	map { s/^(!)?::/$1Audio::Nama::/; $_}                    # SKIP_PREPROC
+	map { s/^(!)?/$1::/ unless /^::/ or /^!?ECI/ or /^!?SUB/ or /^ALL$/; $_ }# SKIP_PREPROC
 	@cats;
 }
 {
@@ -137,26 +102,13 @@ my %is_method = map { $_ => 1 }
 sub logit {
 	my ($line_number, $category, $level, @message) = @_;
 	#say qq($line_number, $category, $level, @message) ;
-	#confess("first call to logit");
 	my $line_number_output  = $line_number ? " (L $line_number) ": "";
-	cluck "illegal level: $level" unless $is_method{$level};
+	return unless $category;
+	confess "illegal level: $level" unless $is_method{$level};
 	my $logger = get_logger($category);
 	$logger->$level($line_number_output, @message);
 }
 }
 sub logsub { logit(__LINE__,'SUB','debug',$_[0]) }
-
-*loggit = \&logit; # to avoid source filter on logit call below
-
-sub logpkg { 
-	my( $file, $line_no, $level, @message) = @_;
-	# convert Effects.pm to Audio::Nama::Effects to support logpkg
-	my $pkg = $file;
-	($pkg) = $file =~ m| ([^/]+)\.pm$ |x;
-	$pkg //= "Dummy::Pkg";
-	$pkg = "Audio::Nama::$pkg";  # SKIP_PREPROC
-	#say "category: $pkg";
-	logit ($line_no,$pkg,$level, @message) 
-}
 	
 1;

@@ -1,10 +1,10 @@
-use Test::More tests => 2;
+use Test::More qw(no_plan);
 use strict;
 
 BEGIN { 
+	diag ("TESTING $0\n");
 	use_ok('Audio::Nama::Mark') ;
 }
-$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag ("TESTING $0\n");
 my $mark  = Audio::Nama::Mark->new( name => 'thebeginning');
 
 is(  ref $mark , 'Audio::Nama::Mark', "Object creation");
@@ -12,7 +12,7 @@ is(  ref $mark , 'Audio::Nama::Mark', "Object creation");
 1;
 __END__
 
-diag("Serializing, storing$ENV{NAMA_VERBOSE_TEST_OUTPUT} recalling data");
+diag("Serializing, storing and recalling data");
 is( $foo, 2, "Scalar number assignment");
 is( $name, 'John', "Scalar string assignment");
 my $sum;
