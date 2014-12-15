@@ -1,6 +1,7 @@
 # --------------------- Command Grammar ----------------------
 
 package Audio::Nama;
+use Audio::Nama::Effect  qw(:all);
 use Modern::Perl;
 
 sub setup_grammar {
@@ -12,6 +13,15 @@ sub setup_grammar {
 	$text->{commands_yml} = get_data_section("commands_yml");
 	$text->{commands_yml} = quote_yaml_scalars($text->{commands_yml});
 	$text->{commands} = yaml_in( $text->{commands_yml}) ;
+	map
+	{ 
+		my $full_name = $_; 
+		my $shortcuts = $text->{commands}->{$full_name}->{short};
+		my @shortcuts = ();
+		@shortcuts = split " ", $shortcuts if $shortcuts;
+		map{ $text->{command_shortcuts}->{$_} = $full_name } @shortcuts;
+
+	} keys %{$text->{commands}};
 
 	$Audio::Nama::AUTOSTUB = 1;
 	$Audio::Nama::RD_TRACE = 1;
@@ -30,40 +40,109 @@ sub setup_grammar {
 			map{ $_, 1} split " ", get_data_section("midish_commands")
 	};
 
-	# print remove_spaces("bulwinkle is a...");
-
 }
-sub command_process {
+sub process_line {
+	state $total_effects_count;
+	logsub("&process_line");
+	no warnings 'uninitialized';
+	my ($user_input) = @_;
+	# convert hyphenated commands to underscore form
+	while( my ($from, $to) = each %{$text->{hyphenated_commands}})
+	{ $user_input =~ s/$from/$to/g }
+	logpkg(__FILE__,__LINE__,'debug',"user input: $user_input");
+	if (defined $user_input and $user_input !~ /^\s*$/) {
+		$text->{term}->addhistory($user_input) 
+			unless $user_input eq $text->{previous_cmd} or ! $text->{term};
+		$text->{previous_cmd} = $user_input;
+		if ($mode->{midish_terminal}){
+				$user_input =~ /^\s*(midish_mode_off|mmx)/ 
+					?  process_command($user_input)
+					:  midish_command($user_input);	
+		}
+		else {
+			my $context = context();
+			my $success = process_command( $user_input );
+			my $command_stamp = { context => $context, 
+								  command => $user_input };
+			push(@{$project->{command_buffer}}, $command_stamp);
+			
+			if ( 		$config->{autosave} eq 'undo'
+					and $config->{use_git} 
+					and $project->{name}
+					and $project->{repo}
+					and ! engine_running() 
+			){
+				local $quiet = 1;
+				Audio::Nama::ChainSetup::remove_temporary_tracks();
+				autosave() unless $config->{opts}->{R};
+				reconfigure_engine(); # quietly, avoiding noisy reconfig below
+			}
+			reconfigure_engine();
+		}
+		# reset current track to Master if it is
+		# undefined, or the track has been removed
+		# from the index
+		$this_track = $tn{Master} if ! $this_track or
+			(ref $this_track and ! $tn{$this_track->name});
+		setup_hotkeys() if $config->{hotkeys_always};
+	}
+	if (! engine_running() ){
+		my $result = check_fx_consistency();
+		logpkg(__FILE__,__LINE__,'logcluck',"Inconsistency found in effects data",
+			Dumper ($result)) if $result->{is_error};
+	}
+	revise_prompt( $mode->{midish_terminal} and "Midish > " );
+	my $output = delete $text->{output_buffer};
+}
+sub context {
+	my $context = {};
+	$context->{track} = $this_track->name;
+	$context->{bus}   = $this_bus;
+	$context->{op}    = $this_track->op;
+	$context
+}
+sub process_command {
 	my $input = shift;
 	my $input_was = $input;
 
 	# parse repeatedly until all input is consumed
+	# return true on complete success
+	# return false if any part of command fails
 	
-	while ($input =~ /\S/) { 
-		logit(__LINE__,'Audio::Nama::Grammar','debug',"input: $input");
-		$text->{parser}->meta(\$input) or do
-		{
-			print("bad command: $input_was\n"); 
-			system($config->{beep_command}) if $config->{beep_command};
-			last;
-		};
-			
+	my $was_error = 0;
+	
+	try {
+		while (do { no warnings 'uninitialized'; $input =~ /\S/ }) { 
+			logpkg(__FILE__,__LINE__,'debug',"input: $input");
+			$text->{parser}->meta(\$input) or do
+			{
+				throw("bad command: $input_was\n"); 
+				$was_error++;
+				system($config->{beep_command}) if $config->{beep_command};
+				last;
+			};
+		}
 	}
+	catch { $was_error++; warn "caught error: $_" };
+		
 	$ui->refresh; # in case we have a graphic environment
 	set_current_bus();
+
 	# select chain operator if appropriate
-	no warnings 'uninitialized';
-	if ($this_op and $this_track->n eq chain($this_op)){
-		eval_iam("c-select ".$this_track->n);
-		eval_iam("cop-select ".  ecasound_effect_index($this_op));
+	# and there is a current track
+
+
+	if ($this_track){
+		my $FX = fxn($this_track->op);
+		if ($FX and $this_track->n eq $FX->chain){
+			eval_iam("c-select ".$this_track->n);
+			eval_iam("cop-select ".  $FX->ecasound_effect_index);
+		}
 	}
 
-	my $result = check_fx_consistency();
-	logit(__LINE__,'Audio::Nama::Effects','logconfess',"Inconsistency found in effects data\n",Audio::Nama::yaml_out($result)) if $result->{is_error};
-		
+	! $was_error
 }
 sub do_user_command {
-	#say "args: @_";
 	my($cmd, @args) = @_;
 	$text->{user_command}->{$cmd}->(@args);
 }	
@@ -71,35 +150,43 @@ sub do_user_command {
 sub do_script {
 
 	my $name = shift;
-	my $filename;
-	# look in project_dir() and project_root()
-	# if filename provided does not contain slash
-	if( $name =~ m!/!){ $filename = $name }
-	else {
-		$filename = join_path(project_dir(),$name);
-		if(-e $filename){}
-		else{ $filename = join_path(project_root(),$name) }
+	my $script;
+	if ($name =~ / /){
+		$script = $name
 	}
-	-e $filename or say("$filename: file not found. Skipping"), return;
-	my @lines = split "\n",read_file($filename);
+	else {
+		my $filename;
+		# look in project_dir() and project_root()
+		# if filename provided does not contain slash
+		if( $name =~ m!/!){ $filename = $name }
+		else {
+			$filename = join_path(project_dir(),$name);
+			if(-e $filename){}
+			else{ $filename = join_path(project_root(),$name) }
+		}
+		-e $filename or throw("$filename: file not found. Skipping"), return;
+		$script = read_file($filename)
+	}
+	my @lines = split "\n",$script;
 	my $old_opt_r = $config->{opts}->{R};
 	$config->{opts}->{R} = 1; # turn off auto reconfigure
-	for my $input (@lines) { process_line($input)};
+	for my $input (@lines) { process_line($input) unless $input =~ /^\s*#/};
 	$config->{opts}->{R} = $old_opt_r;
 }
 
 sub dump_all {
 	my $tmp = ".dump_all";
+	my $format = "json";
 	my $fname = join_path( project_root(), $tmp);
-	save_system_state($fname);
-	file_pager("$fname.yml");
+	save_system_state($fname,$format);
+	file_pager("$fname.$format");
 }
 
 
-sub leading_track_spec {
+sub user_set_current_track {
 	my $cmd = shift;
 	if( my $track = $tn{$cmd} || $ti{$cmd} ){
-		logit(__LINE__,'Audio::Nama::Grammar','debug',"Selecting track ",$track->name);
+		logpkg(__FILE__,__LINE__,'debug',"Selecting track ",$track->name);
 		$this_track = $track;
 		set_current_bus();
 		ecasound_select_chain( $this_track->n );
@@ -108,7 +195,7 @@ sub leading_track_spec {
 		
 }
 
-### allow commands to abbreviate Audio::Nama::Class as Audio::Nama::Class
+### allow commands to abbreviate Audio::Nama::Class as ::Class # SKIP_PREPROC
 
 { my @namespace_abbreviations = qw(
 	Assign 
@@ -122,6 +209,7 @@ sub leading_track_spec {
 	Fade                                                      
 	Edit
 	Text
+	Effect
 	EffectChain
 	ChainSetup
 );
@@ -132,14 +220,16 @@ sub eval_perl {
 	my $code = shift;
 	map{ $code =~ s/(^|[^A-Za-z])::$_/$1$namespace_root\::$_/ } @namespace_abbreviations; # SKIP_PREPROC
 	my $err;
+	undef $text->{eval_result};
 	my @result = eval $code;
 	if ($@){
-		print( "Perl command failed: \ncode: $code\nerror: $@");
+		throw( "Perl command failed: \ncode: $code\nerror: $@");
 		undef $@;
 	}
 	else { 
 		no warnings 'uninitialized';
 		@result = map{ dumper($_) } @result;
+		$text->{eval_result} = join " ", @result;
 		pager(join "\n", @result) 
 	}	
 }
@@ -148,17 +238,17 @@ sub eval_perl {
 #### Formatted text output
 
 sub show_versions {
+		no warnings 'uninitialized';
 		if (@{$this_track->versions} ){
-			my $cache_map = $this_track->cache_map;
 			"All versions: ". join(" ", 
-				map { $_ . ( $cache_map->{$_} and 'c') } @{$this_track->versions}
+				map { $_ . ( is_cached($this_track, $_)  and 'c') } @{$this_track->versions}
 			). $/
 		} else {}
 }
 
 
 sub show_send { "Send: ". $this_track->send_id. $/ 
-					if $this_track->rec_status ne 'OFF'
+					if $this_track->rec_status ne OFF
 						and $this_track->send_id
 }
 
@@ -170,46 +260,64 @@ sub show_effects {
 }
 sub list_effects {
 	Audio::Nama::sync_effect_parameters();
-	join " ", "Effects on", $this_track->name.':', map{ list_effect($_) } @{ $this_track->ops };
+	join "", "Effects on ", $this_track->name,":\n", map{ list_effect($_) } @{ $this_track->ops };
 }
 
 sub list_effect {
 	my $op_id = shift;
-	my $name = name($op_id);
-	$name .= q(, bypassed) if bypassed($op_id);
-	($op_id eq $this_op ? '*' : '') . "$op_id ($name)";
+	my $FX = fxn($op_id);
+	my $line = $FX->nameline;
+	$line .= q(, bypassed) if $FX->bypassed;
+	($op_id eq $this_track->op ? ' *' : '  ') . $line;
 }
-
 
 sub show_effect {
  	my $op_id = shift;
-	my @lines;
-	my @params;
- 	my $i = fxindex($op_id);
-	my $name = name($op_id);
-	my $ladspa_id = $fx_cache->{ladspa_label_to_unique_id}->{type($op_id)} ;
-	$name .= " ($ladspa_id)" if $ladspa_id;
-	$name .= " (bypassed)" if bypassed($op_id);
-	$name .= "\n";
- 	push @lines, "$op_id: $name";
+	my $with_track = shift;
+	my $FX = fxn($op_id);
+	return unless $FX;
+	my @lines = $FX->nameline;
+	#EQ: GVerb, gverb, 1216, bypassed, famp5, neap
+ 	my $i = $FX->registry_index;
 	my @pnames = @{$fx_cache->{registry}->[ $i ]->{params}};
+	{
+	no warnings 'uninitialized';
+	map { push @lines, parameter_info_padded($op_id, $_) } (0..scalar @pnames - 1) 
+	}
 	map
-	{ 
-		my $name = $pnames[$_]->{name};
-		$name .= " (read-only)" if $pnames[$_]->{dir} eq 'output';
-		push @lines, "    ".($_+1).q(. ) . $name . ": ".  params($op_id)->[$_] . "\n";
-	} (0..scalar @pnames - 1);
-	map
-	{ 	push @lines,
-	 	"    ".($_+1).": ".  $fx->{params}->{$op_id}->[$_] . "\n";
-	} (scalar @pnames .. (scalar @{$fx->{params}->{$op_id}} - 1)  )
-		if scalar @{$fx->{params}->{$op_id}} - scalar @pnames - 1; 
-	#push @lines, join("; ", @params) . "\n";
+	{ 	push @lines, parameter_info_padded($op_id, $_) 
+	 	
+	} (scalar @pnames .. (scalar @{$FX->params} - 1)  )
+		if scalar @{$FX->params} - scalar @pnames - 1; 
 	@lines
+}
+sub extended_name {
+	no warnings 'uninitialized';
+	my $op_id = shift;
+	my $FX = fxn($op_id);
+	return unless $FX;
+	my $name = $FX->name;
+	my $ladspa_id = $fx_cache->{ladspa_label_to_unique_id}->{$FX->type};
+	$name .= " ($ladspa_id)" if $ladspa_id;
+	$name .= " (bypassed)" if $FX->bypassed;
+	$name;
+}
+sub parameter_info {
+	no warnings 'uninitialized';
+	my ($op_id, $parameter) = @_;  # zero based
+	my $FX = fxn($op_id);
+	return unless $FX;
+	my $entry = $FX->about->{params}->[$parameter];
+	my $name = $entry->{name};
+	$name .= " (read-only)" if $entry->{dir} eq 'output';
+	($parameter+1).q(. ) . $name . ": ".  $FX->params->[$parameter];
+}
+sub parameter_info_padded {
+	" "x 4 . parameter_info(@_) . "\n";
 }
 sub named_effects_list {
 	my @ops = @_;
-	join("\n", map{ "$_ (" . Audio::Nama::name($_). ")" } @ops), "\n";
+	join("\n", map{ "$_ (" . fxn($_)->name. ")" } @ops), "\n";
 }
  
 sub show_modifiers {
@@ -218,18 +326,18 @@ sub show_modifiers {
 }
 sub show_region {
 	my $t = $Audio::Nama::this_track;
-	return unless $t->rec_status eq 'MON';
+	return unless $t->rec_status eq PLAY;
 	my @lines;
 	push @lines,join " ",
-		"Length:",time2($t->adjusted_length),"\n";
+		"Length:",time2($t->shifted_length),"\n";
 	$t->playat and push @lines,join " ",
-		"Play at:",time2($t->adjusted_playat_time),
+		"Play at:",time2($t->shifted_playat_time),
 		join($t->playat, qw[ ( ) ])."\n";
 	$t->region_start and push @lines,join " ",
-		"Region start:",time2($t->adjusted_region_start_time),
+		"Region start:",time2($t->shifted_region_start_time),
 		join($t->region_start, qw[ ( ) ])."\n";
 	$t->region_end and push @lines,join " ",
-		"Region end:",time2($t->adjusted_region_end_time),
+		"Region end:",time2($t->shifted_region_end_time),
 		join($t->region_end, qw[ ( ) ])."\n";
 	return(join "", @lines);
 }
@@ -239,17 +347,17 @@ sub time2 {
 	dn($n,3),"/",colonize(int ($n + 0.5));
 }
 sub show_status {
-	print "\n";
 	package Audio::Nama;
+	my @output;
 	my @modes;
 	push @modes, $mode->{preview} if $mode->{preview};
-	push @modes, "master" if $mode->{mastering};
+	push @modes, "master" if $mode->mastering;
 	push @modes, "edit"   if Audio::Nama::edit_mode();
-	push @modes, "offset run" if Audio::Nama::offset_run_mode();
-	say   "Modes settings:   ", join(", ", @modes) if @modes;
+	push @modes, "offset run" if Audio::Nama::is_offset_run_mode();
+	push @output, "Modes settings:   ", join(", ", @modes), $/ if @modes;
 	my @actions;
 	push @actions, "record" if grep{ ! /Mixdown/ } Audio::Nama::ChainSetup::really_recording();
-	push @actions, "playback" if grep { $_->rec_status eq 'MON' } 
+	push @actions, "playback" if grep { $_->rec_status eq PLAY } 
 		map{ $tn{$_} } $bn{Main}->tracks, q(Mixdown);
 
 	# We only check Main bus for playback. 
@@ -258,18 +366,16 @@ sub show_status {
 	# tracks are set to REC (with rec-to-file disabled)
 	
 	
-	push @actions, "mixdown" if $tn{Mixdown}->rec_status eq 'REC';
-	say "Pending actions:  ", join(", ", @actions) if @actions;
-	say "Main bus allows:  ", $bn{Main}->allows, " track status";
-	say "Main bus version: ",$bn{Main}->version if $bn{Main}->version;
-	say "Setup length is:  ", Audio::Nama::heuristic_time($setup->{audio_length}); 
-	say "Run time limit:   ", Audio::Nama::heuristic_time($setup->{runtime_limit})
+	push @actions, "mixdown" if $tn{Mixdown}->rec_status eq REC;
+	push @output, "Pending actions:  ", join(", ", @actions), $/ if @actions;
+	push @output, "Main bus version: ",$bn{Main}->version, $/ if $bn{Main}->version;
+	push @output, "Setup length is:  ", Audio::Nama::heuristic_time($setup->{audio_length}), $/; 
+	push @output, "Run time limit:   ", Audio::Nama::heuristic_time($setup->{runtime_limit}), $/
       if $setup->{runtime_limit};
-		
 }
 sub placeholder { 
 	my $val = shift;
-	return $val if defined $val;
+	return $val if defined $val and $val !~ /^\s*$/;
 	$config->{use_placeholders} ? q(--) : q() 
 }
 
@@ -283,14 +389,14 @@ sub show_inserts {
 }
 
 $text->{format_top} = <<TOP;
- No. Name            Ver  Set  Stat       Source       Bus         Vol  Pan
-=============================================================================
+ No. Name            Status     Source            Destination   Vol   Pan
+=========================================================================
 TOP
 
 $text->{format_divider} = '-' x 77 . "\n";
 
 my $format_picture = <<PICTURE;
-@>>  @<<<<<<<<<<<<<<< @>  @<<  @||||  @|||||||||||||   @<<<<<<<<<  @>>  @>> 
+@>>  @<<<<<<<<<<<<<< @<<<<<<<<< @<<<<<<<<<<<<<<<< @<<<<<<<<<<< @>>>  @>>>
 PICTURE
 
 sub show_tracks_section {
@@ -300,13 +406,11 @@ sub show_tracks_section {
     map {   formline $format_picture, 
             $_->n,
             $_->name,
-            placeholder( $_->current_version || undef ),
-			lc $_->rw,
             $_->rec_status_display,
 			placeholder($_->source_status),
-			placeholder($_->group),
-			placeholder($fx->{params}->{$_->vol}->[0]),
-			placeholder($fx->{params}->{$_->pan}->[0]),
+			placeholder($_->destination),
+			placeholder($_->vol_level),
+			placeholder($_->pan_level),
         } @tracks;
         
 	my $output = $^A;
@@ -328,19 +432,23 @@ sub show_tracks {
 sub showlist {
 	package Audio::Nama;
 
-	my @list = grep{ ! $_->hide } Audio::Nama::Track::all();
+	my @list = grep{ ! $_->hide } Audio::Nama::all_tracks();
 	my $section = [undef,undef,@list];
-	
-	my ($screen_lines, $columns) = $text->{term}->get_screen_size();
+	my ($screen_lines, $columns);
+	if( $text->{term} )
+	{
+		($screen_lines, $columns) = $text->{term}->get_screen_size();
+	}
 
-	return $section if scalar @list <= $screen_lines - 5;
+	return $section if scalar @list <= $screen_lines - 5
+					or ! $screen_lines; 
 
 	my @sections;
 
 		push @sections, [undef,undef, map $tn{$_},qw(Master Mixdown)];
 		push @sections, [$tn{Master},$bn{Main},map $tn{$_},$bn{Main}->tracks ];
 
-	if( $mode->{mastering} ){
+	if( $mode->mastering ){
 
 		push @sections, [undef,undef, map $tn{$_},$bn{Mastering}->tracks]
 
@@ -353,32 +461,25 @@ sub showlist {
 }
 
 
-format STDOUT_TOP =
-Track Name      Ver. Setting  Status   Source           Send        Vol  Pan 
-=============================================================================
-.
-format STDOUT =
-@>>   @<<<<<<<<< @>    @<<     @<< @|||||||||||||| @||||||||||||||  @>>  @>> ~~
-splice @{$text->{format_fields}}, 0, 9
-.
-
-
 #### Some Text Commands
 
 sub t_load_project {
 	package Audio::Nama;
 	return if engine_running() and Audio::Nama::ChainSetup::really_recording();
 	my $name = shift;
-	print "input name: $name\n";
+	pager("input name: $name\n");
 	my $newname = remove_spaces($name);
 	$newname =~ s(/$)(); # remove trailing slash
-	print("Project $newname does not exist\n"), return
+	throw("Project $newname does not exist\n"), return
 		unless -d join_path(project_root(), $newname);
 	stop_transport();
+	save_state();
 	load_project( name => $newname );
-	print "loaded project: $project->{name}\n";
-	logit(__LINE__,'Audio::Nama::Grammar','debug',"load hook: $config->{execute_on_project_load}");
-	Audio::Nama::command_process($config->{execute_on_project_load});
+	pager("loaded project: $project->{name}\n");
+	{no warnings 'uninitialized';
+	logpkg(__FILE__,__LINE__,'debug',"load hook: $config->{execute_on_project_load}");
+	}
+	Audio::Nama::process_command($config->{execute_on_project_load});
 }
 sub t_create_project {
 	package Audio::Nama;
@@ -387,32 +488,30 @@ sub t_create_project {
 		name => remove_spaces($name),
 		create => 1,
 	);
-	print "created project: $project->{name}\n";
+	pager("created project: $project->{name}\n");
 
 }
 sub mixdown {
-	print "Enabling mixdown to file.\n";
-	$tn{Mixdown}->set(rw => 'REC'); 
-	$tn{Master}->set(rw => 'OFF'); 
-	$bn{Main}->set(rw => 'REC');
+	pager_newline("Enabling mixdown to file") if ! $quiet;
+	$tn{Mixdown}->set(rw => REC); 
 }
 sub mixplay { 
-	print "Setting mixdown playback mode.\n";
-	$tn{Mixdown}->set(rw => 'MON');
-	$tn{Master}->set(rw => 'MON'); 
-	$bn{Main}->set(rw => 'OFF');
+	pager_newline("Setting mixdown playback mode.") if ! $quiet;
+	$tn{Mixdown}->set(rw => PLAY);
+	$tn{Master}->set(rw => OFF); 
+	$bn{Main}->set(rw => OFF);
 }
 sub mixoff { 
-	print "Leaving mixdown mode.\n";
-	$tn{Mixdown}->set(rw => 'OFF');
-	$tn{Master}->set(rw => 'MON'); 
-	$bn{Main}->set(rw => 'REC') if $bn{Main}->rw eq 'OFF';
+	pager_newline("Leaving mixdown mode.") if ! $quiet;
+	$tn{Mixdown}->set(rw => OFF);
+	$tn{Master}->set(rw => MON); 
+	$bn{Main}->set(rw => MON);
 }
 sub remove_fade {
 	my $i = shift;
 	my $fade = $Audio::Nama::Fade::by_index{$i}
-		or print("fade index $i not found. Aborting."), return 1;
-	print "removing fade $i from track " .$fade->track ."\n"; 
+		or throw("fade index $i not found. Aborting."), return 1;
+	pager("removing fade $i from track " .$fade->track ."\n");
 	$fade->remove;
 }
 sub import_audio {
@@ -423,14 +522,14 @@ sub import_audio {
 
 	# check that track is audible
 
-	$track->set(rw => 'MON');
+	$track->set(rw => PLAY);
 
 }
 sub destroy_current_wav {
-	carp($this_track->name.": must be set to MON."), return
-		unless $this_track->rec_status eq 'MON';
+	carp($this_track->name.": must be set to PLAY."), return
+		unless $this_track->rec_status eq PLAY;
 	$this_track->current_version or
-		say($this_track->name, 
+		throw($this_track->name, 
 			": No current version (track set to OFF?) Skipping."), return;
 	my $wav = $this_track->full_path;
 	my $reply = $text->{term}->readline("delete WAV file $wav? [n] ");
@@ -438,9 +537,9 @@ sub destroy_current_wav {
 	if ( $reply =~ /y/i ){
 		# remove version comments, if any
 		delete $this_track->{version_comment}{$this_track->current_version};
-		print "Unlinking.\n";
+		pager("Unlinking.\n");
 		unlink $wav or warn "couldn't unlink $wav: $!\n";
-		rememoize();
+		restart_wav_memoize();
 	}
 	$text->{term}->remove_history($text->{term}->where_history);
 	$this_track->set(version => 0);  # reset
@@ -449,15 +548,61 @@ sub destroy_current_wav {
 }
 
 sub pan_check {
-	my $new_position = shift;
-	my $current = $fx->{params}->{ $this_track->pan }->[0];
-	$this_track->set(old_pan_level => $current)
-		unless defined $this_track->old_pan_level;
-	effect_update_copp_set(
-		$this_track->pan,	# id
+	my ($track, $new_position) = @_;
+	my $current = $track->pan_o->params->[0];
+	$track->set(old_pan_level => $current)
+		unless defined $track->old_pan_level;
+	update_effect(
+		$track->pan,	# id
 		0, 					# parameter
 		$new_position,		# value
 	);
 }
 
-1;
+sub remove_track_cmd {
+	my ($track) = @_;
+	
+	# avoid having ownerless SlaveTracks.  
+ 	Audio::Nama::ChainSetup::remove_temporary_tracks();
+		$quiet or pager( "Removing track /",$track->name,"/.  All WAV files will be kept.");
+		remove_submix_helper_tracks($track->name);
+		$track->remove;
+		$this_track = $tn{Master};
+		1
+}
+sub unity {
+	my ($track, $save_level) = @_;
+	if ($save_level){
+		$track->set(old_vol_level => fxn($track->vol)->params->[0]);
+	}
+	update_effect( 
+		$track->vol, 
+		0, 
+		$config->{unity_level}->{fxn($track->vol)->type}
+	);
+}
+sub vol_back {
+	my $track = shift;
+	my $old = $track->old_vol_level;
+	if (defined $old){
+		update_effect(
+			$track->vol,	# id
+			0, 					# parameter
+			$old,				# value
+		);
+		$track->set(old_vol_level => undef);
+	}
+}
+	
+sub pan_back {
+	my $track = shift;
+	my $old = $track->old_pan_level;
+	if (defined $old){
+		update_effect(
+			$track->pan,	# id
+			0, 					# parameter
+			$old,				# value
+		);
+		$track->set(old_pan_level => undef);
+	}
+}

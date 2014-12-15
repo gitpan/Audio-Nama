@@ -9,13 +9,13 @@ no warnings 'uninitialized';
 sub poll_jack { 
 		jack_update(); # first time
 		# then repeat
-		$engine->{events}->{poll_jack} = AE::timer(0,5,\&jack_update) 
+		$project->{events}->{poll_jack} = AE::timer(0,5,\&jack_update) 
 }
 
 sub jack_update {
-	logsub("&jack_update");
+	#logsub("&jack_update");
 	# cache current JACK status
-	#
+	
 	# skip if Ecasound is busy
 	return if engine_running();
 
@@ -23,14 +23,13 @@ sub jack_update {
 		# reset our clients data 
 		$jack->{clients} = {};
 
-		#$jack->{use_jacks} 
-		#	?  jacks_get_port_latency() 
-		#	:  
-		parse_port_latency();
+		$jack->{use_jacks} 
+			?  jacks_get_port_latency() 
+			:  parse_port_latency();
 		parse_ports_list();
 
-		# we know that JACK capture latency is 1 period
-		$jack->{period} = $jack->{clients}->{system}->{capture}->{max};
+		my ($bufsize) = qx(jack_bufsize);
+		($jack->{periodsize}) = $bufsize =~ /(\d+)/;
 
 	} else {  }
 }
@@ -72,14 +71,17 @@ for (my $i = 0; $i < $plist->length(); $i++) {
     my $pname = $plist->get($i);
 	my ($client_name,$port_name) = client_port($pname);
 
-	#say qq(client: $client_name, port: $port_name);
+	logpkg(__FILE__,__LINE__,'debug',qq(client: $client_name, port: $port_name));
 
     my $port = $jc->getPort($pname);
+
+	#my @connections = $jc->getAllConnections($client_name, $port_name);
+	#say for @connections;
 
     my $platency = $port->getLatencyRange($jacks::JackPlaybackLatency);
     my $pmin = $platency->min();
     my $pmax = $platency->max();
-    logit(__LINE__,'Audio::Nama::Jack','debug',"$pname: playback Latency [ $pmin $pmax ]");
+    logpkg(__FILE__,__LINE__,'debug',"$pname: playback Latency [ $pmin $pmax ]");
 	$jack->{clients}->{$client_name}->{$port_name}->{latency}->{playback}->{min} 
 		= $pmin;
 	$jack->{clients}->{$client_name}->{$port_name}->{latency}->{playback}->{max} 
@@ -88,7 +90,7 @@ for (my $i = 0; $i < $plist->length(); $i++) {
     my $clatency = $port->getLatencyRange($jacks::JackCaptureLatency);
     my $cmin = $clatency->min();
     my $cmax = $clatency->max();
-    logit(__LINE__,'Audio::Nama::Jack','debug',"$pname: capture Latency [ $cmin $cmax ]");
+    logpkg(__FILE__,__LINE__,'debug',"$pname: capture Latency [ $cmin $cmax ]");
 	$jack->{clients}->{$client_name}->{$port_name}->{latency}->{capture}->{min} 
 		= $cmin;
 	$jack->{clients}->{$client_name}->{$port_name}->{latency}->{capture}->{max} 
@@ -97,12 +99,39 @@ for (my $i = 0; $i < $plist->length(); $i++) {
 
 
 }
+
+sub parse_port_connections {
+	my $j = shift || qx(jack_lsp -c 2> /dev/null); 
+	return unless $j;
+
+	# initialize
+	$jack->{connections} = {}; 
+	
+	# convert to single lines
+	$j =~ s/\n\s+/ /sg;
+
+	my @lines = split "\n",$j;
+	#say for @ports;
+
+	for (@lines){
+	
+		my ($port, @connections) = split " ", $_;
+		#say "$port @connections";
+		$jack->{connections}->{$port} = \@connections;
+		
+	}
+}
+sub jack_port_to_nama {
+	my $jack_port = shift;
+	grep{ /Nama/ and $jack->{is_own_port}->{$_} } @{ $jack->{connections}->{$jack_port} };
+}
+	
 sub parse_port_latency {
 	
 	# default to use output of jack_lsp -l
 	
 	my $j = shift || qx(jack_lsp -l 2> /dev/null); 
-	logit(__LINE__,'Audio::Nama::Jack','debug', "latency input $j");
+	logpkg(__FILE__,__LINE__,'debug', "latency input $j");
 	
 	state $port_latency_re = qr(
 
@@ -150,13 +179,13 @@ sub parse_port_latency {
 
 		/$port_latency_re/;
 
-		#logit(__LINE__,'Audio::Nama::Jack','debug', Dumper %+);
-		logit(__LINE__,'Audio::Nama::Jack','debug', "client: ",$+{client});
-		logit(__LINE__,'Audio::Nama::Jack','debug', "port: ",$+{port});
-		logit(__LINE__,'Audio::Nama::Jack','debug', "capture min: ", $+{capture_min});
-		logit(__LINE__,'Audio::Nama::Jack','debug', "capture max: ",$+{capture_max});
-		logit(__LINE__,'Audio::Nama::Jack','debug', "playback min: ",$+{playback_min});
-		logit(__LINE__,'Audio::Nama::Jack','debug', "playback max: ",$+{playback_max});
+		#logpkg(__FILE__,__LINE__,'debug', Dumper %+);
+		logpkg(__FILE__,__LINE__,'debug', "client: ",$+{client});
+		logpkg(__FILE__,__LINE__,'debug', "port: ",$+{port});
+		logpkg(__FILE__,__LINE__,'debug', "capture min: ", $+{capture_min});
+		logpkg(__FILE__,__LINE__,'debug', "capture max: ",$+{capture_max});
+		logpkg(__FILE__,__LINE__,'debug', "playback min: ",$+{playback_min});
+		logpkg(__FILE__,__LINE__,'debug', "playback max: ",$+{playback_max});
 		
 		$jack->{clients}->{$+{client}}->{$+{port}}->{latency}->{capture}->{min}
 			= $+{capture_min};
@@ -178,7 +207,7 @@ sub parse_ports_list {
 	
 	logsub("&parse_ports_list");
 	my $j = shift || qx(jack_lsp -p 2> /dev/null); 
-	logit(__LINE__,'Audio::Nama::Jack','debug', "input: $j");
+	logpkg(__FILE__,__LINE__,'debug', "input: $j");
 
 	# convert to single lines
 
@@ -243,21 +272,23 @@ my $jack_plumbing_code = sub
 		my $debug++;
 		my $config_line = qq{(connect $port1 $port2)};
 		say $fh $config_line; # $fh in lexical scope
-		logit(__LINE__,'Audio::Nama::Jack','debug', $config_line);
+		logpkg(__FILE__,__LINE__,'debug', $config_line);
 	};
 my $jack_connect_code = sub
 	{
 		my ($port1, $port2) = @_;
 		my $debug++;
 		my $cmd = qq(jack_connect $port1 $port2);
-		logit(__LINE__,'Audio::Nama::Jack','debug', $cmd);
-		system $cmd;
+		logpkg(__FILE__,__LINE__,'debug', $cmd);
+		system($cmd) == 0
+		   or die "system $cmd failed: $?";
+
 	};
 sub connect_jack_ports_list {
 
 	my @source_tracks = 
 		grep{ 	$_->source_type eq 'jack_ports_list' and
-	  	  		$_->rec_status  eq 'REC' 
+	  	  		$_->rec_status  eq REC 
 			} Audio::Nama::ChainSetup::engine_tracks();
 
 	my @send_tracks = 
@@ -276,7 +307,8 @@ sub connect_jack_ports_list {
 
 		# write config file
 		initialize_jack_plumbing_conf();
-		open $fh, ">>", jack_plumbing_conf();
+		open($fh, ">>", jack_plumbing_conf())
+			or die("can't open ".jack_plumbing_conf()." for append: $!");
 		print $fh $plumbing_header;
 		make_connections($jack_plumbing_code, \@source_tracks, 'in' );
 		make_connections($jack_plumbing_code, \@send_tracks,   'out');
@@ -303,9 +335,9 @@ sub make_connections {
 	map{  
 		my $track = $_; 
  		my $name = $track->name;
- 		my $ecasound_port = "ecasound:$name\_$direction\_";
+ 		my $ecasound_port = "Nama:$name\_$direction\_";
 		my $file = join_path(project_root(), $track->$ports_list);
-		say($track->name, 
+		throw($track->name, 
 			": JACK ports file $file not found. No sources connected."), 
 			return if ! -e -r $file;
 		my $line_number = 0;
@@ -313,11 +345,12 @@ sub make_connections {
 		for my $external_port (@lines){   
 			# $external_port is the source port name
 			chomp $external_port;
-			logit(__LINE__,'Audio::Nama::Jack','debug', "port file $file, line $line_number, port $external_port");
+			logpkg(__FILE__,__LINE__,'debug', "port file $file, line $line_number, port $external_port");
 			# setup shell command
 			
 			if(! $jack->{clients}->{$external_port}){
-				say $track->name, qq(: port "$external_port" not found. Skipping.);
+				throw($track->name, 
+					qq(: port "$external_port" not found. Skipping.));
 				next
 			}
 		
@@ -347,8 +380,39 @@ sub start_jack_plumbing {
 	if ( 	$config->{use_jack_plumbing}				# not disabled in namarc
 			and ! ($config->{opts}->{J} or $config->{opts}->{A})	# we are not testing   
 
-	){ system('jack.plumbing >/dev/null 2>&1 &') }
+	){ system('jack.plumbing >/dev/null 2>&1 &') == 0 
+			or die "can't run jack.plumbing: $?"
+	}
 }
+sub jack_client : lvalue {
+	my $name = shift;
+	logit(__LINE__,'Audio::Nama::Jack','info',"$name: non-existent JACK client") if not $jack->{clients}->{$name} ;
+	$jack->{clients}->{$name}
+}
+sub port_mapping {
+	my $jack_port = shift;
+	my $own_port;
+	#.....
+	$own_port
+}
+
+sub register_other_ports { 
+	return unless $jack->{jackd_running};
+	$jack->{is_other_port} = { map{ chomp; $_ => 1 } qx(jack_lsp) } 
+}
+
+sub register_own_ports { # distinct from other Nama instances 
+	return unless $jack->{jackd_running};
+	$jack->{is_own_port} = 
+	{ 
+		map{chomp; $_ => 1}
+		grep{ ! $jack->{is_other_port}->{$_} }
+		grep{ /^Nama/ } 
+		qx(jack_lsp)
+	} 
+}
+
+
 1;
 __END__
 	

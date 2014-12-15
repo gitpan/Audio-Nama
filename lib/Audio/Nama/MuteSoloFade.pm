@@ -5,51 +5,24 @@ use Modern::Perl;
 
 sub mute {
 	return if $config->{opts}->{F};
-	return if $tn{Master}->rw eq 'OFF' or Audio::Nama::ChainSetup::really_recording();
+	return if $tn{Master}->rw eq OFF or Audio::Nama::ChainSetup::really_recording();
 	$tn{Master}->mute;
 }
 sub unmute {
 	return if $config->{opts}->{F};
-	return if $tn{Master}->rw eq 'OFF' or Audio::Nama::ChainSetup::really_recording();
+	return if $tn{Master}->rw eq OFF or Audio::Nama::ChainSetup::really_recording();
 	$tn{Master}->unmute;
 }
-sub fade {
-	my ($id, $param, $from, $to, $seconds) = @_;
-
-	# no fade without Timer::HiRes
-	# no fade unless engine is running
-	if ( ! engine_running() or ! $config->{hires_timer} ){
-		effect_update_copp_set ( $id, $param, $to );
-		return;
+sub fade_around {
+	my ($coderef, @args) = @_;
+	if( engine_running() )
+	{
+		mute();
+		$coderef->(@args);
+		unmute();
 	}
-
-	my $steps = $seconds * $config->{fade_resolution};
-	my $wink  = 1/$config->{fade_resolution};
-	my $size = ($to - $from)/$steps;
-	logit(__LINE__,'Audio::Nama::Mute','debug', "id: $id, param: $param, from: $from, to: $to, seconds: $seconds");
-	for (1..$steps - 1){
-		modify_effect( $id, $param, '+', $size);
-		sleeper( $wink );
-	}		
-	effect_update_copp_set( 
-		$id, 
-		$param, 
-		$to);
-	
+	else { $coderef->(@args) }
 }
-
-sub fadein {
-	my ($id, $to) = @_;
-	my $from  = $config->{fade_out_level}->{$fx->{applied}->{$id}->{type}};
-	fade( $id, 0, $from, $to, $config->{engine_fade_length_on_start_stop});
-}
-sub fadeout {
-	my $id    = shift;
-	my $from  =	$fx->{params}->{$id}[0];
-	my $to	  = $config->{fade_out_level}->{$fx->{applied}->{$id}->{type}};
-	fade( $id, 0, $from, $to, $config->{engine_fade_length_on_start_stop} );
-}
-
 sub solo {
 	my @args = @_;
 
@@ -61,7 +34,7 @@ sub solo {
 						 Audio::Nama::Track::user();
 	}
 
-	logit(__LINE__,'Audio::Nama::Mute','debug', join " ", "already muted:", sub{map{$_->name} @{$fx->{muted}}});
+	logpkg(__FILE__,__LINE__,'debug', join " ", "already muted:", sub{map{$_->name} @{$fx->{muted}}});
 
 	# convert bunches to tracks
 	my @names = map{ bunch_tracks($_) } @args;
@@ -73,11 +46,11 @@ sub solo {
 	
 	# get dependent tracks
 	
-	my @d = map{ $tn{$_}->bus_tree() } @names;
+	my @dependents = map{ $tn{$_}->bus_tree() } @names;
 
 	# store solo tracks and dependent tracks that we won't mute
 
-	map{ $not_mute{$_}++ } @names, @d;
+	map{ $not_mute{$_}++ } @names, @dependents;
 
 	# find all siblings tracks not in depends list
 
@@ -139,7 +112,7 @@ sub do_many_tracks {
 	# args: { tracks => [ name list ], method => method_name }
 	my $args = shift;
 	my $method = $args->{method};
-	my $delay = $args->{delay} || $config->{no_fade_mute_delay};
+	my $delay = $args->{delay} || $config->{engine_muting_time};
 	map{ $tn{$_}->$method('nofade'); sleeper($delay) } @{$args->{tracks}};
 }
 

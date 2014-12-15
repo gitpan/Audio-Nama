@@ -57,7 +57,6 @@ sub init_gui {
 	$gui->{mw}->optionAdd('*BorderWidth' => 1);
 	$gui->{mw}->title("Ecasound/Nama"); 
 	$gui->{mw}->deiconify;
-	$gui->{parents}->{mw} = $gui->{mw};
 
 	### init effect window
 
@@ -65,12 +64,11 @@ sub init_gui {
 	$gui->{ew}->title("Effect Window");
 	$gui->{ew}->deiconify; 
 #	$gui->{ew}->withdraw;
-	$gui->{parents}->{ew} = $gui->{ew};
 
 	### Exit via Ctrl-C 
 
-	$gui->{mw}->bind('<Control-Key-c>' => \&cleanup_exit); 
-	$gui->{ew}->bind('<Control-Key-c>' => \&cleanup_exit);
+	$gui->{mw}->bind('<Control-Key-c>' => sub { exit } ); 
+	$gui->{ew}->bind('<Control-Key-c>' => sub { exit } );
 
     ## Press SPACE to start/stop transport
 
@@ -150,10 +148,6 @@ sub init_gui {
 		->pack( -side => 'left');
 	$gui->{nama_palette} = $gui->{load_frame}->Menubutton(-tearoff => 0)
 		->pack( -side => 'left');
-	#$gui->{fx_palette} = $gui->{load_frame}->Menubutton(-tearoff => 0)
-	#	->pack( -side => 'left');
-	# $sn_dump = $gui->{load_frame}->Button->pack(-side => 'left');
-
 	$gui->{add_track}->{label} = $gui->{add_frame}->Label(
 		-text => "New track name: ")->pack(-side => 'left');
 	$gui->{add_track}->{text_entry} = $gui->{add_frame}->Entry(
@@ -193,11 +187,11 @@ sub init_gui {
 		 -command => sub { 
 				return if transport_running();
 				save_state($gui->{_save_id});
-				print "Exiting... \n";		
+				pager("Exiting... \n");
 				#$text->{term}->tkRunning(0);
 				#$gui->{ew}->destroy;
 				#$gui->{mw}->destroy;
-				#Audio::Nama::command_process('quit');
+				#Audio::Nama::process_command('quit');
 				exit;
 				 });
 	$gui->{palette}->configure(
@@ -229,7 +223,7 @@ $gui->{palette}->AddItems( @color_items);
 			-command => sub { 
 								return if $gui->{_track_name} =~ /^\s*$/;	
 								add_track(remove_spaces($gui->{_track_name}));
-								command_process('stereo');
+								process_command('stereo');
 	});
 
 	my @labels = 
@@ -379,12 +373,12 @@ sub engine_mode_color {
 				$gui->{_nama_palette}->{Play}; 	# just playback
 		} else { $gui->{_old_bg} } 
 }
-sub user_rec_tracks { some_user_tracks('REC') }
-sub user_mon_tracks { some_user_tracks('MON') }
+sub user_rec_tracks { some_user_tracks(REC) }
+sub user_mon_tracks { some_user_tracks(PLAY) }
 
 sub some_user_tracks {
 	my $which = shift;
-	my @user_tracks = Audio::Nama::Track::all();
+	my @user_tracks = Audio::Nama::audio_tracks();
 	splice @user_tracks, 0, 2; # drop Master and Mixdown tracks
 	return unless @user_tracks;
 	my @selected_user_tracks = grep { $_->rec_status eq $which } @user_tracks;
@@ -395,10 +389,10 @@ sub some_user_tracks {
 sub flash_ready {
 
 	my $color = engine_mode_color();
-	logit(__LINE__,__PACKAGE__,'debug', "flash color: $color");
+	logpkg(__FILE__,__LINE__,'debug', "flash color: $color");
 	$ui->length_display(-background => $color);
 	$ui->project_label_configure(-background => $color) unless $mode->{preview};
- 	$engine->{events}->{heartbeat} = AE::timer(5, 0, \&reset_engine_mode_color_display);
+ 	$project->{events}->{heartbeat} = AE::timer(5, 0, \&reset_engine_mode_color_display);
 }
 sub reset_engine_mode_color_display { $ui->project_label_configure(
 	-background => $gui->{_nama_palette}->{OffBackground} )
@@ -430,45 +424,35 @@ sub group_gui {
 
 		
 		$gui->{group_rw}->AddItems([
-			'command' => 'REC',
+			'command' => MON,
 			-background => $gui->{_old_bg},
 			-command => sub { 
 				return if Audio::Nama::eval_iam("engine-status") eq 'running';
-				$group->set(rw => 'REC');
-				$gui->{group_rw}->configure(-text => 'REC');
+				$group->set(rw => MON);
+				$gui->{group_rw}->configure(-text => MON);
 				refresh();
 				Audio::Nama::reconfigure_engine()
 				}
 			],[
-			'command' => 'MON',
+			'command' => OFF,
 			-background => $gui->{_old_bg},
 			-command => sub { 
 				return if Audio::Nama::eval_iam("engine-status") eq 'running';
-				$group->set(rw => 'MON');
-				$gui->{group_rw}->configure(-text => 'MON');
-				refresh();
-				Audio::Nama::reconfigure_engine()
-				}
-			],[
-			'command' => 'OFF',
-			-background => $gui->{_old_bg},
-			-command => sub { 
-				return if Audio::Nama::eval_iam("engine-status") eq 'running';
-				$group->set(rw => 'OFF');
-				$gui->{group_rw}->configure(-text => 'OFF');
+				$group->set(rw => OFF);
+				$gui->{group_rw}->configure(-text => OFF);
 				refresh();
 				Audio::Nama::reconfigure_engine()
 				}
 			]);
 			$dummy->grid($gui->{group_label}, $gui->{group_version}, $gui->{group_rw});
-			$ui->global_version_buttons;
+			#$ui->global_version_buttons;
 
 }
 sub global_version_buttons {
 	my $version = $gui->{group_version};
 	$version and map { $_->destroy } $version->children;
 		
-	logit(__LINE__,__PACKAGE__,'debug', "making global version buttons range: " ,
+	logpkg(__FILE__,__LINE__,'debug', "making global version buttons range: " ,
 		join ' ',1..$bn{Main}->last);
 
 			$version->radiobutton( 
@@ -488,7 +472,7 @@ sub global_version_buttons {
 	# the highest version number of all tracks in the
 	# $bn{Main} group
 	
-	my @user_track_indices = grep { $_ > 2 } map {$_->n} Audio::Nama::Track::all();
+	my @user_track_indices = grep { $_ > 2 } map {$_->n} Audio::Nama::audio_tracks();
 	
 		next unless grep{  grep{ $v == $_ } @{ $ti{$_}->versions } }
 			@user_track_indices;
@@ -514,7 +498,7 @@ sub track_gui {
 	my $n = shift;
 	return if $ti{$n}->hide;
 	
-	logit(__LINE__,__PACKAGE__,'debug', "found index: $n");
+	logpkg(__FILE__,__LINE__,'debug', "found index: $n");
 	my @rw_items = @_ ? @_ : (
 			[ 'command' => "REC",
 				-foreground => 'red',
@@ -523,15 +507,25 @@ sub track_gui {
 					$ti{$n}->set(rw => "REC");
 					
 					$ui->refresh_track($n);
-					refresh_group();
+					#refresh_group();
+					Audio::Nama::reconfigure_engine();
+			}],
+			[ 'command' => "PLAY",
+				-command  => sub { 
+					return if Audio::Nama::eval_iam("engine-status") eq 'running';
+					$ti{$n}->set(rw => "PLAY");
+					$ui->refresh_track($n);
+					#refresh_group();
 					Audio::Nama::reconfigure_engine();
 			}],
 			[ 'command' => "MON",
+				-foreground => 'red',
 				-command  => sub { 
 					return if Audio::Nama::eval_iam("engine-status") eq 'running';
 					$ti{$n}->set(rw => "MON");
+					
 					$ui->refresh_track($n);
-					refresh_group();
+					#refresh_group();
 					Audio::Nama::reconfigure_engine();
 			}],
 			[ 'command' => "OFF", 
@@ -539,7 +533,7 @@ sub track_gui {
 					return if Audio::Nama::eval_iam("engine-status") eq 'running';
 					$ti{$n}->set(rw => "OFF");
 					$ui->refresh_track($n);
-					refresh_group();
+					#refresh_group();
 					Audio::Nama::reconfigure_engine();
 			}],
 		);
@@ -590,7 +584,7 @@ sub track_gui {
 			-value => $v,
 			-command => sub { 
 				return if Audio::Nama::eval_iam("engine-status") eq 'running';
-			#	$ti{$n}->set(rw => 'REC');
+			#	$ti{$n}->set(rw => REC);
 				$ti{$n}->source($v);
 				$ui->refresh_track($n) }
 			)
@@ -610,7 +604,10 @@ sub track_gui {
 						-value => $v,
 						-command => sub { 
 							return if Audio::Nama::eval_iam("engine-status") eq 'running';
-							$ti{$n}->set_send($v);
+							local $this_track = $ti{$n};
+							if( $v eq 'off' )
+								 { process_command('nosend') }
+							else { $this_track->set_send($v) }
 							$ui->refresh_track($n);
 							Audio::Nama::reconfigure_engine();
  						}
@@ -631,26 +628,27 @@ sub track_gui {
 
 		my $vol_id = $ti{$n}->vol;
 
-		logit(__LINE__,__PACKAGE__,'debug', "vol cop_id: $vol_id");
+		logpkg(__FILE__,__LINE__,'debug', "vol effect_id: $vol_id");
 		my %p = ( 	parent => \$gui->{track_frame},
 				chain  => $n,
 				type => 'ea',
-				cop_id => $vol_id,
+				id => $vol_id,
 				p_num		=> $p_num,
 				length => 300, 
 				);
 
 
-		 logit(__LINE__,__PACKAGE__,'debug',sub{my %q = %p; delete $q{parent}; print
-		 "=============\n%p\n",yaml_out(\%q)});
+		 logpkg(__FILE__,__LINE__,'debug',sub{my %q = %p; delete $q{parent}; print
+		 "=============\n%p\n",json_out(\%q)});
 
 		$vol = make_scale ( \%p );
 		# Mute
 
 		$mute = $gui->{track_frame}->Button(
 			-command => sub { 
-				if ($fx->{params}->{$vol_id}->[0] != $config->{mute_level}->{$fx->{applied}->{$vol_id}->{type}} and
-					$fx->{params}->{$vol_id}->[0] != $config->{fade_out_level}->{$fx->{applied}->{$vol_id}->{type}}
+				my $FX = fxn($vol_id);
+				if (	$FX->params->[0] != $config->{mute_level}->{$FX->type} 
+					and $FX->params->[0] != $config->{fade_out_level}->{$FX->type} 
 				) {  # non-zero volume
 					$ti{$n}->mute;
 					$mute->configure(-background => $gui->{_nama_palette}->{Mute});
@@ -666,10 +664,11 @@ sub track_gui {
 
 		$unity = $gui->{track_frame}->Button(
 				-command => sub { 
-					Audio::Nama::effect_update_copp_set(
+					my $FX = fxn($vol_id);
+					Audio::Nama::update_effect(
 						$vol_id, 
 						0, 
-						$config->{unity_level}->{$fx->{applied}->{$vol_id}->{type}});
+						$config->{unity_level}->{$FX->type});
 				}
 		  );
 	} else {
@@ -686,22 +685,22 @@ sub track_gui {
 		
 		my $pan_id = $ti{$n}->pan;
 		
-		logit(__LINE__,__PACKAGE__,'debug', "pan cop_id: $pan_id");
+		logpkg(__FILE__,__LINE__,'debug', "pan effect_id: $pan_id");
 		$p_num = 0;           # first parameter
 		my %q = ( 	parent => \$gui->{track_frame},
 				chain  => $n,
 				type => 'epp',
-				cop_id => $pan_id,
+				id => $pan_id,
 				p_num		=> $p_num,
 				);
-		# logit(__LINE__,__PACKAGE__,'debug',sub{ my %q = %p; delete $q{parent}; print "x=============\n%p\n",yaml_out(\%q) });
+		# logpkg(__FILE__,__LINE__,'debug',sub{ my %q = %p; delete $q{parent}; print "x=============\n%p\n",json_out(\%q) });
 		$pan = make_scale ( \%q );
 
 		# Center
 
 		$center = $gui->{track_frame}->Button(
 			-command => sub { 
-				Audio::Nama::effect_update_copp_set($pan_id, 0, 50);
+				Audio::Nama::update_effect($pan_id, 0, 50);
 			}
 		  );
 	} else { 
@@ -717,7 +716,7 @@ sub track_gui {
 
 	@{ $gui->{tracks}->{$n} }{qw(name version rw ch_r ch_m mute effects)} 
 		= ($name,  $version, $rw, $ch_r, $ch_m, $mute, \$effects);#a ref to the object
-	#logit(__LINE__,__PACKAGE__,'debug', "=============$gui->{tracks}\n",sub{yaml_out($gui->{tracks})});
+	#logpkg(__FILE__,__LINE__,'debug', "=============$gui->{tracks}\n",sub{json_out($gui->{tracks})});
 	my $independent_effects_frame 
 		= ${ $gui->{tracks}->{$n}->{effects} }->Frame->pack(-fill => 'x');
 
@@ -735,7 +734,7 @@ sub track_gui {
 	$independent_effects_frame
 		->Label(-text => uc $ti{$n}->name )->pack(-side => 'left');
 
-	#logit(__LINE__,__PACKAGE__,'debug',"Number: $n"),MainLoop if $n == 2;
+	#logpkg(__FILE__,__LINE__,'debug',"Number: $n"),MainLoop if $n == 2;
 	my @tags = qw( EF P1 P2 L1 L2 L3 L4 );
 	my @starts =   ( $fx_cache->{split}->{cop}{a}, 
 					 $fx_cache->{split}->{preset}{a}, 
@@ -796,7 +795,7 @@ sub paint_mute_buttons {
 			-background 		=> $gui->{_nama_palette}->{Mute},
 
 			)} grep { $ti{$_}->old_vol_level}# muted tracks
-				map { $_->n } Audio::Nama::Track::all();  # track numbers
+				map { $_->n } Audio::Nama::audio_tracks();  # track numbers
 }
 
 sub create_master_and_mix_tracks { 
@@ -822,7 +821,7 @@ sub create_master_and_mix_tracks {
 
 	$ui->track_gui( $tn{Mixdown}->n); 
 
-	$ui->group_gui('Main');
+	#$ui->group_gui('Main');
 }
 
 sub update_version_button {
@@ -843,26 +842,27 @@ sub add_effect_gui {
 		logsub("&add_effect_gui");
 		my $ui = shift;
 		my %p 			= %{shift()};
-		my ($n,$code,$id,$parent_id,$parameter) =
-			@p{qw(chain type cop_id parent_id parameter)};
+		my ($n,$code,$id,$parent,$parameter) =
+			@p{qw(chain type id parent parameter)};
 		my $i = $fx_cache->{full_label_to_index}->{$code};
+		my $FX = fxn($id);
 
-		logit(__LINE__,__PACKAGE__,'debug', sub{yaml_out(\%p)});
+		logpkg(__FILE__,__LINE__,'debug', sub{json_out(\%p)});
 
-		logit(__LINE__,__PACKAGE__,'debug', "cop_id: $id, parent_id: $parent_id");
-		# $id is determined by cop_add, which will return the
-		# existing cop_id if supplied
+		logpkg(__FILE__,__LINE__,'debug', "id: $id, parent: $parent");
+		# $id is determined by effect_init, which will return the
+		# existing id if supplied
 
 		# check display format, may be 'scale' 'field' or 'hidden'
 		
-		my $display_type = $fx->{applied}->{$id}->{display}; # individual setting
+		my $display_type = $FX->display; # individual setting
 		defined $display_type or $display_type = $fx_cache->{registry}->[$i]->{display}; # template
-		logit(__LINE__,__PACKAGE__,'debug', "display type: $display_type");
+		logpkg(__FILE__,__LINE__,'debug', "display type: $display_type");
 
 		return if $display_type eq q(hidden);
 
 		my $frame ;
-		if ( ! $parent_id ){ # independent effect
+		if ( ! $parent ){ # independent effect
 			$frame = $gui->{tracks}->{$n}->{parents}->Frame->pack(
 				-side => 'left', 
 				-anchor => 'nw',)
@@ -877,10 +877,11 @@ sub add_effect_gui {
 
 		# here add menu items for Add Controller, and Remove
 
-		my $parentage = $fx_cache->{registry}->[ $fx_cache->{full_label_to_index}->{ $fx->{applied}->{$parent_id}->{type}} ]
-			->{name};
+		my $parentage = $fx_cache->{registry}->[
+			$fx_cache->{full_label_to_index}->{$FX->type} 
+		]->{name};
 		$parentage and $parentage .=  " - ";
-		logit(__LINE__,__PACKAGE__,'debug', "parentage: $parentage");
+		logpkg(__FILE__,__LINE__,'debug', "parentage: $parentage");
 		my $eff = $frame->Menubutton(
 			-text => $parentage. $fx_cache->{registry}->[$i]->{name}, -tearoff => 0,);
 
@@ -896,15 +897,15 @@ sub add_effect_gui {
 
 		for my $p (0..$fx_cache->{registry}->[$i]->{count} - 1 ) {
 		my @items;
-		#logit(__LINE__,__PACKAGE__,'debug', "p_first: $p_first, p_last: $p_last");
+		#logpkg(__FILE__,__LINE__,'debug', "p_first: $p_first, p_last: $p_last");
 		for my $j ($fx_cache->{split}->{ctrl}{a}..$fx_cache->{split}->{ctrl}{z}) {   
 			push @items, 				
 				[ 'command' => $fx_cache->{registry}->[$j]->{name},
-					-command => sub { add_effect ({
-							parent_id => $id,
-							chain => $n,
-							values => [ $p  + 1 ],
-							type => $fx_cache->{registry}->[$j]->{code} } )  }
+					-command => sub { add_effect({
+							parent 	=> $id,
+							chain 	=> $n,
+							params 	=> [ $p  + 1 ],
+							type 	=> $fx_cache->{registry}->[$j]->{code} })  }
 				];
 
 		}
@@ -913,11 +914,11 @@ sub add_effect_gui {
 				-menuitems => [@items],
 				-tearoff => 0,
 		);
-			logit(__LINE__,__PACKAGE__,'debug', "parameter name: ",
+			logpkg(__FILE__,__LINE__,'debug', "parameter name: ",
 				$fx_cache->{registry}->[$i]->{params}->[$p]->{name});
 			my $v =  # for argument vector 
 			{	parent => \$frame,
-				cop_id => $id, 
+				id => $id, 
 				p_num  => $p,
 			};
 			push @sliders,make_scale($v);
@@ -959,11 +960,12 @@ sub remove_effect_gui {
 	my $ui = shift;
 	logsub("&remove_effect_gui");
 	my $id = shift;
-	my $n = $fx->{applied}->{$id}->{chain};
-	logit(__LINE__,__PACKAGE__,'debug', "id: $id, chain: $n");
+	my $FX = fxn($id);
+	my $n = $FX->chain;
+	logpkg(__FILE__,__LINE__,'debug', "id: $id, chain: $n");
 
-	logit(__LINE__,__PACKAGE__,'debug', "i have widgets for these ids: ", join " ",keys %{$gui->{fx}});
-	logit(__LINE__,__PACKAGE__,'debug', "preparing to destroy: $id");
+	logpkg(__FILE__,__LINE__,'debug', "i have widgets for these ids: ", join " ",keys %{$gui->{fx}});
+	logpkg(__FILE__,__LINE__,'debug', "preparing to destroy: $id");
 	return unless defined $gui->{fx}->{$id};
 	$gui->{fx}->{$id}->destroy();
 	delete $gui->{fx}->{$id}; 
@@ -973,15 +975,15 @@ sub remove_effect_gui {
 sub effect_button {
 	logsub("&effect_button");
 	my ($n, $label, $start, $end) = @_;
-	logit(__LINE__,__PACKAGE__,'debug', "chain $n label $label start $start end $end");
+	logpkg(__FILE__,__LINE__,'debug', "chain $n label $label start $start end $end");
 	my @items;
 	my $widget;
 	my @indices = ($start..$end);
 	if ($start >= $fx_cache->{split}->{ladspa}{a} and $start <= $fx_cache->{split}->{ladspa}{z}){
 		@indices = ();
 		@indices = @{$fx_cache->{ladspa_sorted}}[$start..$end];
-		logit(__LINE__,__PACKAGE__,'debug', "length sorted indices list: ",scalar @indices );
-	logit(__LINE__,__PACKAGE__,'debug', "Indices: @indices");
+		logpkg(__FILE__,__LINE__,'debug', "length sorted indices list: ",scalar @indices );
+	logpkg(__FILE__,__LINE__,'debug', "Indices: @indices");
 	}
 		
 		for my $j (@indices) { 
@@ -1008,31 +1010,32 @@ sub make_scale {
 	my $ref = shift;
 	my %p = %{$ref};
 # 	%p contains following:
-# 	cop_id   => operator id, to access dynamic effect params in %{$fx->{params}}
+# 	id   => operator id
 # 	parent => parent widget, i.e. the frame
 # 	p_num      => parameter number, starting at 0
 # 	length       => length widget # optional 
-	my $id = $p{cop_id};
-	my $n = $fx->{applied}->{$id}->{chain};
-	my $code = $fx->{applied}->{$id}->{type};
+	my $id = $p{id};
+	my $FX = fxn($id);
+	my $n = $FX->chain;
+	my $code = $FX->type;
 	my $p  = $p{p_num};
 	my $i  = $fx_cache->{full_label_to_index}->{$code};
 
-	logit(__LINE__,__PACKAGE__,'debug', "id: $id code: $code");
+	logpkg(__FILE__,__LINE__,'debug', "id: $id code: $code");
 	
 
 	# check display format, may be text-field or hidden,
 
-	logit(__LINE__,__PACKAGE__,'debug',"i: $i code: $fx_cache->{registry}->[$i]->{code} display: $fx_cache->{registry}->[$i]->{display}");
-	my $display_type = $fx->{applied}->{$id}->{display};
+	logpkg(__FILE__,__LINE__,'debug',"i: $i code: $fx_cache->{registry}->[$i]->{code} display: $fx_cache->{registry}->[$i]->{display}");
+	my $display_type = $FX->display;
 	defined $display_type or $display_type = $fx_cache->{registry}->[$i]->{display};
-	logit(__LINE__,__PACKAGE__,'debug', "display type: $display_type");
+	logpkg(__FILE__,__LINE__,'debug', "display type: $display_type");
 	return if $display_type eq q(hidden);
 
 
-	logit(__LINE__,__PACKAGE__,'debug', "to: ", $fx_cache->{registry}->[$i]->{params}->[$p]->{end}) ;
-	logit(__LINE__,__PACKAGE__,'debug', "p: $p code: $code");
-	logit(__LINE__,__PACKAGE__,'debug', "is_log_scale: ".is_log_scale($i,$p));
+	logpkg(__FILE__,__LINE__,'debug', "to: ", $fx_cache->{registry}->[$i]->{params}->[$p]->{end}) ;
+	logpkg(__FILE__,__LINE__,'debug', "p: $p code: $code");
+	logpkg(__FILE__,__LINE__,'debug', "is_log_scale: ".is_log_scale($i,$p));
 
 	# set display type to individually specified value if it exists
 	# otherwise to the default for the controller class
@@ -1050,14 +1053,15 @@ sub make_scale {
 		my $log_display;
 		
 		my $controller = $frame->Scale(
-			-variable => \$fx->{params}->{$id}->[$p],
+			-variable => \$FX->{params}->[$p],
 			-orient => 'horizontal',
 			-from   =>  $fx_cache->{registry}->[$i]->{params}->[$p]->{begin},
 			-to     =>  $fx_cache->{registry}->[$i]->{params}->[$p]->{end},
 			-resolution => resolution($i, $p),
 		  -width => 12,
 		  -length => $p{length} ? $p{length} : 100,
-		  -command => sub { Audio::Nama::effect_update($id, $p, $fx->{params}->{$id}->[$p]) }
+		  -command => sub { Audio::Nama::_update_effect($id, $p, $FX->params->[$p]) },
+			-state => $FX->is_read_only($p) ? 'disabled' : 'normal',
 		  );
 
 		# auxiliary field for logarithmic display
@@ -1069,15 +1073,15 @@ sub make_scale {
 				-width => 5,
 				);
 			$controller->configure(
-				-variable => \$fx->{params_log}->{$id}->[$p],
+				-variable => \$FX->{params_log}->[$p],
 		  		-command => sub { 
-					$fx->{params}->{$id}->[$p] = exp $fx->{params_log}->{$id}->[$p];
-					Audio::Nama::effect_update($id, $p, $fx->{params}->{$id}->[$p]);
+					$FX->params->[$p] = exp $FX->params_log->[$p];
+					Audio::Nama::_update_effect($id, $p, $FX->params->[$p]);
 					$log_display->configure(
 						-text => 
 						$fx_cache->{registry}->[$i]->{params}->[$p]->{name} =~ /hz|frequency/i
-							? int $fx->{params}->{$id}->[$p]
-							: dn($fx->{params}->{$id}->[$p], 1)
+							? int $FX->params->[$p]
+							: dn($FX->params->[$p], 1)
 						);
 					}
 				);
@@ -1094,9 +1098,9 @@ sub make_scale {
 	 	# then return field type controller widget
 
 		return ${ $p{parent} }->Entry(
-			-textvariable =>\$fx->{params}->{$id}->[$p],
+			-textvariable =>\$FX->params->[$p],
 			-width => 6,
-	#		-command => sub { Audio::Nama::effect_update($id, $p, $fx->{params}->{$id}->[$p]) },
+	#		-command => sub { Audio::Nama::_update_effect($id, $p, $FX->params->[$p]) },
 			# doesn't work with Entry widget
 			);	
 
@@ -1131,9 +1135,9 @@ sub arm_mark_toggle {
 sub marker {
 	my $ui = shift;
 	my $mark = shift; # Mark
-	#print "mark is ", ref $mark, $/;
+	logpkg(__FILE__,__LINE__,'debug',"mark is ", ref $mark);
 	my $pos = $mark->time;
-	#print $pos, " ", int $pos, $/;
+	logpkg(__FILE__,__LINE__,'debug',$pos, " ", int $pos);
 		$gui->{marks}->{$pos} = $gui->{mark_frame}->Button( 
 			-text => (join " ",  colonize( int $pos ), $mark->name),
 			-background => $gui->{_nama_palette}->{OffBackground},
@@ -1165,30 +1169,30 @@ sub get_saved_colors {
 
 
 	my $pal = $file->gui_palette;
-	$pal .= '.yml';
-	say "pal $pal";
+	$pal .= '.json' unless $pal =~ /\.json$/;
+	pager("pal $pal");
 	$pal = -f $pal 
 			? scalar read_file($pal)
-			: get_data_section('default_palette_yml');
-	my $ref = decode($pal, 'yaml');
-	#say "palette file",yaml_out($ref);
+			: get_data_section('default_palette_json');
+	my $ref = decode($pal, 'json');
+	#say "palette file",json_out($ref);
 
 	assign_singletons({ data => $ref });
 	
 	$gui->{_old_abg} = $gui->{_palette}->{mw}{activeBackground};
 	$gui->{_old_abg} = $gui->{project_head}->cget('-activebackground') unless $gui->{_old_abg};
-	#print "1palette: \n", yaml_out( $gui->{_palette} );
-	#print "\n1namapalette: \n", yaml_out($gui->{_nama_palette});
+	#print "1palette: \n", json_out( $gui->{_palette} );
+	#print "\n1namapalette: \n", json_out($gui->{_nama_palette});
 	my %setformat;
 	map{ $setformat{$_} = $gui->{_palette}->{mw}{$_} if $gui->{_palette}->{mw}{$_}  } 
 		keys %{$gui->{_palette}->{mw}};	
-	#print "\nsetformat: \n", yaml_out(\%setformat);
+	#print "\nsetformat: \n", json_out(\%setformat);
 	$gui->{mw}->setPalette( %setformat );
 }
 sub colorset {
 	my ($widgetid, $field) = @_;
 	sub { 
-			my $widget = eval "\$$widgetid";
+			my $widget = $gui->{$widgetid};
 			#print "ancestor: $widgetid\n";
 			my $new_color = colorchooser($field,$widget->cget("-$field"));
 			if( defined $new_color ){
@@ -1238,7 +1242,7 @@ sub namaset {
 sub colorchooser { 
 	logsub("&colorchooser");
 	my ($field, $initialcolor) = @_;
-	logit(__LINE__,__PACKAGE__,'debug', "field: $field, initial color: $initialcolor");
+	logpkg(__FILE__,__LINE__,'debug', "field: $field, initial color: $initialcolor");
 	my $new_color = $gui->{mw}->chooseColor(
 							-title => $field,
 							-initialcolor => $initialcolor,
@@ -1288,7 +1292,7 @@ sub init_palettefields {
 sub save_palette {
  	serialize (
  		file => $file->gui_palette,
-		format => 'yaml',
+		format => 'json',
  		vars => [ qw( $gui->{_palette} $gui->{_nama_palette} ) ],
  		class => 'Audio::Nama')
 }
@@ -1302,41 +1306,40 @@ sub save_palette {
 sub set_widget_color {
 	my ($widget, $status) = @_;
 	my %rw_foreground = (	REC  => $gui->{_nama_palette}->{RecForeground},
+						 	PLAY => $gui->{_nama_palette}->{MonForeground},
 						 	MON => $gui->{_nama_palette}->{MonForeground},
 						 	OFF => $gui->{_nama_palette}->{OffForeground},
 						);
 
 	my %rw_background =  (	REC  => $gui->{_nama_palette}->{RecBackground},
-							MON  => $gui->{_nama_palette}->{MonBackground},
+							PLAY  => $gui->{_nama_palette}->{MonBackground},
+						 	MON => $gui->{_nama_palette}->{MonBackground},
 							OFF  => $gui->{_nama_palette}->{OffBackground});
 
 	$widget->configure( -background => $rw_background{$status} );
 	$widget->configure( -foreground => $rw_foreground{$status} );
 }
-
-
-	
 sub refresh_group { 
 	# main group, in this case we want to skip null group
 	logsub("&refresh_group");
 	
 	
 		my $status;
-		if ( 	grep{ $_->rec_status eq 'REC'} 
+		if ( 	grep{ $_->rec_status eq REC} 
 				map{ $tn{$_} }
 				$bn{Main}->tracks ){
 
-			$status = 'REC'
+			$status = REC
 
-		}elsif(	grep{ $_->rec_status eq 'MON'} 
+		}elsif(	grep{ $_->rec_status eq PLAY} 
 				map{ $tn{$_} }
 				$bn{Main}->tracks ){
 
-			$status = 'MON'
+			$status = PLAY
 
 		}else{ 
 		
-			$status = 'OFF' }
+			$status = OFF }
 
 logit(__LINE__,'Audio::Nama::Refresh','debug', "group status: $status");
 
@@ -1376,63 +1379,29 @@ sub refresh_track {
 	
 	set_widget_color( 	$gui->{tracks}->{$n}->{ch_r},
 				
- 							($rec_status eq 'REC'
+ 							($rec_status eq REC
 								and $n > 2 )
- 								? 'REC'
- 								: 'OFF');
+ 								? REC
+ 								: OFF);
 	
 	set_widget_color( $gui->{tracks}->{$n}->{ch_m},
-							$rec_status eq 'OFF' 
-								? 'OFF'
+							$rec_status eq OFF 
+								? OFF
 								: $ti{$n}->send 
-									? 'MON'
-									: 'OFF');
+									? MON
+									: OFF);
 }
 
 sub refresh {  
 	Audio::Nama::remove_riff_header_stubs();
- 	$ui->refresh_group(); 
-	#map{ $ui->refresh_track($_) } map{$_->n} grep{!  $_->hide} Audio::Nama::Track::all();
-	#map{ $ui->refresh_track($_) } grep{$remove_track_widget{$_} map{$_->n}  Audio::Nama::Track::all();
-	map{ $ui->refresh_track($_) } map{$_->n}  Audio::Nama::Track::all();
+ 	#$ui->refresh_group(); 
+	#map{ $ui->refresh_track($_) } map{$_->n} grep{!  $_->hide} Audio::Nama::audio_tracks();
+	#map{ $ui->refresh_track($_) } grep{$remove_track_widget{$_} map{$_->n}  Audio::Nama::audio_tracks();
+	map{ $ui->refresh_track($_) } map{$_->n}  Audio::Nama::audio_tracks();
 }
 ### end
 
 
 1;
-__DATA__
-@@ default_palette_yml
----
-gui:
-  _nama_palette:
-    Capture: '#f22c92f088d3'
-    ClockBackground: '#998ca489b438'
-    ClockForeground: '#000000000000'
-    GroupBackground: '#998ca489b438'
-    GroupForeground: '#000000000000'
-    MarkArmed: '#d74a811f443f'
-    Mixdown: '#bf67c5a1491f'
-    MonBackground: '#9420a9aec871'
-    MonForeground: Black
-    Mute: '#a5a183828382'
-    OffBackground: '#998ca489b438'
-    OffForeground: Black
-    Play: '#68d7aabf755c'
-    RecBackground: '#d9156e866335'
-    RecForeground: Black
-    SendBackground: '#9ba79cbbcc8a'
-    SendForeground: Black
-    SourceBackground: '#f22c92f088d3'
-    SourceForeground: Black
-  _palette:
-    ew:
-      background: '#d915cc1bc3cf'
-      foreground: black
-    mw:
-      activeBackground: '#81acc290d332'
-      background: '#998ca489b438'
-      foreground: black
-...
-
 
 __END__

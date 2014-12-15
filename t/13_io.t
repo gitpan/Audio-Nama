@@ -1,5 +1,5 @@
 package Audio::Nama;
-use Test::More qw(no_plan);
+use Test::More tests => 1;
 use strict;
 use warnings;
 no warnings qw(uninitialized);
@@ -9,7 +9,7 @@ BEGIN { use_ok('Audio::Nama::IO') };
 
 # `make test'. After `make install' it should work as `perl 1.t'
 
-diag ("TESTING $0\n");
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag ("TESTING $0\n");
 
 =comment
 my $io = Audio::Nama::IO->new( qw[ type raw

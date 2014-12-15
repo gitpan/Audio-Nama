@@ -8,50 +8,60 @@ no warnings 'uninitialized';
 ## register data about LADSPA plugins, and Ecasound effects and
 #  presets (names, ids, parameters, hints) 
 
-sub effects_cache {
-	state $registry_format = 'json';
-	$file->effects_cache . ".$registry_format";
-}
 sub prepare_static_effects_data{
+	my $source = shift; 
 	
 	logsub("&prepare_static_effects_data");
 
-	my $effects_cache = effects_cache();
+	if (not is_test_script() ){
+		logpkg(__FILE__,__LINE__,'debug', join "\n", "newplugins:", new_plugins());
+		if (! $source and ($config->{opts}->{r} or new_plugins())){ 
 
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', join "\n", "newplugins:", new_plugins());
-	if ($config->{opts}->{r} or new_plugins()){ 
-
-		eval { unlink $effects_cache};
-		print "Regenerating effects data cache\n";
+			unlink $file->effects_cache;
+			print "Regenerating effects data cache\n";
+		}
 	}
 
-	if (-f $effects_cache and ! $config->{opts}->{C}){  
-		logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "found effects cache: $effects_cache");
-		my $source = read_file($effects_cache); # scalar assign
+	# maybe $source
+	
+	if ($config->{opts}->{T} )
+	{
+		logpkg(__FILE__,__LINE__,'debug', "using dummy effects data");
+		$source = $fx_cache->{fake};
+	}
+	elsif (-f $file->effects_cache and ! $config->{opts}->{C})
+	{  
+		logpkg(__FILE__,__LINE__,'debug', "found effects cache: ",$file->effects_cache);
+		$source = read_file($file->effects_cache); # scalar assign
+	} 
+	if ($source)
+	{
 		assign(
 			data => decode($source, 'json'),
 			vars => [qw($fx_cache)],
 			class => 'Audio::Nama'
 		);
-			
-	} else {
-		
-		logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "reading in effects data, please wait...");
+	}
+	else 
+	{
+		logpkg(__FILE__,__LINE__,'debug', "reading in effects data, please wait...");
 		initialize_effect_index();
 		read_in_effects_data();  
 		# cop-register, preset-register, ctrl-register, ladspa-register
 		get_ladspa_hints();     
+		get_lv2_hints() unless $config->{opts}->{J};
 		integrate_ladspa_hints();
 		integrate_cop_hints();
 		sort_ladspa_effects();
 		prepare_effects_help();
+		logpkg(__FILE__,__LINE__,'debug', "updating effects cache on disk: ",$file->effects_cache);
 		serialize (
-			file => $effects_cache, 
+			file => $file->effects_cache, 
 			vars => [qw($fx_cache)],
 			class => 'Audio::Nama',
-			format => 'json');
+			format => 'json') unless is_test_script();
+				
 	}
-
 	prepare_effect_index();
 }
 
@@ -60,7 +70,8 @@ sub ladspa_plugin_list {
 	my %seen;
 	for my $dir ( split ':', ladspa_path()){
 		next unless -d $dir;
-		opendir my ($dirh), $dir;
+		opendir(my $dirh, $dir)
+			or die "can't open directory $dir for read: $!";
 		push @plugins,  
 			map{"$dir/$_"} 						# full path
 			grep{ ! $seen{$_} and ++$seen{$_}}  # skip seen plugins
@@ -69,14 +80,29 @@ sub ladspa_plugin_list {
 	}
 	@plugins
 }
+sub lv2_plugin_list {
+	my @plugins;
+	my %seen;
+	for my $dir ( split ':', lv2_path()){
+		next unless -d $dir;
+		opendir(my $dirh, $dir)
+			or die "can't open directory $dir for read: $!";
+		push @plugins,  
+			map{"$dir/$_"} 						# full path
+			grep{ ! $seen{$_} and ++$seen{$_}}  # skip seen plugins
+			grep{ /\.lv2$/} readdir $dirh;			# get .lv2 files
+		closedir $dirh;
+	}
+	@plugins
+}
 
 sub new_plugins {
-	my $effects_cache = effects_cache();
 	my @filenames = ladspa_plugin_list();	
+	push @filenames, lv2_plugin_list();
 	push @filenames, '/usr/local/share/ecasound/effect_presets',
                  '/usr/share/ecasound/effect_presets',
                  "$ENV{HOME}/.ecasound/effect_presets";
-	my $effects_cache_stamp = modified_stamp($effects_cache);
+	my $effects_cache_stamp = modified_stamp($file->effects_cache);
 	my $latest;
 	map{ my $mod = modified_stamp($_);
 		 $latest = $mod if $mod > $latest } @filenames;
@@ -105,28 +131,30 @@ sub prepare_effect_index {
 		}
 		$fx_cache->{partial_label_to_full}->{$code} = $code;
 	} grep{ !/^elv2:/ }keys %{$fx_cache->{full_label_to_index}};
-	#print yaml_out $fx_cache->{partial_label_to_full};
+	#print json_out $fx_cache->{partial_label_to_full};
 }
 sub extract_effects_data {
 	logsub("&extract_effects_data");
 	my ($lower, $upper, $regex, $separator, @lines) = @_;
 	carp ("incorrect number of lines ", join ' ',$upper-$lower,scalar @lines)
 		if $lower + @lines - 1 != $upper;
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug',"lower: $lower upper: $upper  separator: $separator");
-	#logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "lines: ". join "\n",@lines);
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "regex: $regex");
+	logpkg(__FILE__,__LINE__,'debug',"lower: $lower upper: $upper  separator: $separator");
+	logpkg(__FILE__,__LINE__,'debug', "lines: ". join "\n",@lines);
+	logpkg(__FILE__,__LINE__,'debug', "regex: $regex");
 	my $j = $lower - 1;
 	while(my $line = shift @lines){
 		$j++;
-		$line =~ /$regex/ or carp("bad effect data line: $line\n"),next;
+		$line =~ /$regex/ or 
+		carp("bad effect data line: $line\n", 
+			join " ", map{ ord($_) } split //, $line), next;
 		my ($no, $name, $id, $rest) = ($1, $2, $3, $4);
 		# $no is unimportant; it from the list numbering
-		logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "Number: $no Name: $name Code: $id Rest: $rest");
+		logpkg(__FILE__,__LINE__,'debug', "Number: $no Name: $name Code: $id Rest: $rest");
 		my @p_names = split $separator,$rest; 
 		map{s/'//g}@p_names; # remove leading and trailing q(') in ladspa strings
-		logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "Parameter names: @p_names");
+		logpkg(__FILE__,__LINE__,'debug', "Parameter names: @p_names");
 		$fx_cache->{registry}->[$j]={};
-		$fx_cache->{registry}->[$j]->{number} = $no;
+		#$fx_cache->{registry}->[$j]->{number} = $no;
 		$fx_cache->{registry}->[$j]->{code} = $id;
 		$fx_cache->{registry}->[$j]->{name} = $name;
 		$fx_cache->{registry}->[$j]->{count} = scalar @p_names;
@@ -155,14 +183,14 @@ sub extract_effects_data {
 }
 sub sort_ladspa_effects {
 	logsub("&sort_ladspa_effects");
-#	print yaml_out($fx_cache->{split}); 
+#	print json_out($fx_cache->{split}); 
 	my $aa = $fx_cache->{split}->{ladspa}{a};
 	my $zz = $fx_cache->{split}->{ladspa}{z};
 #	print "start: $aa end $zz\n";
 	map{push @{$fx_cache->{ladspa_sorted}}, 0} ( 1 .. $aa ); # fills array slice [0..$aa-1]
 	splice @{$fx_cache->{ladspa_sorted}}, $aa, 0,
 		 sort { $fx_cache->{registry}->[$a]->{name} cmp $fx_cache->{registry}->[$b]->{name} } ($aa .. $zz) ;
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "sorted array length: ". scalar @{$fx_cache->{ladspa_sorted}});
+	logpkg(__FILE__,__LINE__,'debug', "sorted array length: ". scalar @{$fx_cache->{ladspa_sorted}});
 }		
 sub read_in_effects_data {
 	
@@ -172,6 +200,7 @@ sub read_in_effects_data {
 	#### LADSPA
 
 	my $lr = eval_iam("ladspa-register");
+	logpkg(__FILE__,__LINE__,'debug',"ladpsa-register output:\n",$lr);
 
 	#print $lr; 
 	
@@ -179,11 +208,14 @@ sub read_in_effects_data {
 	
 	# join the two lines of each entry
 	my @lad = map { join " ", splice(@ladspa,0,2) } 1..@ladspa/2; 
+	#logpkg(__FILE__,__LINE__,'debug',join "\n","ladpsa-register processed output:",@lad);
 
 
 	#### LV2
 
-	my $lv2 = get_data_section('fake_lv2_register');
+	my $lv2 = eval_iam('lv2-register'); # TODO test fake lv2-register
+										# get_data_section('fake_lv2_register');
+	logpkg(__FILE__,__LINE__,'debug',"lv2-register output:\n",$lv2);
 
 	# join wrapped lines
 	$lv2 =~ s/\n  			# newline
@@ -191,26 +223,35 @@ sub read_in_effects_data {
 						\x20		# a space
 						//gx;      # delete, multiple times, expanded regex
 
+	# join pairs of lines
+	$lv2 =~ s/\n\s*(-elv2)/ $1/g;
+
 	# now we can handle similar to LADSPA	
 	
 	# split on newlines
 	my @lv2 = split /\n/,$lv2;
 
-	logit(__LINE__,'Audio::Nama::Effects_registry','trace',sub{ yaml_out(\@lv2) });
+#	logpkg(__FILE__,__LINE__,'debug',sub{ json_out(\@lv2) });
 
-	# join pairs of lines
-	@lv2 = map { join " ", splice(@lv2,0,2) } 1..@lv2/2;
+	logpkg(__FILE__,__LINE__,'trace',sub{ json_out(\@lv2) });
 
-	logit(__LINE__,'Audio::Nama::Effects_registry','trace',sub{ yaml_out(\@lv2) });
+	my $preset = eval_iam("preset-register");
+	my @preset = grep {! /^\s*$/ } split "\n", $preset;
+	logpkg(__FILE__,__LINE__,'debug',"preset-register output:\n",$preset);
 
-	my @preset = grep {! /^\w*$/ } split "\n", eval_iam("preset-register");
-	my @ctrl  = grep {! /^\w*$/ } split "\n", eval_iam("ctrl-register");
-	my @cop = grep {! /^\w*$/ } split "\n", eval_iam("cop-register");
+	my $ctrl = 	eval_iam("ctrl-register");
+	my @ctrl  = grep {! /^\s*$/ } split "\n", $ctrl;
+	logpkg(__FILE__,__LINE__,'debug',"ctrl-register output:\n",$ctrl);
 
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "found ", scalar @cop, " Ecasound chain operators");
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "found ", scalar @preset, " Ecasound presets");
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "found ", scalar @ctrl, " Ecasound controllers");
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "found ", scalar @lad, " LADSPA effects");
+	my $cop = eval_iam("cop-register");
+	my @cop = grep {! /^\s*$/ } split "\n", $cop;
+	logpkg(__FILE__,__LINE__,'debug',"cop-register output:\n",$cop);
+
+	logpkg(__FILE__,__LINE__,'debug', "found ", scalar @cop, " Ecasound chain operators");
+	logpkg(__FILE__,__LINE__,'debug', "found ", scalar @preset, " Ecasound presets");
+	logpkg(__FILE__,__LINE__,'debug', "found ", scalar @ctrl, " Ecasound controllers");
+	logpkg(__FILE__,__LINE__,'debug', "found ", scalar @lad, " LADSPA effects");
+	logpkg(__FILE__,__LINE__,'debug', "found ", scalar @lv2, " LV2 effects");
 
 	# index boundaries we need to make effects list and menus
 	$fx_cache->{split}->{cop}{a}   = 1;
@@ -235,7 +276,7 @@ sub read_in_effects_data {
 		(\w.+?) # name, starting with word-char,  non-greedy
 		# (\w+) # name
 		,\s*  # comma spaces* 
-		-(\w+)    # cop_id 
+		-(\w+)    # effect_id 
 		:?     # maybe colon (if parameters)
 		(.*$)  # rest
 	/x;
@@ -244,7 +285,7 @@ sub read_in_effects_data {
 		^(\d+) # number
 		\.    # dot
 		\s+   # spaces+
-		(\w+) # name
+		 (\w+) # name
 		,\s*  # comma spaces* 
 		-(pn:\w+)    # preset_id 
 		:?     # maybe colon (if parameters)
@@ -288,11 +329,9 @@ sub read_in_effects_data {
 		$fx_cache->{split}->{cop}{a},
 		$fx_cache->{split}->{cop}{z},
 		$cop_re,
-		q(','),
+		q(,),
 		@cop,
 	);
-
-
 	extract_effects_data(
 		$fx_cache->{split}->{ladspa}{a},
 		$fx_cache->{split}->{ladspa}{z},
@@ -327,15 +366,15 @@ sub read_in_effects_data {
 
 	for my $i (0..$#{$fx_cache->{registry}}){
 		 $fx_cache->{full_label_to_index}->{ $fx_cache->{registry}->[$i]->{code} } = $i; 
-		 logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "i: $i code: $fx_cache->{registry}->[$i]->{code} display: $fx_cache->{registry}->[$i]->{display}");
+		 logpkg(__FILE__,__LINE__,'debug', "i: $i code: $fx_cache->{registry}->[$i]->{code} display: $fx_cache->{registry}->[$i]->{display}");
 	}
 
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', sub{"$fx_cache->{registry}\n======\n", yaml_out($fx_cache->{registry})}); ; 
+	logpkg(__FILE__,__LINE__,'debug', sub{"$fx_cache->{registry}\n======\n", json_out($fx_cache->{registry})}); ; 
 }
 
 sub integrate_cop_hints {
 
-	my @cop_hints =  @{ yaml_in( get_data_section('chain_op_hints_yml')) };
+	my @cop_hints =  @{ yaml_in( get_data_section('ecasound_chain_operator_hints_yml')) };
 	for my $hashref ( @cop_hints ){
 		#print "cop hints ref type is: ",ref $hashref, $/;
 		my $code = $hashref->{code};
@@ -344,6 +383,9 @@ sub integrate_cop_hints {
 }
 sub ladspa_path {
 	$ENV{LADSPA_PATH} || q(/usr/lib/ladspa);
+}
+sub lv2_path {
+	$ENV{LV2_PATH} || q(/usr/lib/lv2);
 }
 sub get_ladspa_hints{
 	logsub("&get_ladspa_hints");
@@ -378,7 +420,7 @@ sub get_ladspa_hints{
 			my ($plugin_name, $plugin_label, $plugin_unique_id, $ports)
 			  = $stanza =~ /$pluginre/ 
 				or carp "*** couldn't match plugin stanza $stanza ***";
-			logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "plugin label: $plugin_label $plugin_unique_id");
+			logpkg(__FILE__,__LINE__,'debug', "plugin label: $plugin_label $plugin_unique_id");
 
 			my @lines = grep{ /control/ } split "\n",$ports;
 
@@ -393,7 +435,7 @@ sub get_ladspa_hints{
 				my ($name, $rest) = ($1, $2);
 				my ($dir, $type, $range, $default, $hint) = 
 					split /\s*,\s*/ , $rest, 5;
-				logit(__LINE__,"Audio::Nama::Effects_registry",'debug', join( 
+				logpkg(__FILE__,__LINE__,'debug', join( 
 				"|",$name, $dir, $type, $range, $default, $hint) ); 
 				#  if $hint =~ /logarithmic/;
 				if ( $range =~ /toggled/i ){
@@ -428,7 +470,13 @@ sub get_ladspa_hints{
 		#last if ++$i > 10;
 	}
 
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', sub{yaml_out($fx_cache->{ladspa})});
+	logpkg(__FILE__,__LINE__,'debug', sub{json_out($fx_cache->{ladspa})});
+}
+
+sub get_lv2_hints {
+	my @plugins = split " ", qx(lv2ls);
+	logpkg(__FILE__,__LINE__,'debug','No LV2 plugins found'), return unless @plugins;
+	map { $fx_cache->{lv2_help}->{"elv2:$_"} = join '', Audio::Nama::AnalyseLV2::lv2_help($_) } @plugins;
 }
 
 sub srate_val {
@@ -451,7 +499,7 @@ sub range {
 	$end = 		srate_val( $end );
 	$default = 	srate_val( $default );
 	$default = $default || $beg;
-	logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "beg: $beg, end: $end, default: $default");
+	logpkg(__FILE__,__LINE__,'debug', "beg: $beg, end: $end, default: $default");
 	if ( $name =~ /gain|amplitude/i ){
 		$beg = 0.01 unless $beg;
 		$end = 0.01 unless $end;
@@ -493,18 +541,18 @@ map { $L{$_}++ } keys %{$fx_cache->{ladspa}};
 map { $M{$_}++ } grep {/el:/} keys %{$fx_cache->{full_label_to_index}};
 
 for my $k (keys %L) {
-	$M{$k} or logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "$k not found in ecasound listing");
+	$M{$k} or logpkg(__FILE__,__LINE__,'debug', "$k not found in ecasound listing");
 }
 for my $k (keys %M) {
-	$L{$k} or logit(__LINE__,"Audio::Nama::Effects_registry",'debug', "$k not found in ladspa listing");
+	$L{$k} or logpkg(__FILE__,__LINE__,'debug', "$k not found in ladspa listing");
 }
 
 
-logit(__LINE__,"Audio::Nama::Effects_registry",'debug', sub {join "\n", sort keys %{$fx_cache->{ladspa}}});
-logit(__LINE__,"Audio::Nama::Effects_registry",'debug', '-' x 60);
-logit(__LINE__,"Audio::Nama::Effects_registry",'debug', sub{join "\n", grep {/el:/} sort keys %{$fx_cache->{full_label_to_index}}});
+logpkg(__FILE__,__LINE__,'debug', sub {join "\n", sort keys %{$fx_cache->{ladspa}}});
+logpkg(__FILE__,__LINE__,'debug', '-' x 60);
+logpkg(__FILE__,__LINE__,'debug', sub{join "\n", grep {/el:/} sort keys %{$fx_cache->{full_label_to_index}}});
 
-#print yaml_out $fx_cache->{registry}; exit;
+#print json_out $fx_cache->{registry}; exit;
 
 }
 
@@ -546,4 +594,5 @@ sub prepare_effects_help {
 	} reverse split "\n",eval_iam("ladspa-register");
 
 }
+
 1;

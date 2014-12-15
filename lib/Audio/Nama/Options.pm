@@ -31,7 +31,7 @@ sub process_command_line_options {
         no-fade-on-transport-start  F
 		log=s                       L
 		no-latency                  O
-		
+		latency                     Q
 );
 
 	map{$config->{opts}->{$_} = ''} values %options;
@@ -47,8 +47,11 @@ sub process_command_line_options {
 
 	eval $getopts or die "Stopped.\n";
 	
-	if ($config->{opts}->{h}){
-	say <<HELP; exit; }
+	if ($config->{opts}->{h}){ say $help->{usage}; exit; }
+
+}
+BEGIN {
+$help->{usage} = <<HELP;
 
 USAGE: nama [options] [project_name]
 
@@ -69,20 +72,20 @@ Debugging options:
 --no-state, -M                   Don't load project state
 --no-static-effects-data, -S     Don't load effects data
 --no-static-effects-cache, -C    Bypass effects data cache
---no-reconfigure-engine, -R      Don't automatically configure engine
---debugging-output, -D           Emit debugging information
+--no-reconfigure-engine, -R      Don't autosave, autoreconfigure or git snapshot
 --fake-jack, -J                  Simulate JACK environment
 --fake-alsa, -A                  Simulate ALSA environment
 --no-ecasound, -E                Don't spawn Ecasound process
 --execute-command, -X            Supply a command to execute
 --no-terminal, -T                Don't initialize terminal
 --no-fades, -F                   No fades on transport start/stop
---no-latency, -O                 Don't apply latency compensation
---log, -L                        Categories to log
+--log, -L                        Log these (comma separated) categories
 
 HELP
-
 }
+# --latency, -Q                    Apply latency compensation
+# --no-latency, -O                 Don't apply latency compensation
+
 1;
 __END__
 	

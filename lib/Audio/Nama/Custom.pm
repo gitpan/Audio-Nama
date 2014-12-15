@@ -5,39 +5,43 @@ use Modern::Perl;
 
 sub setup_user_customization {
 	my $filename = $file->user_customization();
-	return unless -r $filename;
-	say "reading user customization file $filename";
-	my %custom;
-	unless (%custom = do $filename) {
-		say "couldn't parse $filename: $@\n" if $@;
-		return;
-	}
-	logit(__LINE__,'Audio::Nama::Custom','debug','customization :', sub{yaml_out(\%custom)});
-	my $prompt;
-	$prompt = gen_coderef('prompt', $custom{prompt}) if $custom{prompt};
-	*prompt = $prompt if $prompt;
-	my @commands = keys %{ $custom{commands} };
-	for my $cmd(@commands){
-		my $coderef = gen_coderef($cmd,$custom{commands}{$cmd}) or next;
-		$text->{user_command}->{$cmd} = $coderef;
-	}
-	$text->{user_alias}   = $custom{aliases};
-	map{ my $longform = $custom{fxshortcuts}->{$_};
+
+	# effect aliases from .namarc
+	for( keys %{$config->{alias}->{effect}} )
+	{ my $longform = $config->{alias}->{effect}->{$_};
 		 if(effect_index($longform))
 			{
-				$fx_cache->{partial_label_to_full}->{$_} = $longform
+				$fx_cache->{partial_label_to_full}->{$_} =
+				$fx_cache->{partial_label_to_full}->{$longform}
 			}
 		 else 
-			{ logit(__LINE__,'Audio::Nama::Custom','info',
-				"$longform: effect not found, cannot create shortcut") 
+			{ throw("$longform: effect not found, cannot create shortcut") 
 			}
- 	} keys %{$custom{fxshortcuts}};
+ 	} 
+	return unless -r $filename;
+	say("reading user customization file $filename");
+	my %custom;
+	unless (%custom = do $filename) {
+		throw("couldn't parse $filename: $@\n") if $@;
+		return;
+	}
+	logpkg(__FILE__,__LINE__,'debug','customization :', sub{Dumper \%custom });
+	my $prompt;
+	{ no warnings 'redefine';
+		*prompt = $custom{prompt} if $custom{prompt};
+	}
+	my @commands = keys %{ $custom{commands} };
+	for my $cmd(@commands){
+		#my $coderef = gen_coderef($cmd,$custom{commands}{$cmd}) or next;
+		$text->{user_command}->{$cmd} = $custom{commands}{$cmd};
+	}
+	$config->{alias}   = $custom{aliases};
 }
 
 sub gen_coderef {
 	my ($cmd,$code) = @_;
-	my $coderef = eval "sub{ use feature ':5.10'; $code }";
-	say("couldn't parse command $cmd: $@"), return if $@;
+	my $coderef = eval "sub{ use feature ':5.10'; no warnings 'uninitialized'; $code }";
+	throw("couldn't parse command $cmd: $@"), return if $@;
 	$coderef
 }
 1;

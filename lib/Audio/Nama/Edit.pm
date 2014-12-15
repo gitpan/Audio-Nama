@@ -1,6 +1,6 @@
 {
 package Audio::Nama::Edit;
-use Audio::Nama::Globals qw(:singletons);
+use Audio::Nama::Globals qw(:singletons :trackrw);
 
 # each edit is identified by:
 #  -  host track name
@@ -13,7 +13,7 @@ our $VERSION = 1.0;
 use Carp;
 no warnings qw(uninitialized);
 our @ISA;
-use vars qw(%n %by_index %by_name );
+use vars qw($n %by_index %by_name );
 use Audio::Nama::Object qw( 
 				n
 				play_start_mark_name
@@ -25,30 +25,23 @@ use Audio::Nama::Object qw(
 				 );
 
 sub initialize {
-	%n = ();
+	$n = 0;
 	%by_name = ();
 	%by_index = ();
 	@Audio::Nama::edits_data = (); # for save/restore
 }
 
-sub next_n {
-	my ($trackname, $version) = @_;
-	++$n{$trackname}{$version}
-}
+sub next_n { ++$n }
 
 sub new {
 	my $class = shift;	
 	my %vals = @_;
 
 	croak "undeclared field: @_" if grep{ ! $_is_field{$_} } keys %vals;
-	
-	# increment edit version number by host track and host version
-	
-	my $n = next_n(@vals{qw(host_track host_version)});
 
 	my $self = bless 
 		{ 
-			n 		=> $n,
+			n 		=> next_n(),
 		  	fades 	=> [],
 			@_ 
 		}, $class;
@@ -60,7 +53,7 @@ sub new {
 
 	my $name = $self->host_track;
 	my $host = $Audio::Nama::tn{$name};
-	confess( Audio::Nama::project_dir().": missing host_track".  $Audio::Nama::this_track->dump. $self->dump. Audio::Nama::command_process("dumpa")) if !$host;
+	confess( Audio::Nama::project_dir().": missing host_track".  $Audio::Nama::this_track->dump. $self->dump. Audio::Nama::process_command("dumpa")) if !$host;
 
 # Routing:
 #
@@ -78,24 +71,24 @@ sub new {
 
 	# (maybe it already exists)
 	
-	Audio::Nama::Track->new(
+	my $version_mix = Audio::Nama::Track->new(
+
 		name 		=> $self->edit_root_name, # i.e. sax-v5
-	#	rw			=> 'REC',                 # set by ->busify
+	#	rw			=> REC,                 # set by ->busify
 		source_type => 'bus',
 		source_id 	=> 'bus',
 		width		=> 2,                     # default to stereo 
-	#	rec_defeat 	=> 1,                     # set by ->busify
 		group   	=> $self->host_track,     # i.e. sax
 		hide		=> 1,
 	); 
-	$self->version_mix->busify;                                # create sub-bus
+	$version_mix->busify;
 
 	# create host track alias if necessary
 
 	# To ensure that users don't get into trouble, we would like to 
 	# restrict this track:
 	#  - version number must *not* be allowed to change
-	#  - rw setting must be fixed to 'MON' #
+	#  - rw setting must be fixed to PLAY #
 	#  The easiest way may be to subclass the 'set' routine
 	
 	my $host_track_alias = $Audio::Nama::tn{$self->host_alias} // 
@@ -103,7 +96,7 @@ sub new {
 			name 	=> $self->host_alias,
 			version => $host->monitor_version, # static
 			target  => $host->name,
-			rw		=> 'MON',                  # do not REC
+			rw		=> PLAY,                  # do not REC
 			group   => $self->edit_root_name,  # i.e. sax-v5
 			hide 	=> 1,
 		);
@@ -115,7 +108,7 @@ sub new {
 	
 	my $edit_track = Audio::Nama::EditTrack->new(
 		name		=> $self->edit_name,
-		rw			=> 'REC',
+		rw			=> REC,
 		source_type => $host->source_type,
 		source_id	=> $host->source_id,
 		group		=> $self->edit_root_name,  # i.e. sax-v5
@@ -234,7 +227,7 @@ sub destroy {
 	# remove edit track WAV files if we've reached here
 	map{ 
 		my $path = Audio::Nama::join_path(Audio::Nama::this_wav_dir(), $_);
-		say "removing $path";
+		Audio::Nama::pager("removing $path");
 		#unlink $path;
 	} @wavs;
 }
@@ -265,7 +258,7 @@ our (
 	
 
 sub detect_keystroke_p {
-	$engine->{events}->{stdin} = AE::io(*STDIN, 0, sub {
+	$project->{events}->{stdin} = AE::io(*STDIN, 0, sub {
 		&{$text->{term_attribs}->{'callback_read_char'}}();
 		
 		abort_set_edit_points(), return
@@ -294,7 +287,7 @@ sub initialize_edit_points {
     @_edit_points = ();
 }
 sub abort_set_edit_points {
-	say "...Aborting!";
+	Audio::Nama::throw("...Aborting!");
 	reset_input_line();
 	eval_iam('stop');
 	initialize_edit_points();
@@ -306,7 +299,7 @@ sub get_edit_mark {
 	if($p <= 3){  # record mark
 		my $pos = eval_iam('getpos');
 		push @_edit_points, $pos;
-		say " got $names[$p] position ".d1($pos);
+		Audio::Nama::pager(" got $names[$p] position ".d1($pos));
 		reset_input_line();
 		if( $p == 3){ complete_edit_points() }
 		else{
@@ -318,39 +311,39 @@ sub get_edit_mark {
 sub complete_edit_points {
 	@{$setup->{edit_points}} = @_edit_points; # save to global
 	eval_iam('stop');
-	say "\nEngine is stopped\n";
+	Audio::Nama::pager("\nEngine is stopped\n");
 	detect_spacebar();
 	print prompt(), " ";
 }
 }
 sub set_edit_points {
-	$tn{$this_edit->edit_name}->set(rw => 'OFF') if defined $this_edit;
-	say("You must use a playback-only mode to setup edit marks. Aborting"), 
+	$tn{$this_edit->edit_name}->set(rw => OFF) if defined $this_edit;
+	Audio::Nama::throw("You must use a playback-only mode to setup edit marks. Aborting"), 
 		return 1 if Audio::Nama::ChainSetup::really_recording();
-	say("You need stop the engine first. Aborting"), 
+	Audio::Nama::throw("You need stop the engine first. Aborting"), 
 		return 1 if engine_running();
-	say "Ready to set edit points!";
+	Audio::Nama::pager("Ready to set edit points!");
 	sleeper(0.2);
-	say q(Press the "P" key three times to mark positions for:
+	Audio::Nama::pager(q(Press the "P" key three times to mark positions for:
     + play-start
     + record-start
     + record-end
 
-	say q(Press "Q" to quit.)
+Press "Q" to quit.
 
-Engine will start in 2 seconds.);
+Engine will start in 2 seconds.));
 	initialize_edit_points();
- 	$engine->{events}->{set_edit_points} = AE::timer(2, 0, 
+ 	$project->{events}->{set_edit_points} = AE::timer(2, 0, 
 	sub {
 		reset_input_line();
 		detect_keystroke_p();
 		eval_iam('start');
-		say "\n\nEngine is running\n";
+		Audio::Nama::pager("\n\nEngine is running\n");
 		print prompt();
 	});
 }
 sub transfer_edit_points {
-	say("Use 'set_edit_points' command to specify edit region"), return
+	Audio::Nama::throw("Use 'set_edit_points' command to specify edit region"), return
 		 unless scalar @{$setup->{edit_points}};
 	my $edit = shift;
 	Audio::Nama::Mark->new( name => $edit->play_start_name, time => $setup->{edit_points}->[0]);
@@ -374,7 +367,7 @@ sub new_edit {
 
 	# abort for many different reasons
 	
-	say("You must use 'set_edit_points' before creating a new edit. Aborting."),
+	Audio::Nama::throw("You must use 'set_edit_points' before creating a new edit. Aborting."),
 		return unless @{$setup->{edit_points}};
 	my $overlap = grep { 
 		my $fail;
@@ -386,33 +379,33 @@ sub new_edit {
 		my $ret1 = d1($ret);
 		my $nst1 = d1($nst);
 		my $net1 = d1($net);
-		say("New rec-start time $nst1 conflicts with Edit ",
+		Audio::Nama::throw("New rec-start time $nst1 conflicts with Edit ",
 			$_->n, ": $rst1 < $nst1 < $ret1"), $fail++
 			if $rst < $nst and $nst < $ret;
-		say("New rec-end time $net1 conflicts with Edit ",
+		Audio::Nama::throw("New rec-end time $net1 conflicts with Edit ",
 			$_->n, ": $rst1 < $net1 < $ret1"), $fail++
 			if $rst < $net and $net < $ret;
-		say("New rec interval $nst1 - $net1 conflicts with Edit ",
+		Audio::Nama::throw("New rec interval $nst1 - $net1 conflicts with Edit ",
 			$_->n, ": $rst1 - $ret1"), $fail++
 			if $nst < $rst and $ret < $net;
 		$fail
 	} grep{ $_->host_track eq $this_track->name} 
 		values %Audio::Nama::Edit::by_name;
-	say("Aborting."), return if $overlap;
+	Audio::Nama::throw("Aborting."), return if $overlap;
 	my $name = $this_track->name;
 	my $editre = qr($name-v\d+-edit\d+);
-	say("$name: editing of edits is not currently allowed."),
+	Audio::Nama::throw("$name: editing of edits is not currently allowed."),
 		return if $name =~ /-v\d+-edit\d+/;
-	say("$name: must be in MON mode.
+	Audio::Nama::throw("$name: must be in PLAY mode.
 Edits will be applied against current version"), 
-		return unless $this_track->rec_status eq 'MON' 
-			or $this_track->rec_status eq 'REC' and
+		return unless $this_track->rec_status eq PLAY 
+			or $this_track->rec_status eq REC and
 			grep{ /$editre/ } keys %Audio::Nama::Track::by_name;
 
 	# create edit
 	
 	my $v = $this_track->monitor_version;
-	say "$name: creating new edit against version $v";
+	Audio::Nama::pager("$name: creating new edit against version $v");
 	my $edit = Audio::Nama::Edit->new(
 		host_track 		=> $this_track->name,
 		host_version	=> $v,
@@ -426,30 +419,30 @@ Edits will be applied against current version"),
 {my %edit_actions = 
 	(
 		record_edit => sub { 
-			$this_edit->edit_track->set(rw => 'REC');
+			$this_edit->edit_track->set(rw => REC);
 			$this_edit->store_fades(std_host_fades(), edit_fades());
 		},
 		play_edit => sub {
-			$this_edit->edit_track->set(rw => 'MON');
+			$this_edit->edit_track->set(rw => PLAY);
 			$this_edit->store_fades(std_host_fades(), edit_fades());
 		},
 		preview_edit_in => sub {
-			$this_edit->edit_track->set(rw => 'OFF');
+			$this_edit->edit_track->set(rw => OFF);
 			$this_edit->store_fades(std_host_fades());
 		},
 		preview_edit_out => sub {
-			$this_edit->edit_track->set(rw => 'OFF');
+			$this_edit->edit_track->set(rw => OFF);
 			$this_edit->store_fades(reverse_host_fades());
 		},
 	);
 
 sub edit_action {
 	my $action = shift;
-	defined $this_edit or say("Please select an edit and try again."), return;
+	defined $this_edit or Audio::Nama::throw("Please select an edit and try again."), return;
 	set_edit_mode();
-	$this_edit->host_alias_track->set(rw => 'MON'); # all 
+	$this_edit->host_alias_track->set(rw => PLAY); # all 
 	$edit_actions{$action}->();
-	$setup->{changed}++;
+	request_setup();
 
 #   TODO: looping
 # 	my $is_setup = generate_setup(); 
@@ -469,17 +462,17 @@ sub end_edit_mode  	{
 	
 	$mode->{offset_run} = 0; 
 	$mode->{loop_enable} = 0;
-	offset_run_mode(0);	
+	disable_offset_run_mode();	
 	$this_track = $this_edit->host if defined $this_edit;
 	undef $this_edit;
-	$setup->{changed}++ 
+	request_setup();
 }
 sub destroy_edit {
-	say("no edit selected"), return unless $this_edit;
+	Audio::Nama::throw("no edit selected"), return unless $this_edit;
 	my $reply = $text->{term}->readline('destroy edit "'.$this_edit->edit_name.
 		qq(" and all its WAV files?? [n] ));
 	if ( $reply =~ /y/i ){
-		say "permanently removing edit";
+		Audio::Nama::pager("permanently removing edit");
 		$this_edit->destroy;
 	}
 	$text->{term}->remove_history($text->{term}->where_history);
@@ -489,11 +482,11 @@ sub destroy_edit {
 sub set_edit_mode 	{ $mode->{offset_run} = edit_mode_conditions() ?  1 : 0 }
 sub edit_mode		{ $mode->{offset_run} and defined $this_edit}
 sub edit_mode_conditions {        
-	defined $this_edit or say('No edit is defined'), return;
-	defined $this_edit->play_start_time or say('No edit points defined'), return;
-	$this_edit->host_alias_track->rec_status eq 'MON'
-		or say('host alias track : ',$this_edit->host_alias,
-				" status must be MON"), return;
+	defined $this_edit or Audio::Nama::throw('No edit is defined'), return;
+	defined $this_edit->play_start_time or Audio::Nama::throw('No edit points defined'), return;
+	$this_edit->host_alias_track->rec_status eq PLAY
+		or Audio::Nama::throw('host alias track : ',$this_edit->host_alias,
+				" status must be PLAY"), return;
 
 	# the following conditions should never be triggered 
 	
@@ -535,120 +528,133 @@ sub edit_fades {
 					track => $this_edit->edit_name,
 	); 
 }
-
 ### edit region computations
+# pass $args hash with following fields:
+#
+### track values
+# trackname
+# playat
+# region_start
+# region_end
+# setup_length
+#
+### edit values
+# edit_play_start
+# edit_play_end
+#
+### dispatch tables
+# playat_dispatch
+# region_start_dispatch
+# region_end_dispatch
+#
+### output values
+# 
+# new_playat
+# new_region_start
+# new_region_end
 
-{
-# use internal lexical values for the computations
+sub region_start_dispatch { 
+	my ($args, $key) = @_;
+	my %table = (
 
-# track values
-my( $trackname, $playat, $region_start, $region_end, $setup_length);
+    out_of_bounds_near				=> "*",
+    out_of_bounds_far				=> "*",	
 
-# edit values
-my( $edit_play_start, $edit_play_end);
-
-# dispatch table
-my( %playat, %region_start, %region_end);
-
-# test variables
-# my ($index, $new_playat, $new_region_start, $new_region_end);
-
-
-
-%region_start = (
-    out_of_bounds_near				=> sub{ "*" },
-    out_of_bounds_far				=> sub{ "*" },	
-
-	play_start_during_playat_delay	=> sub {$region_start },
-	no_region_play_start_during_playat_delay => sub { 0 },
+	play_start_during_playat_delay	=> $args->{region_start},
+	no_region_play_start_during_playat_delay =>  0,
 
 	play_start_within_region 
-				=> sub {$region_start + $edit_play_start - $playat },
+				=> $args->{region_start} + $args->{edit_play_start} - $args->{playat},
 	no_region_play_start_after_playat_delay
-				=> sub {$region_start + $edit_play_start - $playat },
-);
-%playat = (
-    out_of_bounds_near				=> sub{ "*" },
-    out_of_bounds_far				=> sub{ "*" },	
+				=> $args->{region_start} + $args->{edit_play_start} - $args->{playat},
+	);
+	$table{$key}
+}
+sub playat_dispatch {
+	my ($args, $key) = @_;
+	my %table = (
+    out_of_bounds_near				=> "*",
+    out_of_bounds_far				=> "*",	
 
-	play_start_during_playat_delay	=> sub{ $playat - $edit_play_start },
+	play_start_during_playat_delay	=> $args->{playat} - $args->{edit_play_start},
 	no_region_play_start_during_playat_delay
-									=> sub{ $playat - $edit_play_start },
+									=> $args->{playat} - $args->{edit_play_start},
 
-	play_start_within_region   				=> sub{ 0 },
-	no_region_play_start_after_playat_delay => sub{ 0 },
-
-);
-%region_end = (
-    out_of_bounds_near				=> sub{ "*" },
-    out_of_bounds_far				=> sub{ "*" },	
+	play_start_within_region   				=> 0,
+	no_region_play_start_after_playat_delay => 0,
+	);
+	$table{$key}
+}
+sub region_end_dispatch {
+	my ($args, $key) = @_;
+	my %table = (
+    out_of_bounds_near				=> "*",
+    out_of_bounds_far				=> "*",	
 
 	play_start_during_playat_delay	
-		=> sub { $region_start + $edit_play_end - $playat },
+		=>  $args->{region_start} + $args->{edit_play_end} - $args->{playat},
 	no_region_play_start_during_playat_delay 
-		=> sub {                 $edit_play_end - $playat },
+		=>                  $args->{edit_play_end} - $args->{playat},
 
 	play_start_within_region 
-		=> sub { $region_start + $edit_play_end - $playat },
+		=>  $args->{region_start} + $args->{edit_play_end} - $args->{playat},
 	no_region_play_start_after_playat_delay
-		=> sub {                 $edit_play_end - $playat },
-);
-
-sub new_playat       {       $playat{edit_case()}->() };
-sub new_region_start { $region_start{edit_case()}->() };
-sub new_region_end   
-	{   
-		my $end = $region_end{edit_case()}->();
-		return $end if $end eq '*';
-		$end < $setup_length ? $end : $setup_length
-	};
+		=>                  $args->{edit_play_end} - $args->{playat},
+	);
+	$table{$key}
+}
+sub new_playat {
+	my $args = shift;
+	playat_dispatch($args, edit_case($args));
+}
+sub new_region_start { 
+	my $args = shift;
+	region_start_dispatch($args, edit_case($args));
+}
+sub new_region_end {   
+	my $args = shift;
+	my $end = region_end_dispatch($args, edit_case($args));
+	return $end if $end eq '*';
+	$end < $args->{setup_length} ? $end : $args->{setup_length}
+};
 # the following value will always allow enough time
 # to record the edit. it may be longer than the 
 # actual WAV file in some cases. (I doubt that
 # will be a problem.)
 
 sub edit_case {
+	my $args = shift;
 
 	# logic for no-region case
 	
-    if ( ! $region_start and ! $region_end  )
+    if ( ! $args->{region_start} and ! $args->{region_end}  )
 	{
-		if( $edit_play_end < $playat)
+		if( $args->{edit_play_end} < $args->{playat})
 			{ "out_of_bounds_near" }
-		elsif( $edit_play_start > $playat + $setup_length)
+		elsif( $args->{edit_play_start} > $args->{playat} + $args->{setup_length})
 			{ "out_of_bounds_far" }
-		elsif( $edit_play_start >= $playat)
+		elsif( $args->{edit_play_start} >= $args->{playat})
 			{"no_region_play_start_after_playat_delay"}
-		elsif( $edit_play_start < $playat and $edit_play_end > $playat )
+		elsif( $args->{edit_play_start} < $args->{playat} and $args->{edit_play_end} > $args->{playat} )
 			{ "no_region_play_start_during_playat_delay"}
 	} 
 	# logic for region present case
 	
-	elsif ( defined $region_start and defined $region_end )
+	elsif ( defined $args->{region_start} and defined $args->{region_end} )
 	{ 
-		if ( $edit_play_end < $playat)
+		if ( $args->{edit_play_end} < $args->{playat})
 			{ "out_of_bounds_near" }
-		elsif ( $edit_play_start > $playat + $region_end - $region_start)
+		elsif ( $args->{edit_play_start} > $args->{playat} + $args->{region_end} - $args->{region_start})
 			{ "out_of_bounds_far" }
-		elsif ( $edit_play_start >= $playat)
+		elsif ( $args->{edit_play_start} >= $args->{playat})
 			{ "play_start_within_region"}
-		elsif ( $edit_play_start < $playat and $playat < $edit_play_end)
+		elsif ( $args->{edit_play_start} < $args->{playat} and $args->{playat} < $args->{edit_play_end})
 			{ "play_start_during_playat_delay"}
-		else {carp "$trackname: fell through if-then"}
+		else {carp "$args->{trackname}: fell through if-then"}
 	}
-	else { carp "$trackname: improperly defined region" }
+	else { carp "$args->{trackname}: improperly defined region" }
 }
 
-sub set_edit_vars {
-	my $track = shift;
-	$trackname      = $track->name;
-	$playat 		= $track->playat_time;
-	$region_start   = $track->region_start_time;
-	$region_end 	= $track->region_end_time;
-	$edit_play_start= play_start_time();
-	$edit_play_end	= play_end_time();
-	$setup_length 		= wav_length($track->full_path);
-}
 sub play_start_time {
 	defined $this_edit 
 		? $this_edit->play_start_time 
@@ -659,9 +665,19 @@ sub play_end_time {
 		? $this_edit->play_end_time 
 		: $setup->{offset_run}->{end_time}   # undef unless offset run mode
 }
-sub set_edit_vars_testing {
-	($playat, $region_start, $region_end, $edit_play_start, $edit_play_end, $setup_length) = @_;
-}
+sub edit_vars {
+	my $edit = shift || $this_edit;
+	Audio::Nama::throw("edit is undefined"), return unless $edit;
+	my $track = $Audio::Nama::tn{$edit}->{host_track};
+	{
+	trackname      	=> $track->name,
+	playat 			=> $track->playat_time,
+	region_start   	=> $track->region_start_time,
+	region_end 		=> $track->region_end_time,
+	edit_play_start => $edit->play_start_time(),
+	edit_play_end	=> $edit->play_end_time(),
+	setup_length 	=> $track->wav_length(),
+	}
 }
 
 sub list_edits {
@@ -670,21 +686,21 @@ sub list_edits {
 		map{ $_->dump }
 		sort{$a->n <=> $b->n} 
 		values %Audio::Nama::Edit::by_index;
-	pager(@edit_data);
+	Audio::Nama::pager(@edit_data);
 }
 sub explode_track {
 	my $track = shift;
 	
 	# quit if I am already a mix track
 
-	say($track->name,": I am already a mix track. I cannot explode!"),return
+	Audio::Nama::throw($track->name,": I am already a mix track. I cannot explode!"),return
 		if $track->is_mix_track;
 
 	my @versions = @{ $track->versions };
 
 	# quit if I have only one version
 
-	say($track->name,": Only one version. Skipping."), return
+	Audio::Nama::throw($track->name,": Only one version. Skipping."), return
 		if scalar @versions == 1;
 
 	$track->busify;
@@ -692,7 +708,7 @@ sub explode_track {
 	my $host = $track->name;
 	my @names = map{ "$host-v$_"} @versions;
 	my @exists = grep{ $Audio::Nama::tn{$_} } @names;
-	say("@exists: tracks already exist. Aborting."), return if @exists;
+	Audio::Nama::throw("@exists: tracks already exist. Aborting."), return if @exists;
 	my $current = cwd;
 	chdir this_wav_dir();
 	for my $i (@versions){
@@ -702,7 +718,7 @@ sub explode_track {
 		my $name = "$host-v$i";
 		Audio::Nama::Track->new(
 			name 	=> $name, 
-			rw		=> 'MON',
+			rw		=> MON,
 			group	=> $host,
 		);
 
@@ -721,8 +737,8 @@ sub select_edit {
 
 	# check that conditions are met
 	
-	say("Edit $n not found. Skipping."),return if ! $edit;
- 	say( qq(Edit $n applies to track "), $edit->host_track, 
+	Audio::Nama::throw("Edit $n not found. Skipping."),return if ! $edit;
+ 	Audio::Nama::throw( qq(Edit $n applies to track "), $edit->host_track, 
  		 qq(" version ), $edit->host_version, ".
 This does does not match the current monitor version (",
 $edit->host->monitor_version,"). 
@@ -735,37 +751,37 @@ Set the correct version and try again."), return
 
 	# turn on top-level bus and mix track
 	
-	$edit->host_bus->set(rw => 'REC');
+	$edit->host_bus->set(rw => REC);
 
 	$edit->host->busify;
 
 	# turn off all version level buses/mix_tracks
 	
-	map{ $tn{$_}->set(rw => 'OFF');  # version mix tracks
-	      $bn{$_}->set(rw => 'OFF'); # version buses
+	map{ $tn{$_}->set(rw => OFF);  # version mix tracks
+	      $bn{$_}->set(rw => OFF); # version buses
 	} $this_edit->host_bus->tracks;  # use same name for track/bus
 
 	# turn on what we want
 	
-	$edit->version_bus->set(rw => 'REC');
+	$edit->version_bus->set(rw => REC);
 
 	$edit->version_mix->busify;
 
-	$edit->host_alias_track->set(rw => 'MON');
+	$edit->host_alias_track->set(rw => PLAY);
 
-	$edit->edit_track->set(rw => 'MON');
+	$edit->edit_track->set(rw => PLAY);
 	
 	$this_track = $edit->host;
 }
 sub disable_edits {
 
-	say("Please select an edit and try again."), return
+	Audio::Nama::throw("Please select an edit and try again."), return
 		unless defined $this_edit;
 	my $edit = $this_edit;
 
-	$edit->host_bus->set( rw => 'OFF');
+	$edit->host_bus->set( rw => OFF);
 
-	$edit->version_bus->set( rw => 'OFF');
+	$edit->version_bus->set( rw => OFF);
 
 	# reset host track
 	
@@ -774,11 +790,11 @@ sub disable_edits {
 }
 sub merge_edits {
 	my $edit = $this_edit;
-	say("Please select an edit and try again."), return
+	Audio::Nama::throw("Please select an edit and try again."), return
 		unless defined $edit;
-	say($edit->host_alias, ": track must be MON status.  Aborting."), return
-		unless $edit->host_alias_track->rec_status eq 'MON';
-	say("Use exit_edit_mode and try again."), return if edit_mode();
+	Audio::Nama::throw($edit->host_alias, ": track must be PLAY status.  Aborting."), return
+		unless $edit->host_alias_track->rec_status eq PLAY;
+	Audio::Nama::throw("Use exit_edit_mode and try again."), return if edit_mode();
 
 	# create merge message
 	my $v = $edit->host_version;
@@ -786,13 +802,13 @@ sub merge_edits {
 		map{ my ($edit) = $tn{$_}->name =~ /edit(\d+)$/;
 			 my $ver  = $tn{$_}->monitor_version;
 			 $edit => $ver
-		} grep{ $tn{$_}->name =~ /edit\d+$/ and $tn{$_}->rec_status eq 'MON'} 
+		} grep{ $tn{$_}->name =~ /edit\d+$/ and $tn{$_}->rec_status eq PLAY} 
 		$edit->version_bus->tracks; 
 	my $msg = "merges ".$edit->host_track."_$v.wav w/edits ".
 		join " ",map{$_."v$edits{$_}"} sort{$a<=>$b} keys %edits;
 	# merges mic_1.wav w/mic-v1-edits 1_2 2_1 
 	
-	say $msg;
+	Audio::Nama::pager($msg);
 
 	# cache at version_mix level
 	
@@ -815,83 +831,51 @@ sub merge_edits {
 	$this_track = $edit->host;
 	
 }
-sub show_version_comments {
-	my ($t, @v) = @_;
-	return unless @v;
-	Audio::Nama::pager(map{ $t->version_comment($_) } @v);
-}
-sub add_version_comment {
-	my ($t,$v,$text) = @_;
-	$t->targets->{$v} or say("$v: no such version"), return;	
-	$t->{version_comment}{$v}{user} = $text;
-	$t->version_comment($v);
-}
-sub add_system_version_comment {
-	my ($t,$v,$text) = @_;
-	$t->targets->{$v} or say("$v: no such version"), return;	
-	$t->{version_comment}{$v}{system} = $text;
-	$t->version_comment($v);
-}
-sub remove_version_comment {
-	my ($t,$v) = @_;
-	$t->targets->{$v} or say("$v: no such version"), return;	
-	delete $t->{version_comment}{$v}{user};
-	$t->version_comment($v) || "$v: [comment deleted]\n";
-}
-sub remove_system_version_comment {
-	my ($t,$v) = @_;
-	delete $t->{version_comment}{$v}{system} if $t->{version_comment}{$v}
-}
 # offset recording
 
-# Note that although we use ->adjusted_* methods, all are
+# Note that although we use ->shifted_* methods, all are
 # executed outside of edit mode, so we get unadjusted values.
 
 sub setup_length {
 	my $setup_length;
-	map{  my $l = $_->adjusted_length; $setup_length = $l if $l > $setup_length }
-	grep{ $_-> rec_status eq 'MON' }
+	map{  my $l = $_->shifted_length; $setup_length = $l if $l > $setup_length }
+	grep{ $_-> rec_status eq PLAY }
 	Audio::Nama::ChainSetup::engine_tracks();
 	$setup_length
 }
-sub offset_run {
-	say("This function not available in edit mode.  Aborting."), 
+sub set_offset_run_mark {
+	Audio::Nama::throw("This function not available in edit mode.  Aborting."), 
 		return if edit_mode();
 	my $markname = shift;
 	
 	$setup->{offset_run}->{start_time} = $Audio::Nama::Mark::by_name{$markname}->time;
 	$setup->{offset_run}->{end_time}   = setup_length();
 	$setup->{offset_run}->{mark} = $markname;
-	offset_run_mode(1);
-	$setup->{changed}++;
+	enable_offset_run_mode();
+	request_setup();
 }
 sub clear_offset_run_vars {
 	$setup->{offset_run}->{start_time} = 0;
 	$setup->{offset_run}->{end_time}   = undef;
 	$setup->{offset_run}->{mark} 		   = undef;
 }
-sub offset_run_mode {
-	my $set = shift;
-	given($set){
-		when(0){  
-			undef $mode->{offset_run};
-			clear_offset_run_vars();
-			$setup->{changed}++;
-		}
-		when(1){
-			undef $this_edit; 
-			$mode->{offset_run}++
-		}
-	}
-	$mode->{offset_run} and ! defined $this_edit
+sub enable_offset_run_mode {
+	undef $this_edit; 
+	$mode->{offset_run}++
 }
+sub disable_offset_run_mode {
+	undef $mode->{offset_run};
+	clear_offset_run_vars();
+	Audio::Nama::request_setup();
+}
+sub is_offset_run_mode { $mode->{offset_run} and ! defined $this_edit }
 	
 sub select_edit_track {
 	my $track_selector_method = shift;
-	print("You need to select an edit first (list_edits, select_edit)\n"),
+	Audio::Nama::throw("You need to select an edit first (list_edits, select_edit)\n"),
 		return unless defined $this_edit;
 	$this_track = $this_edit->$track_selector_method; 
-	command_process('show_track');
+	process_command('show_track');
 }
 
 } # end package

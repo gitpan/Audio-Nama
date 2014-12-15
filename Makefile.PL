@@ -9,7 +9,8 @@ use inc::Module::Install;
 	 keywords
 	        'audio',
 	        'recording',
-	        'mixing';
+	        'mixing',
+	        'daw';
 	 repository
 	        'https://github.com/bolangi/nama';
 
@@ -20,6 +21,7 @@ use inc::Module::Install;
 		qw(
 			autodie  0
 			AnyEvent  5.0
+			AnyEvent::TermKey 0
 			Data::Dumper::Concise 0
 			Data::Section::Simple 0
 			Event  0
@@ -33,14 +35,19 @@ use inc::Module::Install;
 			Graph  0
 			IO::Socket  0
 			IO::Select  0
+			JSON::XS	0
 			IPC::Open3  0
 			List::Util 0
+			List::MoreUtils 0
 			Log::Log4perl 0
 			Modern::Perl  0
 			Module::Load::Conditional  0 
 			Parse::RecDescent  0
+			SUPER 0
 			Term::ReadLine::Gnu  0
+			Text::Diff  0
 			Text::Format  0
+			Text::Template 0
 			Time::HiRes  0
 			Try::Tiny  0
 			YAML::Tiny  0

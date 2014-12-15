@@ -1,13 +1,12 @@
-use Test::More qw(no_plan);
+use Test::More tests => 4;
 use strict;
 
 
 BEGIN { 
-	diag ("TESTING $0\n");
 	use_ok('Audio::Nama::Object') ;
 }
-
-diag "testing trivial class Apple";
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag ("TESTING $0\n");
+$ENV{NAMA_VERBOSE_TEST_OUTPUT} and diag "testing trivial class Apple";
 package Apple;
 our @ISA; 
 use Audio::Nama::Object qw(color);
@@ -24,9 +23,9 @@ $apple->set( color => 'red' );
 
 is( $apple->color, 'red', "mutator" ); 
 
-$apple->color = 'blue'; 
+#$apple->color = 'blue'; 
 
-is( $apple->color, 'blue', "lvalue" ); 
+#is( $apple->color, 'blue', "lvalue" ); 
 
 1;
 

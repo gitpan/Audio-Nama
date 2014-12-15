@@ -1,30 +1,71 @@
 =head1 NAME
 
-Nama - Ecasound-based recorder/mixer
+Nama - digital audio workstation
 
 =head1 DESCRIPTION
 
-B<Nama> is a application and library for multitrack
-recording, mixing and mastering using the Ecasound
-audio engine developed by Kai Vehmanen.
+B<Nama> is a lightweight object-oriented digital audio
+workstation that uses the Ecasound realtime audio engine.
 
-Nama builds signal processing graphs for Ecasound 
-while offering the user familiar concepts of
-of track, bus, effect, preset, send, insert, mark 
-and region, as well as various templates 
-and tools for automating project setup.
+New projects begin with a mixer, may include common audio
+objects including track, bus, effect, send, insert, mark,
+region, fade, edit and sequence. 
 
-Wavform editing and display is provided 
-by external applications, such as Audacity or Mhwaveedit.
+=head2 Command language and help system
 
-A simple and convenient GUI is provided,
-more powerful capabilities available
-at the command prompt. 
+Nama has its own command language. Commands have full names
+and shortcuts, and tab completion may be used. A "for" loop
+allows commands to be iterated over multiple tracks. Tracks
+may be designated as a list, by the name of their bus, or by
+the name of a user-defined group. Effect chains provide for
+adding and removing effects as a group.
 
-Nama runs under JACK and ALSA audio frameworks,
-automatically detects LADSPA and LV2 plugins, 
-uses Git for project management.
-supports Ladish Level 1 session handling.
+Nama has the concept of a currently selected object.  At any
+time, there is usually a current bus, current track and
+current effect. Track commands will act on the current
+track, bus commands will act on the currently selected bus.
+
+The help system provides searchable access to documentation
+for all Nama commands and shortcuts, and for LADSPA, LV2 and
+Ecasound effects.
+
+In addition to executing its own commands, Nama will pass
+commands to Ecasound, Midish, the Perl interpreter and the
+shell. 
+
+=head2 Backend
+
+Nama creates signal processing graphs for the Ecasound
+engine; applies fades, effects and edits to the audio
+streams; and manages successive configure-run cycles. If
+jackd is running, Nama will automatically map soundcard IO
+via JACK. 
+
+When a user command requires it, Nama automatically
+reconfigures the Ecasound engine. While the engine is
+running Nama accepts parameter control inputs from GUI
+sliders, hotkeys, text commands, MIDI devices, OSC packets,
+and preprogrammed envelopes.
+
+=head2 GUI
+
+Nama's GUI will display if Tk is available.  Nama can spawn
+Audacity or MHWaveedit to view/edit selected waveforms. 
+
+=head2 Project management
+
+Project state is serialized as JSON files and managed by
+Git. Projects can be branched, and easily restored to earlier
+states.  Nama uses Git to manage 
+
+=head2 Project reuse
+
+Three types of templates are available to reuse project
+components: effect chains, effect profiles, and project
+templates. An effect chain is a series of effects with
+parameters.  An effect profile includes one or more tracks
+with their effects and inserts. Nama's mastering network is
+stored as an effect profile.
 
 =head1 INSTALLATION
 
@@ -33,56 +74,36 @@ supports Ladish Level 1 session handling.
 The following command will install Nama, automatically
 pulling in all Perl modules required to run Nama in text mode:
 
+		cpanm Audio::Nama
+
+However if you don't have cpanm, this should still work:
+
 		PERL_MM_USE_DEFAULT=1 cpan Audio::Nama
 
 To use the GUI, you will need to install Tk:
 
-		cpan Tk
+		cpanm Tk
 
 You may optionally install Audio::Ecasound to run Ecasound
 via libecasoundc:
 
-		cpan Audio::Ecasound
+		cpanm Audio::Ecasound
 
 You can browse the sources or download a tarball via:
 
 		http://search.cpan.org/dist/Audio-Nama
 
-=head2 Installing Nama from your distribution's package manager
+=head2 Building from Source
 
-=head3 Debian (testing, unstable) 
-
-You can install Nama from Debian by typing:
-
-		apt-get install nama
-
-or
-
-		aptitude nama
-
-To use Nama's GUI, you will also need to install Tk:
-
-		apt-get install perl-tk
-
-=head3 Ubuntu (lucid, maverick)
-
-Use Ubuntu's package Add/Remove tool.
-
-=head3 Arch Linux
-	
-=head2 Build from Source
-
-If you want to inspect or modify Nama's internals,
-you can pull the source code as follows: 
+If you want to inspect or modify Nama's internals, or keep
+up with new developments, you can pull the source code as
+follows: 
 
 		git clone git://github.com/bolangi/nama.git
 
 Consult the F<BUILD> file for build instructions.
 
 =head2 Non-Perl Dependencies
-
-(These dependencies are pulled in automatically if you
-install Nama in a Debian system.)
 
 The Ecasound audio processing libraries should be installed.
 Ecasound should be compiled with support for LADSPA, libsndfile,
@@ -103,13 +124,13 @@ in a reasonably flat starting configuration.
 provided that the user installs the plugins
 listed in the default configuration file .namarc.
 
-Git is required to utilize Nama's source control 
-and undo features. 
+Git is required to utilize Nama's project 
+management and  and undo features. 
 
 =head2 COPYRIGHT
 
 Unless specified otherwise, this code is 
-2003 - 2012, copyright Joel Roth
+2003 - 2014, copyright Joel Roth
 
 All rights are reserved except as provided by the Gnu Public
 License, version 3, as detailed in the file COPYING provided
