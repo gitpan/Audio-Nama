@@ -521,7 +521,7 @@ check_setup('Mixdown in mastering mode - JACK');
 process_command('mixoff; master_off');
 process_command('for 4 5 6 7 8; remove_track quiet');
 process_command('Master; send 1');
-process_command('asub Horns; sax move_to_bus Horns; sax stereo');
+process_command('add_bus Horns; sax move_to_bus Horns; sax stereo');
 
 $expected_setup_lines = <<EXPECTED;
 
@@ -540,7 +540,7 @@ $expected_setup_lines = <<EXPECTED;
 -a:4 -o:loop,Master_in
 EXPECTED
 gen_alsa();
-check_setup('Sub-bus - ALSA');
+check_setup('Bus - ALSA');
 gen_jack();
 
 $expected_setup_lines = <<EXPECTED;
@@ -554,10 +554,10 @@ $expected_setup_lines = <<EXPECTED;
 -a:3 -o:loop,sax_out
 -a:4 -o:loop,Master_in
 EXPECTED
-check_setup('Sub-bus - JACK');
+check_setup('Bus - JACK');
 
 process_command('remove_bus Horns');
-process_command('add_send_bus_cooked Vo 5');
+process_command('add_submix_cooked Vo 5');
 $expected_setup_lines = <<EXPECTED;
 
 -a:1,4 -i:loop,sax_out
@@ -570,7 +570,7 @@ $expected_setup_lines = <<EXPECTED;
 -a:4 -o:jack_multi,system:playback_5,system:playback_6
 EXPECTED
 gen_jack();
-check_setup('Send bus - soundcard - JACK');
+check_setup('Create submix with output at soundcard - JACK');
 process_command('remove_bus Vo');
 process_command('sax mono');
 
@@ -670,7 +670,7 @@ add_bunch all Stereo L_front R_front Center Subwoofer L_inverted Right R-L L_rea
 Stereo stereo
 
 # create a bus for summing (inverted L) + R
-add_sub_bus R-L
+add_bus R-L
 
 # we'll do our own routing for these tracks
 
@@ -778,7 +778,7 @@ load_project(name => "$test_project-sendbus-cooked", create => 1);
 do_script(' add mic
             add guitar
             for 3 4; mon
-            add_send_bus_cooked ear 7
+            add_submix_cooked ear 7
 ');
 $expected_setup_lines = <<EXPECTED;
 # general
@@ -837,12 +837,11 @@ $expected_setup_lines = <<EXPECTED;
 -a:4 -o:loop,guitar_out
 -a:5,6 -o:jack_multi,system:playback_7,system:playback_8
 EXPECTED
-check_setup('Submix, AKA add_send_bus_cooked - JACK');
+check_setup('Submix, AKA add_submix_cooked - JACK');
 
-load_project(name => "add_send_bus_raw", create => 1);
+load_project(name => "add_submix_raw", create => 1);
 
-process_command("add_tracks mic guitar; for 3 4; mon;; 4 source 2; stereo; asbr raw-user 7");
-
+process_command("add_tracks mic guitar; for 3 4; mon;; 4 source 2; stereo; add_submix_raw raw-user 7"); 
 $expected_setup_lines = <<EXPECTED;
 
 
@@ -870,7 +869,7 @@ EXPECTED
 
 force_jack();
 process_command('gen');
-check_setup('Send Bus, Raw - JACK');
+check_setup('Submix, raw - JACK');
 
 force_alsa();
 process_command('gen');

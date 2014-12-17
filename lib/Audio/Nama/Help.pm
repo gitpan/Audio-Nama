@@ -521,14 +521,14 @@ GROUP
 
 bus => <<BUS,
    list_buses,          lbs   - list bus data
-   add_send_bus_raw,    asbr  - create bus and slave tracks for 
+   add_submix_raw,      asr   - create bus and slave tracks for 
                                 sending pre-fader track signals
-   add_send_bus_cooked, asbc  - as above, for post-fader signals
-   update_send_bus,     usb   - refresh send bus track list
+   add_submix_cooked, asc     - as above, for post-fader signals
+   update_submix,     usm     - refresh send bus track list
    remove_bus,                - remove a bus
-   add_sub_bus,         asub  - create a sub-bus feeding a regular user track
+   add_bus,           abs     - create a sub-bus feeding a regular user track
                                 of the same name
-                                example: add_sub_bus Strings 
+                                example: add_bus Strings 
                                          add_tracks violin cello bass
                                          for cello violin bass; move_to_bus Strings
 

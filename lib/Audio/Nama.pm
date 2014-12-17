@@ -1,7 +1,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = "1.201";
+$VERSION = "1.202";
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -512,14 +512,12 @@ source:
     ! for more information).
     !
     source jack 
-    ! This leaves the track input exposed as a JACK ports
+    ! This leaves the track input exposed as JACK ports
     ! such as Nama:sax_in_1 for manual connection.
     !
     source kit.ports
-    ! If there exists a file, kit.ports, 
-    ! in the Nama project root directory, 
-    ! the JACK ports listed in that file
-    ! will be connected to that input.
+    ! The JACK ports listed in the file kit.ports (if it exists)
+    ! will be connected to the track input.
     !
     ! Ports are listed pairwise in the .ports files for stereo tracks.
     ! This is convenient for use with the Hydrogen drumkit, 
@@ -1227,25 +1225,24 @@ list_history:
   what: List the command history. Every project stores its own command history.
   short: lh
   parameters: none
-add_user:
+add_submix_cooked:
   type: bus
-  what: Create a custom mix including all tracks in bus "Main"
-  parameters: <string:name> <destination>
-  short: au add_send_bus_cooked asbc 
+  what: Create a submix using all tracks in bus "Main"
+  short: 
   parameters: <string:name> <destination>
   example: |
-    add_user front_of_house 7
+    add_submix_cooked front_of_house 7
     ! send a custom mix named "front_of_house"
     ! to soundcard channels 7/8
-add_send_bus_raw:
+add_submix_raw:
   type: bus
-  what: Add a send bus that copies all user tracks' unprocessed inputs
-  short: asbr
+  what: Add a submix using tracks in Main bus (unprocessed signals, lower latency)
+  short: asr
   parameters: <string:name> <destination>
   example: |
     asbr Reverb jconv # Add a raw send bus called Reverb, with its output
                       # going to the JACK client jconv .
-add_sub_bus:
+add_bus:
   type: bus
   what: Add a sub bus. This is a bus, as known from other DAWs. The default output goes to a mix track and that is routed to the mixer (the Master track). All busses begin with a capital letter!
   short: asub
@@ -1254,13 +1251,13 @@ add_sub_bus:
     asub Brass # Add a sub bus Brass, which is routed to tne mixer.
     asub special csound # Add a sub bus, which is routed to the JACK client
                         # csound.
-update_send_bus:
+update_submix:
   type: bus
   what: Include tracks added since the send bus was created.
-  short: usb
+  short: usm
   parameters: <string:name>
   example: |
-    update_send_bus Reverb # Include new tracks in the Reverb send bus.
+    update_submix Reverb # Include new tracks in the Reverb send bus.
 remove_bus:
   type: bus
   what: Remove a bus.
@@ -1830,18 +1827,18 @@ set_bus_engine_group:
   what: set the current bus's engine affiliation
   short: sbeg
   parameters: <string:engine_name>
-select_user:
+select_submix:
   type: bus
-  short: user
+  short: ssm
   what: Set the target for the trim command
-  parameters: <string:send_bus_name>
-trim_user:
+  parameters: <string:submix_name>
+trim_submix:
   type: bus
-  what: control a send-bus fader
-  short: trim
+  what: control a submix fader
+  short: trim tsm
   example: |
     ! reduce vol of current track in in_ear_monitor by 3dB
-    user in_ear_monitor1
+    select_submix in_ear_monitor
     trim vol - 3 
 nickname_effect:
   type: effect
@@ -1863,10 +1860,6 @@ nickname_effect:
     ifx reverb2 reverb # insert another reverb effect (reverb3) before reverb2
     rfx reverb3        # remove reverb3
     rfx reverb         # removes reverb2, as it is the sole remain reverb effect
-list_nickname_definitions:
-  type: effect
-  short: lnd
-  what: list effect nicknames
 delete_nickname_definition:
   type: effect
   short: dnd
@@ -1888,7 +1881,7 @@ remove_nickname:
     mfx reverb 1 3 # Error: effect named "reverb" not found on current track
 list_nickname_definitions:
   type: effect
-  what: list all defined nicknames
+  what: list defined nicknames
   short: lnd
   parameters: none
 set_effect_name:
@@ -2744,15 +2737,15 @@ list_history: _list_history {
 	my %seen;
 	Audio::Nama::pager( grep{ ! $seen{$_} and $seen{$_}++ } @history );
 }
-add_user: _add_user bus_name destination {
-	Audio::Nama::add_send_bus( $item{bus_name}, $item{destination}, 'cooked' );
+add_submix_cooked: _add_submix_cooked bus_name destination {
+	Audio::Nama::add_submix( $item{bus_name}, $item{destination}, 'cooked' );
 	1;
 }
-add_send_bus_raw: _add_send_bus_raw bus_name destination {
-	Audio::Nama::add_send_bus( $item{bus_name}, $item{destination}, 'raw' );
+add_submix_raw: _add_submix_raw bus_name destination {
+	Audio::Nama::add_submix( $item{bus_name}, $item{destination}, 'raw' );
 	1;
 }
-add_sub_bus: _add_sub_bus bus_name { Audio::Nama::add_sub_bus( $item{bus_name}); 1 }
+add_bus: _add_bus bus_name { Audio::Nama::add_bus( $item{bus_name}); 1 }
 existing_bus_name: bus_name {
 	if ( $Audio::Nama::bn{$item{bus_name}} ){  $item{bus_name} }
 	else { Audio::Nama::throw("$item{bus_name}: no such bus"); undef }
@@ -2767,8 +2760,8 @@ destination: jack_port
 remove_bus: _remove_bus existing_bus_name { 
 	$Audio::Nama::bn{$item{existing_bus_name}}->remove; 1; 
 }
-update_send_bus: _update_send_bus existing_bus_name {
- 	Audio::Nama::update_send_bus( $item{existing_bus_name} );
+update_submix: _update_submix existing_bus_name {
+ 	Audio::Nama::update_submix( $item{existing_bus_name} );
  	1;
 }
 set_bus: _set_bus key someval { $Audio::Nama::bn{$Audio::Nama::this_bus}->set($item{key} => $item{someval}); 1 }
@@ -3379,10 +3372,10 @@ set_bus_engine_group: _set_bus_engine_group ident {
 	$Audio::Nama::bn{$Audio::Nama::this_bus}->set(engine_group => $item{ident});
  	Audio::Nama::pager("$Audio::Nama::this_bus: bus engine group set to $item{ident}");
 }
-select_user: _select_user existing_bus_name { 
+select_submix: _select_submix existing_bus_name { 
 	$Audio::Nama::this_user = $Audio::Nama::bn{$item{existing_bus_name}}
 }
-trim_user: _trim_user effect parameter sign(?) value { 
+trim_submix: _trim_submix effect parameter sign(?) value { 
 	my $real_track = join '_', $Audio::Nama::this_user->name, $Audio::Nama::this_track->name;
 	Audio::Nama::pager("real track: $real_track\n");
 	my $FX = $Audio::Nama::tn{$real_track}->first_effect_of_type(Audio::Nama::full_effect_code($item{effect}));
@@ -3530,10 +3523,10 @@ command: dump_group
 command: dump_all
 command: dump_io
 command: list_history
-command: add_user
-command: add_send_bus_raw
-command: add_sub_bus
-command: update_send_bus
+command: add_submix_cooked
+command: add_submix_raw
+command: add_bus
+command: update_submix
 command: remove_bus
 command: list_buses
 command: set_bus
@@ -3632,10 +3625,9 @@ command: new_engine
 command: select_engine
 command: set_track_engine_group
 command: set_bus_engine_group
-command: select_user
-command: trim_user
+command: select_submix
+command: trim_submix
 command: nickname_effect
-command: list_nickname_definitions
 command: delete_nickname_definition
 command: remove_nickname
 command: list_nickname_definitions
@@ -3780,10 +3772,10 @@ _dump_group: /dump_group\b/ | /dumpg\b/ { "dump_group" }
 _dump_all: /dump_all\b/ | /dumpa\b/ { "dump_all" } 
 _dump_io: /dump_io\b/ { "dump_io" } 
 _list_history: /list_history\b/ | /lh\b/ { "list_history" } 
-_add_user: /add_user\b/ | /au\b/ | /add_send_bus_cooked\b/ | /asbc\b/ { "add_user" } 
-_add_send_bus_raw: /add_send_bus_raw\b/ | /asbr\b/ { "add_send_bus_raw" } 
-_add_sub_bus: /add_sub_bus\b/ | /asub\b/ { "add_sub_bus" } 
-_update_send_bus: /update_send_bus\b/ | /usb\b/ { "update_send_bus" } 
+_add_submix_cooked: /add_submix_cooked\b/ { "add_submix_cooked" } 
+_add_submix_raw: /add_submix_raw\b/ | /asr\b/ { "add_submix_raw" } 
+_add_bus: /add_bus\b/ | /asub\b/ { "add_bus" } 
+_update_submix: /update_submix\b/ | /usm\b/ { "update_submix" } 
 _remove_bus: /remove_bus\b/ { "remove_bus" } 
 _list_buses: /list_buses\b/ | /lbs\b/ { "list_buses" } 
 _set_bus: /set_bus\b/ | /sbs\b/ { "set_bus" } 
@@ -3882,10 +3874,9 @@ _new_engine: /new_engine\b/ | /neg\b/ { "new_engine" }
 _select_engine: /select_engine\b/ | /seg\b/ { "select_engine" } 
 _set_track_engine_group: /set_track_engine_group\b/ | /steg\b/ { "set_track_engine_group" } 
 _set_bus_engine_group: /set_bus_engine_group\b/ | /sbeg\b/ { "set_bus_engine_group" } 
-_select_user: /select_user\b/ | /user\b/ { "select_user" } 
-_trim_user: /trim_user\b/ | /trim\b/ { "trim_user" } 
+_select_submix: /select_submix\b/ | /ssm\b/ { "select_submix" } 
+_trim_submix: /trim_submix\b/ | /trim\b/ | /tsm\b/ { "trim_submix" } 
 _nickname_effect: /nickname_effect\b/ | /nfx\b/ | /nick\b/ { "nickname_effect" } 
-_list_nickname_definitions: /list_nickname_definitions\b/ | /lnd\b/ { "list_nickname_definitions" } 
 _delete_nickname_definition: /delete_nickname_definition\b/ | /dnd\b/ { "delete_nickname_definition" } 
 _remove_nickname: /remove_nickname\b/ | /rnick\b/ { "remove_nickname" } 
 _list_nickname_definitions: /list_nickname_definitions\b/ | /lnd\b/ { "list_nickname_definitions" } 

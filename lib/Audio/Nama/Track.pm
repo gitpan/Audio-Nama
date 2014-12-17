@@ -828,7 +828,7 @@ sub set_track_class {
 }
 sub busify {
 	my $track = shift;
-	Audio::Nama::add_sub_bus($track->name) unless $track->is_system_track;
+	Audio::Nama::add_bus($track->name) unless $track->is_system_track;
 }
 sub unbusify {
 	my $track = shift;

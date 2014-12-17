@@ -325,7 +325,7 @@ sub serialize_and_write {
 			qr/ ^ 			# beginning anchor
 			([\%\@\$]) 		# first character, sigil
 			([\w:]+)		# identifier, possibly perl namespace 
-			(?:->{(\w+)})?  # optional hash key for new hash-singleton vars
+			(?:->\{(\w+)})?  # optional hash key for new hash-singleton vars
 			$ 				# end anchor
 			/x;
 sub serialize {
@@ -424,7 +424,11 @@ sub yaml_in {
 	my $input = shift;
 	my $yaml = $input =~ /\n/ # check whether file or text
 		? $input 			# yaml text
-		: read_file($input);	# file name
+		: do
+			{
+				logpkg(__FILE__,__LINE__,'debug',"filename: $input"); 
+				read_file($input);	# file name
+			};
 	if ($yaml =~ /\t/){
 		croak "YAML file: $input contains illegal TAB character.";
 	}
