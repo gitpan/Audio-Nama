@@ -1,7 +1,7 @@
 package Audio::Nama;
 require 5.10.0;
 use vars qw($VERSION);
-$VERSION = "1.202";
+$VERSION = "1.203";
 use Modern::Perl;
 #use Carp::Always;
 no warnings qw(uninitialized syntax);
@@ -205,7 +205,7 @@ help:
     help mfx # display help on modify_effect - shortcut mfx
 help_effect:
   type: help
-  what: Display detailed help on a LADSPA or LV2 effect or ask a note to consult the Ecasound manpage for Ecasound's internal effects. For LADSPA and LV2 effects use either the analyseplugin oder analyselv2.
+  what: Display detailed help on LADSPA or LV2 effects.
   short: hfx he
   parameters: <string:label> | <integer:unique_id>
   example: |
@@ -234,7 +234,10 @@ exit:
   parameters: none
 memoize:
   type: general
-  what: Enable WAV directory caching, so Nama won't have to scan the entire project folder for new fiels after every run.
+  what: |
+    Enable WAV directory caching, so Nama won't have to scan
+    the entire project folder for new files after every run.
+    (default)
   parameters: none
 unmemoize:
   type: general
@@ -270,13 +273,13 @@ setpos:
   example: setpos 65.5 # set current position to 65.5 seconds.
 forward:
   type: transport
-  what: Move playback position forwards (in seconds). Oldschool forwarding.
+  what: Move playback position forwards (in seconds).
   short: fw
   parameters: <float:increment_seconds>
   example: fw 23.7 # forward 23.7 seconds from the current position.
 rewind:
   type: transport
-  what: Move playback position backwards (in seconds). Oldschool rewind.
+  what: Move playback position backwards (in seconds).
   short: rw
   parameters: <float:decrement_seconds>
   example: rewind 6.5 # Move backwards 6.5 seconds from the current position.
@@ -1245,22 +1248,20 @@ add_submix_raw:
 add_bus:
   type: bus
   what: Add a sub bus. This is a bus, as known from other DAWs. The default output goes to a mix track and that is routed to the mixer (the Master track). All busses begin with a capital letter!
-  short: asub
+  short: abs
   parameters: <string:name> [ <string:track_name> | <string:jack_client> | <integer:soundcard_channel> ]
   example: |
-    asub Brass # Add a sub bus Brass, which is routed to tne mixer.
-    asub special csound # Add a sub bus, which is routed to the JACK client
-                        # csound.
+    abs Brass          # Add a bus, "Brass", routed to the Main bus (e.g. mixer)
+    abs special csound # Add a bus, "special" routed to JACK client "csound"
 update_submix:
   type: bus
-  what: Include tracks added since the send bus was created.
+  what: Include tracks added since the submix was created.
   short: usm
   parameters: <string:name>
-  example: |
-    update_submix Reverb # Include new tracks in the Reverb send bus.
+  example: update_submix Reverb # Include new tracks in the Reverb submix
 remove_bus:
   type: bus
-  what: Remove a bus.
+  what: Remove a bus or submix
   parameters: <string:bus_name>
 list_buses:
   type: bus
@@ -1322,15 +1323,15 @@ bypass_effects:
   parameters: [ <string:effect_id_1> <string:effect_id_2>... | 'all' ]
   example: |
     bypass all # Bypass all effects on the current track, except vol and pan.
-    bypass AF # Only bypass the effecht with the unique ID AF.
+    bypass AF  # Only bypass the effect with the unique ID AF.
 bring_back_effects:
   type: effect
   what: Restore effects. If no parameter is given, the default is to restore the current effect.
   short: restore_effects bbfx
   parameters: [ <string:effect_id_1> <string:effect_id_2> ... | 'all' ]
   example: |
-    bbfx # Restore the current effect.
-    restore_effect AF # Restore the effect with the unique ID AF.
+    bbfx                   # Restore the current effect.
+    restore_effect AF      # Restore the effect with the unique ID AF.
     bring_back_effects all # Restore all effects.
 new_effect_profile:
   type: effect
@@ -1410,10 +1411,10 @@ add_fade:
   short: afd fade
   parameters: ( in | out ) marks/times (see examples)
   example: |
-    fade in mark1 # Fade in,starting at mark1 and using the default fade time
-                  # of 0.5 seconds.
-    fade out mark2 2 # Fade out over 2 seconds, starting at mark2 .
-    fade out 2 mark2 # Fade out over 2 seconds, ending at mark2 .
+    fade in mark1       # Fade in,starting at mark1 and using the 
+    !                    # default fade time of 0.5 seconds.
+    fade out mark2 2    # Fade out over 2 seconds, starting at mark2 .
+    fade out 2 mark2    # Fade out over 2 seconds, ending at mark2 .
     fade in mark1 mark2 # Fade in starting at mark1, ending at mark2 .
 remove_fade:
   type: effect 
@@ -1422,7 +1423,7 @@ remove_fade:
   parameters: <integer:fade_index_1> [ <integer:fade_index_2> ] ...
   example: |
     list_fade # Print a list of all fades and their tracks.
-    rfd 2 # Remove the fade with the index (n) 2.
+    rfd 2     # Remove the fade with the index (n) 2.
 list_fade:
   type: effect
   what: List all fades.
@@ -1477,7 +1478,7 @@ set_system_version_comment:
   parameters: <string:comment>
 midish_command:
   type: midi
-  what: Send the command text to  the midish MIDI sequencer. Midish must be installed and enabled in namarc. See the midish manpage and fullonline documentation for more.
+  what: Send the command text to the midish MIDI sequencer. Midish must be installed and enabled in namarc. See the midish manpage and fullonline documentation for more.
   short: m
   parameters: <string:command_text>
   example: m tracknew my_midi_track # create a new MIDI track in midish.
@@ -1679,14 +1680,12 @@ for:
   what: Execute command(s) for several tracks.
   parameters: <string:track_name_1> [ <string:track_name_2>} ... ; <string:commands>
   example: |
-    for piano guitar;vol / 2;pan 75 # For both piano and guitar adjust the
-        # the volume by a factor of 1/2 and move the tracks to the right.
-    for snare kick toms cymbals;mtb Drums # for each of these tracks do mtb Drums.
-      # this will move all those tracks to the sub bus Drums in one command.
+    for piano guitar; vol - 3; pan 75      # reduce volume and pan right
+    for snare kick toms cymbals; mtb Drums # move tracks to bus Drums
 git:
   type: project
   what: execute git command in the project directory
-  parameters: <string:command_name> [argument,...]
+  parameters: <string:command_name> [arguments]
 edit_rec_setup_hook:
   type: track
   what: edit the REC hook script for current track
@@ -1732,7 +1731,7 @@ append_to_sequence:
   parameters: [<string:name1>,...]
   example: |
     asq chorus # append chorus track to current sequence
-    asq # append current track to current sequence
+    asq        # append current track to current sequence
 insert_in_sequence:
   type: sequence
   short: isq
@@ -1854,7 +1853,8 @@ nickname_effect:
     mfx reverb 1 2     # works, because current track has one effect named "reverb"
     afx reverb         # add another Plate effect, gets name "reverb2"
     
-    rfx reverb         # Error, multiple reverb effects are present on this track.  Please use a numerical suffix.
+    rfx reverb         # Error, multiple reverb effects are present on this 
+    !                  # track. Please use a numerical suffix.
     mfx reverb2 1 3    # modify second reverb effect
     rfx reverb1        # removes reverb1
     ifx reverb2 reverb # insert another reverb effect (reverb3) before reverb2
@@ -1865,10 +1865,10 @@ delete_nickname_definition:
   short: dnd
   what: delete a nickname definition. Previously named effects keep their names.
   example: |
-    afx Plate  # add Plate effect
-    nick reverb# name it "reverb", and create a nickname for Plate
-    dnd reverb # removes nickname definition
-    afx reverb # error
+    afx Plate   # add Plate effect
+    nick reverb # name it "reverb", and create a nickname for Plate
+    dnd reverb  # removes nickname definition
+    afx reverb  # error
 remove_nickname:
   type: effect
   what: remove the "name" attribute of the current effect
@@ -1988,6 +1988,10 @@ parameter_value: '*' | value
 value: /[+-]?([\d_]+(\.\d*)?|\.\d+)([eE][+-]?\d+)?/
 float: /\d+\.\d+/   
 op_id: /[A-Z]+/		
+existing_op_id: op_id
+{
+	my $FX; $FX = Audio::Nama::fxn($item[-1]) and $FX->id 
+}
 parameter: /\d+/	
 dd: /\d+/			
 shellish: /"(.+)"/ { $1 }
@@ -2659,7 +2663,8 @@ fx_alias3: ident {
 	map{ $_->id } 
 	grep { $_->surname eq $item{ident} } $Audio::Nama::this_track->fancy_ops_o;
 }
-remove_target: op_id | fx_pos | fx_surname | fx_name
+remove_target: existing_op_id | fx_pos | fx_surname | fx_name
+	{ $item[-1] or print("no effect object found\n"), return 0}
 fx_alias: fx_alias2 | fx_alias1
 fx_nick: ident { $Audio::Nama::fx->{alias}->{$item{ident}} }
 fx_alias1: op_id
@@ -3774,7 +3779,7 @@ _dump_io: /dump_io\b/ { "dump_io" }
 _list_history: /list_history\b/ | /lh\b/ { "list_history" } 
 _add_submix_cooked: /add_submix_cooked\b/ { "add_submix_cooked" } 
 _add_submix_raw: /add_submix_raw\b/ | /asr\b/ { "add_submix_raw" } 
-_add_bus: /add_bus\b/ | /asub\b/ { "add_bus" } 
+_add_bus: /add_bus\b/ | /abs\b/ { "add_bus" } 
 _update_submix: /update_submix\b/ | /usm\b/ { "update_submix" } 
 _remove_bus: /remove_bus\b/ { "remove_bus" } 
 _list_buses: /list_buses\b/ | /lbs\b/ { "list_buses" } 

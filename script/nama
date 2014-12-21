@@ -845,29 +845,29 @@ The return value will be the name of the current track.
 
 =over 8
 
-C<help> [ <integer:help_topic_index> | <string:help_topic_name> | <string:command_name> ]
+help [ <integer:help_topic_index> | <string:help_topic_name> | <string:command_name> ]
 
-C<help marks # display the help category marks and all commands containing marks
+help marks # display the help category marks and all commands containing marks
 help 6 # display help on the effects category
 help mfx # display help on modify_effect - shortcut mfx
->
+
 
 =back
 
-=head4 B<help_effect> (hfx he) - Display detailed help on a LADSPA or LV2 effect or ask a note to consult the Ecasound manpage for Ecasound's internal effects. For LADSPA and LV2 effects use either the analyseplugin oder analyselv2.
+=head4 B<help_effect> (hfx he) - Display detailed help on LADSPA or LV2 effects.
 
 =over 8
 
-C<help_effect> <string:label> | <integer:unique_id>
+help_effect <string:label> | <integer:unique_id>
 
-C<help_effect 1970 
+help_effect 1970 
 # display help on Fons Adriaensen's parametric EQ (LADSPA)
 help_effect etd 
 # prints a short message to consult Ecasound manpage, 
 # where the etd chain operator is documented.
 hfx lv2-vocProc 
 # display detailed help on the LV2 VocProc effect
->
+
 
 =back
 
@@ -875,14 +875,14 @@ hfx lv2-vocProc
 
 =over 8
 
-C<find_effect> <string:keyword1> [ <string:keyword2>... ]
+find_effect <string:keyword1> [ <string:keyword2>... ]
 
-C<find_effect compressor 
+find_effect compressor 
 # List all effects containing "compressor" in their name or parameters
 fe feedback 
 # List all effects matching "feedback" 
 # (for example a delay with a feedback parameter)
->
+
 
 =back
 
@@ -892,15 +892,18 @@ fe feedback
 
 =over 8
 
-C<exit> 
+exit 
 
 =back
 
-=head4 B<memoize> - Enable WAV directory caching, so Nama won't have to scan the entire project folder for new fiels after every run.
+=head4 B<memoize> - Enable WAV directory caching, so Nama won't have to scan
+the entire project folder for new files after every run.
+(default)
+
 
 =over 8
 
-C<memoize> 
+memoize 
 
 =back
 
@@ -908,7 +911,7 @@ C<memoize>
 
 =over 8
 
-C<unmemoize> 
+unmemoize 
 
 =back
 
@@ -918,7 +921,7 @@ C<unmemoize>
 
 =over 8
 
-C<stop> 
+stop 
 
 =back
 
@@ -926,12 +929,12 @@ C<stop>
 
 =over 8
 
-C<start> 
+start 
 
-C<rec   # prepare the curent track to be recorded.
+rec   # prepare the curent track to be recorded.
 start # Start the engine/transport rolling (play now!)
 stop  # Stop the engine, cleanup, prepare to review
->
+
 
 =back
 
@@ -939,11 +942,11 @@ stop  # Stop the engine, cleanup, prepare to review
 
 =over 8
 
-C<getpos> 
+getpos 
 
-C<start # Start the engine.
+start # Start the engine.
 gp    # Get the current position of the playhead. Where am I?
->
+
 
 =back
 
@@ -951,29 +954,29 @@ gp    # Get the current position of the playhead. Where am I?
 
 =over 8
 
-C<setpos> <float:position_seconds>
+setpos <float:position_seconds>
 
-C<setpos 65.5>
-
-=back
-
-=head4 B<forward> (fw) - Move playback position forwards (in seconds). Oldschool forwarding.
-
-=over 8
-
-C<forward> <float:increment_seconds>
-
-C<fw 23.7>
+setpos 65.5
 
 =back
 
-=head4 B<rewind> (rw) - Move playback position backwards (in seconds). Oldschool rewind.
+=head4 B<forward> (fw) - Move playback position forwards (in seconds).
 
 =over 8
 
-C<rewind> <float:decrement_seconds>
+forward <float:increment_seconds>
 
-C<rewind 6.5>
+fw 23.7
+
+=back
+
+=head4 B<rewind> (rw) - Move playback position backwards (in seconds).
+
+=over 8
+
+rewind <float:decrement_seconds>
+
+rewind 6.5
 
 =back
 
@@ -981,7 +984,7 @@ C<rewind 6.5>
 
 =over 8
 
-C<to_start> 
+to_start 
 
 =back
 
@@ -989,7 +992,7 @@ C<to_start>
 
 =over 8
 
-C<to_end> 
+to_end 
 
 =back
 
@@ -999,7 +1002,7 @@ For diagnostic use.
 
 =over 8
 
-C<ecasound_start> 
+ecasound_start 
 
 =back
 
@@ -1009,7 +1012,7 @@ For diagnostic use.
 
 =over 8
 
-C<ecasound_stop> 
+ecasound_stop 
 
 =back
 
@@ -1019,7 +1022,7 @@ or is behaving oddly.
 
 =over 8
 
-C<restart_ecasound> 
+restart_ecasound 
 
 =back
 
@@ -1030,15 +1033,15 @@ rehearsal, etc.)
 
 =over 8
 
-C<preview> 
+preview 
 
-C<rec     # Set the current track to record from its source.
+rec     # Set the current track to record from its source.
 preview # Enter the preview mode.
 start   # Playback begins. You can play live, adjust effects, 
         # forward, rewind, etc.
 stop    # Stop the engine/transport.
 arm     # Restore to normal recording/playback mode.
->
+
 
 =back
 
@@ -1049,14 +1052,14 @@ adjusting effects.
 
 =over 8
 
-C<doodle> 
+doodle 
 
-C<doodle # Switch into doodle mode.
+doodle # Switch into doodle mode.
 start  # start the engine/transport running.
 (fool around)
 stop   # Stop the engine.
 arm    # Return to normal mode, allowing play and record to disk
->
+
 
 =back
 
@@ -1069,16 +1072,16 @@ until you leave the mixdown mode using "mixoff".
 
 =over 8
 
-C<mixdown> 
+mixdown 
 
-C<mixdown # Enter mixdown mode
+mixdown # Enter mixdown mode
 start   # Start the transport. The mix will be recorded by the
         # Mixdown track. The engine will run until the
         # longest track ends. (After mixdown Nama places 
         # a symlink to the WAV file and possibly ogg/mp3 
         # encoded versions in the project directory.)
 mixoff  # Return to the normal mode.
->
+
 
 =back
 
@@ -1089,13 +1092,13 @@ leave this mode.
 
 =over 8
 
-C<mixplay> 
+mixplay 
 
-C<mixplay # Enter the Mixdown play mode.
+mixplay # Enter the Mixdown play mode.
 start   # Play the Mixdown track.
 stop    # Stop playback.
 mixoff  # Return to normal mode.
->
+
 
 =back
 
@@ -1105,7 +1108,7 @@ user tracks to MON.
 
 =over 8
 
-C<mixoff> 
+mixoff 
 
 =back
 
@@ -1113,7 +1116,7 @@ C<mixoff>
 
 =over 8
 
-C<automix> 
+automix 
 
 =back
 
@@ -1125,13 +1128,13 @@ boosting stage. Using "master_off" to leave the mastering mode.
 
 =over 8
 
-C<master_on> 
+master_on 
 
-C<mr    # Turn on master mode.
+mr    # Turn on master mode.
 start # Start the playback.
       # Now you can adjust the Boost or global EQ.
 stop  # Stop the engine.
->
+
 
 =back
 
@@ -1139,7 +1142,7 @@ stop  # Stop the engine.
 
 =over 8
 
-C<master_off> 
+master_off 
 
 =back
 
@@ -1149,12 +1152,12 @@ C<master_off>
 
 =over 8
 
-C<add_track> <string:name>
+add_track <string:name>
 
-C<add_track clarinet 
+add_track clarinet 
 # create a mono track called clarinet with input 
 # from soundcard channel 1.
->
+
 
 =back
 
@@ -1162,9 +1165,9 @@ C<add_track clarinet
 
 =over 8
 
-C<add_tracks> <string:name1> [ <string:name2>... ]
+add_tracks <string:name1> [ <string:name2>... ]
 
-C<add_tracks violin viola contra_bass>
+add_tracks violin viola contra_bass
 
 =back
 
@@ -1172,7 +1175,7 @@ C<add_tracks violin viola contra_bass>
 
 =over 8
 
-C<add_midi_track> <string:name>
+add_midi_track <string:name>
 
 =back
 
@@ -1180,9 +1183,9 @@ C<add_midi_track> <string:name>
 
 =over 8
 
-C<link_track> [<string:project_name>] <string:track_name> <string:link_name>
+link_track [<string:project_name>] <string:track_name> <string:link_name>
 
-C<link my_song_part1 Mixdown part_1  
+link my_song_part1 Mixdown part_1  
 # Create a read-only track "part_1" in the current project
 # using files from track "Mixdown" in project "my_song_part_1".
 #
@@ -1191,7 +1194,7 @@ link_track compressed_piano piano
 # track "piano". This is one way to provide wet and dry
 # (processed and unprocessed) versions of same source.
 # Another way would be to use inserts.
->
+
 
 =back
 
@@ -1202,13 +1205,13 @@ imported file is set as current version.
 
 =over 8
 
-C<import_audio> <string:full_path_to_file> [ <integer:frequency> ]
+import_audio <string:full_path_to_file> [ <integer:frequency> ]
 
-C<import /home/samples/bells.flac 
+import /home/samples/bells.flac 
 # import the file bells.flac to the current track
 import /home/music/song.mp3 44100 
 # import song.mp3, specifying the frequency
->
+
 
 =back
 
@@ -1216,7 +1219,7 @@ import /home/music/song.mp3 44100
 
 =over 8
 
-C<set_track> <string:track_field> <value>
+set_track <string:track_field> <value>
 
 =back
 
@@ -1228,9 +1231,9 @@ disable recording.
 
 =over 8
 
-C<record> 
+record 
 
-C<rec
+rec
 # Set the current track to record.
 start 
 # A new version (take) will be written to disk, 
@@ -1238,7 +1241,7 @@ start
 # may be recording or playing back as well.
 stop 
 # Stop the recording/playback, automatically enter playback mode
->
+
 
 =back
 
@@ -1249,7 +1252,7 @@ will play the next time the engine starts.
 
 =over 8
 
-C<play> 
+play 
 
 =back
 
@@ -1259,7 +1262,7 @@ the next opportunity.
 
 =over 8
 
-C<mon> 
+mon 
 
 =back
 
@@ -1270,7 +1273,7 @@ using "mon", "play" or "rec" commands.
 
 =over 8
 
-C<off> 
+off 
 
 =back
 
@@ -1280,12 +1283,12 @@ to a soundcard channel, or JACK client name
 
 =over 8
 
-C<source> <integer:soundcard_channel> | <string:jack_client_name> 
+source <integer:soundcard_channel> | <string:jack_client_name> 
 | <string:jack_port_name> <string:jack_ports_list> | 
 | <string:track_name> | <string:loop_id> | 'jack' | 'null' 
 
 
-C<source 3 
+source 3 
 # Take input from soundcard channel 3 (3/4 if track is stereo)
 #
 source null 
@@ -1311,7 +1314,7 @@ source kit.ports
 # Ports are listed pairwise in the .ports files for stereo tracks.
 # This is convenient for use with the Hydrogen drumkit, 
 # whose outputs use one JACK port per voice.
->
+
 
 =back
 
@@ -1319,11 +1322,11 @@ source kit.ports
 
 =over 8
 
-C<send> <integer:soundcard_channel> | <string:jack_client_name> | <string:loop_id>
+send <integer:soundcard_channel> | <string:jack_client_name> | <string:loop_id>
 
-C<send 3 # Send the track output to soundcard channel 3.
+send 3 # Send the track output to soundcard channel 3.
 send jconvolver # Send the track output to the jconvolver JACK client.
->
+
 
 =back
 
@@ -1331,7 +1334,7 @@ send jconvolver # Send the track output to the jconvolver JACK client.
 
 =over 8
 
-C<remove_send> 
+remove_send 
 
 =back
 
@@ -1339,7 +1342,7 @@ C<remove_send>
 
 =over 8
 
-C<stereo> 
+stereo 
 
 =back
 
@@ -1347,7 +1350,7 @@ C<stereo>
 
 =over 8
 
-C<mono> 
+mono 
 
 =back
 
@@ -1357,12 +1360,12 @@ C<mono>
 
 =over 8
 
-C<set_version> <integer:version_number>
+set_version <integer:version_number>
 
-C<piano     # Select the piano track.
+piano     # Select the piano track.
 version 2 # Select the second recorded version
 sh        # Display information about the current track
->
+
 
 =back
 
@@ -1374,7 +1377,7 @@ Use with caution.
 
 =over 8
 
-C<destroy_current_wav> 
+destroy_current_wav 
 
 =back
 
@@ -1384,11 +1387,11 @@ numbers.
 
 =over 8
 
-C<list_versions> 
+list_versions 
 
-C<list_versions # May print something like: 1 2 5 7 9
+list_versions # May print something like: 1 2 5 7 9
               # The other versions might have been deleted earlier by you.
->
+
 
 =back
 
@@ -1396,15 +1399,15 @@ C<list_versions # May print something like: 1 2 5 7 9
 
 =over 8
 
-C<vol> [ [ + | - | / | * ] <float:volume> ]
+vol [ [ + | - | / | * ] <float:volume> ]
 
-C<vol * 1.5 # Multiply the current volume by 1.5
+vol * 1.5 # Multiply the current volume by 1.5
 vol 75    # Set the current volume to 75
           # Depending on your namarc configuration, this means
           # either 75% of full volume (-ea) or 75 dB (-eadb).
 vol - 5.7 # Decrease current volume by 5.7 (percent or dB)
 vol       # Display the volume setting of the current track.
->
+
 
 =back
 
@@ -1414,7 +1417,7 @@ Use "unmute" to restore the former volume level.
 
 =over 8
 
-C<mute> 
+mute 
 
 =back
 
@@ -1422,7 +1425,7 @@ C<mute>
 
 =over 8
 
-C<unmute> 
+unmute 
 
 =back
 
@@ -1430,13 +1433,13 @@ C<unmute>
 
 =over 8
 
-C<unity> 
+unity 
 
-C<vol 55 # Set volume to 55
+vol 55 # Set volume to 55
 unity  # Set volume to the unity value.
 vol    # Display the current volume (should be 100 or 0, 
        # depending on your settings in namarc.)
->
+
 
 =back
 
@@ -1446,12 +1449,12 @@ bunches specified. You can reverse this with nosolo.
 
 =over 8
 
-C<solo> [ <strack_name_1> | <string:bunch_name_1> ] [ <string:track_name_2 | <string:bunch_name_2> ] ...
+solo [ <strack_name_1> | <string:bunch_name_1> ] [ <string:track_name_2 | <string:bunch_name_2> ] ...
 
-C<solo   # Mute all tracks but the current track.
+solo   # Mute all tracks but the current track.
 nosolo # Unmute all tracks, restoring prior state.
 solo piano bass Drums # Mute everything but piano, bass and Drums.
->
+
 
 =back
 
@@ -1461,7 +1464,7 @@ Tracks that had been muted before the solo command stay muted.
 
 =over 8
 
-C<nosolo> 
+nosolo 
 
 =back
 
@@ -1470,15 +1473,15 @@ C<nosolo>
 
 =over 8
 
-C<all> 
+all 
 
-C<piano # Select track piano
+piano # Select track piano
 mute  # Mute the piano track.
 sax   # Select the track sax.
 solo  # Mute other tracks
 nosolo # Unmute other tracks (piano is still muted)
 all   # all tracks play
->
+
 
 =back
 
@@ -1490,12 +1493,12 @@ panorama between right and left. Position is given in percent.
 
 =over 8
 
-C<pan> [ <float:pan_position_in_percent> ]
+pan [ <float:pan_position_in_percent> ]
 
-C<pan 75 # Pan the track to a position between centre and hard right
+pan 75 # Pan the track to a position between centre and hard right
 p 50   # Move the current track to the centre.
 pan    # Show the current position of teh track in the stereo panorama.
->
+
 
 =back
 
@@ -1505,7 +1508,7 @@ Can be reversed with pan_back.
 
 =over 8
 
-C<pan_right> 
+pan_right 
 
 =back
 
@@ -1515,7 +1518,7 @@ Can be reversed with pan_back.
 
 =over 8
 
-C<pan_left> 
+pan_left 
 
 =back
 
@@ -1525,7 +1528,7 @@ Can be reversed with pan_back.
 
 =over 8
 
-C<pan_center> 
+pan_center 
 
 =back
 
@@ -1535,7 +1538,7 @@ pan_right or pan_center commands.
 
 =over 8
 
-C<pan_back> 
+pan_back 
 
 =back
 
@@ -1545,7 +1548,7 @@ pan position, recording status and source.
 
 =over 8
 
-C<show_tracks> 
+show_tracks 
 
 =back
 
@@ -1553,7 +1556,7 @@ C<show_tracks>
 
 =over 8
 
-C<show_tracks_all> 
+show_tracks_all 
 
 =back
 
@@ -1561,7 +1564,7 @@ C<show_tracks_all>
 
 =over 8
 
-C<show_bus_tracks> 
+show_bus_tracks 
 
 =back
 
@@ -1572,7 +1575,7 @@ WAV version, and signal width (channel count).
 
 =over 8
 
-C<show_track> 
+show_track 
 
 =back
 
@@ -1584,7 +1587,7 @@ mode (doodle, preview, etc.) and possible record/playback settings.
 
 =over 8
 
-C<show_mode> 
+show_mode 
 
 =back
 
@@ -1594,7 +1597,7 @@ C<show_mode>
 
 =over 8
 
-C<show_track_latency> 
+show_track_latency 
 
 =back
 
@@ -1604,7 +1607,7 @@ C<show_track_latency>
 
 =over 8
 
-C<show_latency_all> 
+show_latency_all 
 
 =back
 
@@ -1616,16 +1619,16 @@ Can be reversed with remove_region.
 
 =over 8
 
-C<set_region> <string:start_mark_name> <string:end_mark_name>
+set_region <string:start_mark_name> <string:end_mark_name>
 
-C<sax            # Select "sax" as the current track.
+sax            # Select "sax" as the current track.
 setpos 2.5     # Move the playhead to 2.5 seconds.
 mark sax_start # Create a mark
 sp 120.5       # Move playhead to 120.5 seconds.
 mark sax_end   # Create another mark
 set_region sax_start sax_end 
 #  Play only the audio from 2.5 to 120.5 seconds.
->
+
 
 =back
 
@@ -1635,13 +1638,13 @@ definition. The original track is untouched.
 
 =over 8
 
-C<add_region> <string:start_mark_name> | <float:start_time> <string:end_mark_name> | <float:end_time> [ <string:region_name> ]
+add_region <string:start_mark_name> | <float:start_time> <string:end_mark_name> | <float:end_time> [ <string:region_name> ]
 
-C<sax # Select "sax" as the current track.
+sax # Select "sax" as the current track.
 add_region sax_start 66.7 trimmed_sax 
 # Create "trimmed_sax", a copy of "sax" with a region defined
 # from mark "sax_start" to 66.7 seconds. 
->
+
 
 =back
 
@@ -1651,7 +1654,7 @@ Remove the current track if it is an auxiliary track.
 
 =over 8
 
-C<remove_region> 
+remove_region 
 
 =back
 
@@ -1661,11 +1664,11 @@ Can be reversed by unshift_track.
 
 =over 8
 
-C<shift_track> <string:start_mark_name> | <integer:start_mark_index | <float:start_seconds>
+shift_track <string:start_mark_name> | <integer:start_mark_index | <float:start_seconds>
 
-C<piano     # Select "piano" as current track.
+piano     # Select "piano" as current track.
 shift 6.7 # Move the start of track to 6.7 seconds.
->
+
 
 =back
 
@@ -1673,7 +1676,7 @@ shift 6.7 # Move the start of track to 6.7 seconds.
 
 =over 8
 
-C<unshift_track> 
+unshift_track 
 
 =back
 
@@ -1684,12 +1687,12 @@ It is not needed for normal work.
 
 =over 8
 
-C<modifiers> [ Audio file sequencing parameters ]
+modifiers [ Audio file sequencing parameters ]
 
-C<modifiers select 5 15.2 
+modifiers select 5 15.2 
 # Apply Ecasound's select modifier to the current track.
 # The usual way to accomplish this is with a region definition. 
->
+
 
 =back
 
@@ -1697,7 +1700,7 @@ C<modifiers select 5 15.2
 
 =over 8
 
-C<nomodifiers> 
+nomodifiers 
 
 =back
 
@@ -1709,7 +1712,7 @@ Note: this will permanently change the file.
 
 =over 8
 
-C<normalize> 
+normalize 
 
 =back
 
@@ -1719,7 +1722,7 @@ Note: This will permanently change the file.
 
 =over 8
 
-C<fixdc> 
+fixdc 
 
 =back
 
@@ -1727,7 +1730,7 @@ C<fixdc>
 
 =over 8
 
-C<autofix_tracks> 
+autofix_tracks 
 
 =back
 
@@ -1737,7 +1740,7 @@ Audio files are unchanged.
 
 =over 8
 
-C<remove_track> 
+remove_track 
 
 =back
 
@@ -1747,7 +1750,7 @@ C<remove_track>
 
 =over 8
 
-C<bus_mon> 
+bus_mon 
 
 =back
 
@@ -1757,7 +1760,7 @@ with bus_rec or bus_mon.
 
 =over 8
 
-C<bus_off> 
+bus_off 
 
 =back
 
@@ -1767,7 +1770,7 @@ C<bus_off>
 
 =over 8
 
-C<bus_version> 
+bus_version 
 
 =back
 
@@ -1775,15 +1778,15 @@ C<bus_version>
 
 =over 8
 
-C<add_bunch> <string:bunch_name> [ <string:track_name_1> | <integer:track_index_1> ] ...
+add_bunch <string:bunch_name> [ <string:track_name_1> | <integer:track_index_1> ] ...
 
-C<add_bunch strings violin cello bass
+add_bunch strings violin cello bass
 # Create a bunch "strings" with tracks violin, cello and bass.
 for strings; mute # Mute all tracks in the strings bunch.
 for strings; vol * 0.8 
 # Lower the volume of all tracks in bunch "strings" by a
 # a factor of 0.8.
->
+
 
 =back
 
@@ -1791,7 +1794,7 @@ for strings; vol * 0.8
 
 =over 8
 
-C<list_bunches> 
+list_bunches 
 
 =back
 
@@ -1801,7 +1804,7 @@ the tracks, only the grouping.
 
 =over 8
 
-C<remove_bunch> <string:bunch_name> [ <string:bunch_name> ] ...
+remove_bunch <string:bunch_name> [ <string:bunch_name> ] ...
 
 =back
 
@@ -1809,10 +1812,10 @@ C<remove_bunch> <string:bunch_name> [ <string:bunch_name> ] ...
 
 =over 8
 
-C<add_to_bunch> <string:bunch_name> <string:track1> [ <string:track2> ] ...
+add_to_bunch <string:bunch_name> <string:track1> [ <string:track2> ] ...
 
-C<add_to_bunch woodwind oboe sax flute 
->
+add_to_bunch woodwind oboe sax flute 
+
 
 =back
 
@@ -1822,7 +1825,7 @@ C<add_to_bunch woodwind oboe sax flute
 
 =over 8
 
-C<commit> <string:message>
+commit <string:message>
 
 =back
 
@@ -1830,7 +1833,7 @@ C<commit> <string:message>
 
 =over 8
 
-C<tag> <string:tag_name> [<string:message>]
+tag <string:tag_name> [<string:message>]
 
 =back
 
@@ -1838,7 +1841,7 @@ C<tag> <string:tag_name> [<string:message>]
 
 =over 8
 
-C<branch> <string:branch_name>
+branch <string:branch_name>
 
 =back
 
@@ -1846,7 +1849,7 @@ C<branch> <string:branch_name>
 
 =over 8
 
-C<list_branches> 
+list_branches 
 
 =back
 
@@ -1854,7 +1857,7 @@ C<list_branches>
 
 =over 8
 
-C<new_branch> <string:new_branch_name> [<string:existing_branch_name>]
+new_branch <string:new_branch_name> [<string:existing_branch_name>]
 
 =back
 
@@ -1862,7 +1865,7 @@ C<new_branch> <string:new_branch_name> [<string:existing_branch_name>]
 
 =over 8
 
-C<save_state> [ <string:settings_target> [ <string:message> ] ]
+save_state [ <string:settings_target> [ <string:message> ] ]
 
 =back
 
@@ -1870,7 +1873,7 @@ C<save_state> [ <string:settings_target> [ <string:message> ] ]
 
 =over 8
 
-C<get_state> <string:settings_target>
+get_state <string:settings_target>
 
 =back
 
@@ -1878,7 +1881,7 @@ C<get_state> <string:settings_target>
 
 =over 8
 
-C<list_projects> 
+list_projects 
 
 =back
 
@@ -1886,10 +1889,10 @@ C<list_projects>
 
 =over 8
 
-C<new_project> <string:new_project_name>
+new_project <string:new_project_name>
 
-C<create jam 
->
+create jam 
+
 
 =back
 
@@ -1897,9 +1900,9 @@ C<create jam
 
 =over 8
 
-C<load_project> <string:existing_project_name>
+load_project <string:existing_project_name>
 
-C<load my_old_song>
+load my_old_song
 
 =back
 
@@ -1907,7 +1910,7 @@ C<load my_old_song>
 
 =over 8
 
-C<project_name> 
+project_name 
 
 =back
 
@@ -1915,10 +1918,10 @@ C<project_name>
 
 =over 8
 
-C<new_project_template> <string:template_name> [ <string:template_description> ]
+new_project_template <string:template_name> [ <string:template_description> ]
 
-C<new_project_template my_band_setup "tracks and busses for bass, drums and me"
->
+new_project_template my_band_setup "tracks and busses for bass, drums and me"
+
 
 =back
 
@@ -1926,10 +1929,10 @@ C<new_project_template my_band_setup "tracks and busses for bass, drums and me"
 
 =over 8
 
-C<use_project_template> <string:template_name>
+use_project_template <string:template_name>
 
-C<apt my_band_setup # Will add all the tracks for your basic band setup.
->
+apt my_band_setup # Will add all the tracks for your basic band setup.
+
 
 =back
 
@@ -1937,7 +1940,7 @@ C<apt my_band_setup # Will add all the tracks for your basic band setup.
 
 =over 8
 
-C<list_project_templates> 
+list_project_templates 
 
 =back
 
@@ -1945,7 +1948,7 @@ C<list_project_templates>
 
 =over 8
 
-C<destroy_project_template> <string:template_name1> [ <string:template_name2> ] ...
+destroy_project_template <string:template_name1> [ <string:template_name2> ] ...
 
 =back
 
@@ -1955,7 +1958,7 @@ C<destroy_project_template> <string:template_name1> [ <string:template_name2> ] 
 
 =over 8
 
-C<generate> 
+generate 
 
 =back
 
@@ -1963,7 +1966,7 @@ C<generate>
 
 =over 8
 
-C<arm> 
+arm 
 
 =back
 
@@ -1971,7 +1974,7 @@ C<arm>
 
 =over 8
 
-C<arm_start> 
+arm_start 
 
 =back
 
@@ -1979,7 +1982,7 @@ C<arm_start>
 
 =over 8
 
-C<connect> 
+connect 
 
 =back
 
@@ -1987,7 +1990,7 @@ C<connect>
 
 =over 8
 
-C<disconnect> 
+disconnect 
 
 =back
 
@@ -1995,7 +1998,7 @@ C<disconnect>
 
 =over 8
 
-C<show_chain_setup> 
+show_chain_setup 
 
 =back
 
@@ -2003,12 +2006,12 @@ C<show_chain_setup>
 
 =over 8
 
-C<loop> <string:start_mark_name> | <integer:start_mark_index> | <float:start_time_in_secs> <string:end_mark_name> | <integer:end_mark_index> | <float:end_time_in_secs>
+loop <string:start_mark_name> | <integer:start_mark_index> | <float:start_time_in_secs> <string:end_mark_name> | <integer:end_mark_index> | <float:end_time_in_secs>
 
-C<loop 1.5 10.0 # Loop between 1.5 and 10.0 seconds.
+loop 1.5 10.0 # Loop between 1.5 and 10.0 seconds.
 loop 1 5 # Loop between marks with indeices 1 and 5, see list_marks.
 loop sax_start 12.6 # Loop between mark sax_start and 12.6 seconds.
->
+
 
 =back
 
@@ -2016,7 +2019,7 @@ loop sax_start 12.6 # Loop between mark sax_start and 12.6 seconds.
 
 =over 8
 
-C<noloop> 
+noloop 
 
 =back
 
@@ -2026,13 +2029,13 @@ C<noloop>
 
 =over 8
 
-C<add_controller> [ <string:operator_id> ] <string:effect_code> [ <float:param1> <float:param2> ] ...
+add_controller [ <string:operator_id> ] <string:effect_code> [ <float:param1> <float:param2> ] ...
 
-C<add_effect etd 100 2 2 50 50 # Add a stero delay of 100ms.
+add_effect etd 100 2 2 50 50 # Add a stero delay of 100ms.
 # the delay will get the effect ID E .
 # Now we want to slowly change the delay to 200ms.
 acl E klg 1 100 200 2 0 100 15 200 # Change the delay time linearly (klg)
->
+
 
 =back
 
@@ -2040,17 +2043,17 @@ acl E klg 1 100 200 2 0 100 15 200 # Change the delay time linearly (klg)
 
 =over 8
 
-C<add_effect> [ (before <fx_alias> | first | last ) ] <fx_alias> [ <float:param1> <float:param2>... ]
+add_effect [ (before <fx_alias> | first | last ) ] <fx_alias> [ <float:param1> <float:param2>... ]
 "before", "first" and "last" can be abbreviated "b", "f" and "l", respectively.
 
 
-C<We want to add the decimator effect (a LADSPA plugin).
+We want to add the decimator effect (a LADSPA plugin).
 help_effect decimator # Print help about its paramters/controls.
                       # We see two input controls: bitrate and samplerate
 afx decimator 12 22050  #  prints "Added GO (Decimator)"
 # We have added the decimator with 12bits and a sample rate of 22050Hz.
 # GO is the effect ID, which you will need to modify it.
->
+
 
 =back
 
@@ -2058,7 +2061,7 @@ afx decimator 12 22050  #  prints "Added GO (Decimator)"
 
 =over 8
 
-C<add_effect_last> <fx_alias> [ <float:param1> <float:param2>... ]
+add_effect_last <fx_alias> [ <float:param1> <float:param2>... ]
 
 =back
 
@@ -2066,7 +2069,7 @@ C<add_effect_last> <fx_alias> [ <float:param1> <float:param2>... ]
 
 =over 8
 
-C<add_effect_first> <fx_alias> [ <float:param1> <float:param2>... ]
+add_effect_first <fx_alias> [ <float:param1> <float:param2>... ]
 
 =back
 
@@ -2074,7 +2077,7 @@ C<add_effect_first> <fx_alias> [ <float:param1> <float:param2>... ]
 
 =over 8
 
-C<add_effect_before> <fx_alias> <fx_alias> [ <float:param1> <float:param2>... ]
+add_effect_before <fx_alias> <fx_alias> [ <float:param1> <float:param2>... ]
 
 =back
 
@@ -2082,11 +2085,11 @@ C<add_effect_before> <fx_alias> <fx_alias> [ <float:param1> <float:param2>... ]
 
 =over 8
 
-C<modify_effect> [ <fx_alias> ] <integer:parameter> [ + | - | * | / ] <float:value>
+modify_effect [ <fx_alias> ] <integer:parameter> [ + | - | * | / ] <float:value>
 fx_alias can be: a position, effect ID, nickname or effect code
 
 
-C<To change the roomsize of our reverb effect to 62
+To change the roomsize of our reverb effect to 62
 lfx 
 # We see that reverb has unique effect ID AF and roomsize is the
 # first parameter.
@@ -2103,7 +2106,7 @@ mfx D 4 + 10
 # 
 mfx A,B,C 3,6 * 5 
 # Adjust parameters 3 and 6 of effect A, B and C by a factor of 5.
->
+
 
 =back
 
@@ -2111,7 +2114,7 @@ mfx A,B,C 3,6 * 5
 
 =over 8
 
-C<remove_effect> <fx_alias1> [ <fx_alias2> ] ...
+remove_effect <fx_alias1> [ <fx_alias2> ] ...
 
 =back
 
@@ -2119,10 +2122,10 @@ C<remove_effect> <fx_alias1> [ <fx_alias2> ] ...
 
 =over 8
 
-C<position_effect> <string:id_to_move> <string:position_id>
+position_effect <string:id_to_move> <string:position_id>
 
-C<position_effect G F # Move effecit with unique ID G before F.
->
+position_effect G F # Move effecit with unique ID G before F.
+
 
 =back
 
@@ -2130,11 +2133,11 @@ C<position_effect G F # Move effecit with unique ID G before F.
 
 =over 8
 
-C<show_effect> [ <string:effect_id1> ] [ <string:effect_id2> ] ...
+show_effect [ <string:effect_id1> ] [ <string:effect_id2> ] ...
 
-C<sfx # Print name, unique ID and parameters/controls of the current effect.
+sfx # Print name, unique ID and parameters/controls of the current effect.
 sfx H # Print out all information about effect with unique ID H.
->
+
 
 =back
 
@@ -2142,7 +2145,7 @@ sfx H # Print out all information about effect with unique ID H.
 
 =over 8
 
-C<dump_effect> 
+dump_effect 
 
 =back
 
@@ -2150,7 +2153,7 @@ C<dump_effect>
 
 =over 8
 
-C<list_effects> 
+list_effects 
 
 =back
 
@@ -2160,7 +2163,7 @@ C<list_effects>
 
 =over 8
 
-C<hotkeys> 
+hotkeys 
 
 =back
 
@@ -2168,7 +2171,7 @@ C<hotkeys>
 
 =over 8
 
-C<hotkeys_always> 
+hotkeys_always 
 
 =back
 
@@ -2176,7 +2179,7 @@ C<hotkeys_always>
 
 =over 8
 
-C<hotkeys_off> 
+hotkeys_off 
 
 =back
 
@@ -2186,11 +2189,11 @@ C<hotkeys_off>
 
 =over 8
 
-C<add_insert> External: ( pre | post ) <string:send_id> [ <string:return_id> ]
+add_insert External: ( pre | post ) <string:send_id> [ <string:return_id> ]
 Local wet/dry: local
 
 
-C<add_insert pre jconvolver 
+add_insert pre jconvolver 
 # Add a prefader insert. The current track signal is sent 
 # to jconvolver and returned to the vol/pan controls.
 add_insert post jconvolver csound 
@@ -2203,7 +2206,7 @@ afx G2reverb 50 5.0 0.6 0.5 0 -16 -20 # add a reverb
 afx etc 6 100 45 2.5 # add a chorus effect on the reverbed signal
 guitar # Change back to the main guitar track
 wet 25 # Set the balance between wet/dry track to 25% wet, 75% dry.
->
+
 
 =back
 
@@ -2211,11 +2214,11 @@ wet 25 # Set the balance between wet/dry track to 25% wet, 75% dry.
 
 =over 8
 
-C<set_insert_wetness> [ pre | post ] <n_wetness>
+set_insert_wetness [ pre | post ] <n_wetness>
 
-C<wet pre 50 # Set the prefader insert to be balanced 50/50 wet/dry.
+wet pre 50 # Set the prefader insert to be balanced 50/50 wet/dry.
 wet 100 # Simpler if there's only one insert
->
+
 
 =back
 
@@ -2223,11 +2226,11 @@ wet 100 # Simpler if there's only one insert
 
 =over 8
 
-C<remove_insert> [ pre | post ]
+remove_insert [ pre | post ]
 
-C<rin # If there is only one insert on the current track, remove it.
+rin # If there is only one insert on the current track, remove it.
 remove_insert post # Remove the postfader insert from the current track.
->
+
 
 =back
 
@@ -2235,7 +2238,7 @@ remove_insert post # Remove the postfader insert from the current track.
 
 =over 8
 
-C<ctrl_register> 
+ctrl_register 
 
 =back
 
@@ -2243,7 +2246,7 @@ C<ctrl_register>
 
 =over 8
 
-C<preset_register> 
+preset_register 
 
 =back
 
@@ -2251,7 +2254,7 @@ C<preset_register>
 
 =over 8
 
-C<ladspa_register> 
+ladspa_register 
 
 =back
 
@@ -2261,7 +2264,7 @@ C<ladspa_register>
 
 =over 8
 
-C<list_marks> 
+list_marks 
 
 =back
 
@@ -2269,11 +2272,11 @@ C<list_marks>
 
 =over 8
 
-C<to_mark> <string:mark_name> | <integer:mark_index>
+to_mark <string:mark_name> | <integer:mark_index>
 
-C<to_mark sax_start # Jump to the position marked by sax_mark.
+to_mark sax_start # Jump to the position marked by sax_mark.
 tmk 2 # Move to the mark with the index 2.
->
+
 
 =back
 
@@ -2281,10 +2284,10 @@ tmk 2 # Move to the mark with the index 2.
 
 =over 8
 
-C<add_mark> [ <string:mark_id> ]
+add_mark [ <string:mark_id> ]
 
-C<mark start # Create a mark named "start" at the current position.
->
+mark start # Create a mark named "start" at the current position.
+
 
 =back
 
@@ -2292,12 +2295,12 @@ C<mark start # Create a mark named "start" at the current position.
 
 =over 8
 
-C<remove_mark> [ <string:mark_name> | <integer:mark_index> ]
+remove_mark [ <string:mark_name> | <integer:mark_index> ]
 
-C<remove_mark start # remove the mark named start
+remove_mark start # remove the mark named start
 rmk 16 # Remove the mark with the index 16.
 rmk    # Remove the current mark
->
+
 
 =back
 
@@ -2305,7 +2308,7 @@ rmk    # Remove the current mark
 
 =over 8
 
-C<next_mark> 
+next_mark 
 
 =back
 
@@ -2313,7 +2316,7 @@ C<next_mark>
 
 =over 8
 
-C<previous_mark> 
+previous_mark 
 
 =back
 
@@ -2321,7 +2324,7 @@ C<previous_mark>
 
 =over 8
 
-C<name_mark> <string:mark_name>
+name_mark <string:mark_name>
 
 =back
 
@@ -2329,11 +2332,11 @@ C<name_mark> <string:mark_name>
 
 =over 8
 
-C<modify_mark> [ + | - ] <float:seconds>
+modify_mark [ + | - ] <float:seconds>
 
-C<move_mark + 2.3 # Move the current mark 2.3 seconds forward from its
+move_mark + 2.3 # Move the current mark 2.3 seconds forward from its
 mmk 16.8 # Move the current mark to 16.8 seconds, no matter, where it is now.
->
+
 
 =back
 
@@ -2343,7 +2346,7 @@ mmk 16.8 # Move the current mark to 16.8 seconds, no matter, where it is now.
 
 =over 8
 
-C<engine_status> 
+engine_status 
 
 =back
 
@@ -2351,7 +2354,7 @@ C<engine_status>
 
 =over 8
 
-C<dump_track> 
+dump_track 
 
 =back
 
@@ -2359,7 +2362,7 @@ C<dump_track>
 
 =over 8
 
-C<dump_group> 
+dump_group 
 
 =back
 
@@ -2367,7 +2370,7 @@ C<dump_group>
 
 =over 8
 
-C<dump_all> 
+dump_all 
 
 =back
 
@@ -2375,7 +2378,7 @@ C<dump_all>
 
 =over 8
 
-C<dump_io> 
+dump_io 
 
 =back
 
@@ -2385,7 +2388,7 @@ C<dump_io>
 
 =over 8
 
-C<list_history> 
+list_history 
 
 =back
 
@@ -2395,12 +2398,12 @@ C<list_history>
 
 =over 8
 
-C<add_submix_cooked> <string:name> <destination>
+add_submix_cooked <string:name> <destination>
 
-C<add_submix_cooked front_of_house 7
+add_submix_cooked front_of_house 7
 # send a custom mix named "front_of_house"
 # to soundcard channels 7/8
->
+
 
 =back
 
@@ -2408,41 +2411,40 @@ C<add_submix_cooked front_of_house 7
 
 =over 8
 
-C<add_submix_raw> <string:name> <destination>
+add_submix_raw <string:name> <destination>
 
-C<asbr Reverb jconv # Add a raw send bus called Reverb, with its output
->
+asbr Reverb jconv # Add a raw send bus called Reverb, with its output
 
-=back
-
-=head4 B<add_bus> (asub) - Add a sub bus. This is a bus, as known from other DAWs. The default output goes to a mix track and that is routed to the mixer (the Master track). All busses begin with a capital letter!
-
-=over 8
-
-C<add_bus> <string:name> [ <string:track_name> | <string:jack_client> | <integer:soundcard_channel> ]
-
-C<asub Brass # Add a sub bus Brass, which is routed to tne mixer.
-asub special csound # Add a sub bus, which is routed to the JACK client
->
 
 =back
 
-=head4 B<update_submix> (usm) - Include tracks added since the send bus was created.
+=head4 B<add_bus> (abs) - Add a sub bus. This is a bus, as known from other DAWs. The default output goes to a mix track and that is routed to the mixer (the Master track). All busses begin with a capital letter!
 
 =over 8
 
-C<update_submix> <string:name>
+add_bus <string:name> [ <string:track_name> | <string:jack_client> | <integer:soundcard_channel> ]
 
-C<update_submix Reverb # Include new tracks in the Reverb send bus.
->
+abs Brass          # Add a bus, "Brass", routed to the Main bus (e.g. mixer)
+abs special csound # Add a bus, "special" routed to JACK client "csound"
+
 
 =back
 
-=head4 B<remove_bus> - Remove a bus.
+=head4 B<update_submix> (usm) - Include tracks added since the submix was created.
 
 =over 8
 
-C<remove_bus> <string:bus_name>
+update_submix <string:name>
+
+update_submix Reverb
+
+=back
+
+=head4 B<remove_bus> - Remove a bus or submix
+
+=over 8
+
+remove_bus <string:bus_name>
 
 =back
 
@@ -2450,7 +2452,7 @@ C<remove_bus> <string:bus_name>
 
 =over 8
 
-C<list_buses> 
+list_buses 
 
 =back
 
@@ -2458,7 +2460,7 @@ C<list_buses>
 
 =over 8
 
-C<set_bus> <string:busname> <key> <value>
+set_bus <string:busname> <key> <value>
 
 =back
 
@@ -2470,7 +2472,7 @@ of the same name.
 
 =over 8
 
-C<overwrite_effect_chain> Same as for new_effect_chain
+overwrite_effect_chain Same as for new_effect_chain
 
 =back
 
@@ -2481,9 +2483,9 @@ for particular instruments.
 
 =over 8
 
-C<new_effect_chain> <string:name> [ <effect_id_1> <effect_id_2>... ]
+new_effect_chain <string:name> [ <effect_id_1> <effect_id_2>... ]
 
-C<new_effect_chain my_piano 
+new_effect_chain my_piano 
 # Create a new effect chain, "my_piano", storing all 
 # effects and their settings from the current track
 # except the fader (vol/pan) settings.
@@ -2491,7 +2493,7 @@ nec my_guitar A C F G H
 # Create a new effect chain, "my_guitar",
 # storing the effects with IDs A, C, F, G, H and
 # their respective settings.
->
+
 
 =back
 
@@ -2501,7 +2503,7 @@ project state. This command is not reversible by undo.
 
 =over 8
 
-C<delete_effect_chain> <string:effect_chain_name>
+delete_effect_chain <string:effect_chain_name>
 
 =back
 
@@ -2509,10 +2511,10 @@ C<delete_effect_chain> <string:effect_chain_name>
 
 =over 8
 
-C<find_effect_chains> [ <string:key_1> <string:value_1> ] ...
+find_effect_chains [ <string:key_1> <string:value_1> ] ...
 
-C<fec # List all effect chains with their effects.
->
+fec # List all effect chains with their effects.
+
 
 =back
 
@@ -2520,7 +2522,7 @@ C<fec # List all effect chains with their effects.
 
 =over 8
 
-C<find_user_effect_chains> [ <string:key_1> <string:value_1> ] ...
+find_user_effect_chains [ <string:key_1> <string:value_1> ] ...
 
 =back
 
@@ -2528,11 +2530,11 @@ C<find_user_effect_chains> [ <string:key_1> <string:value_1> ] ...
 
 =over 8
 
-C<bypass_effects> [ <string:effect_id_1> <string:effect_id_2>... | 'all' ]
+bypass_effects [ <string:effect_id_1> <string:effect_id_2>... | 'all' ]
 
-C<bypass all # Bypass all effects on the current track, except vol and pan.
-bypass AF # Only bypass the effecht with the unique ID AF.
->
+bypass all # Bypass all effects on the current track, except vol and pan.
+bypass AF  # Only bypass the effect with the unique ID AF.
+
 
 =back
 
@@ -2540,12 +2542,12 @@ bypass AF # Only bypass the effecht with the unique ID AF.
 
 =over 8
 
-C<bring_back_effects> [ <string:effect_id_1> <string:effect_id_2> ... | 'all' ]
+bring_back_effects [ <string:effect_id_1> <string:effect_id_2> ... | 'all' ]
 
-C<bbfx # Restore the current effect.
-restore_effect AF # Restore the effect with the unique ID AF.
+bbfx                   # Restore the current effect.
+restore_effect AF      # Restore the effect with the unique ID AF.
 bring_back_effects all # Restore all effects.
->
+
 
 =back
 
@@ -2553,11 +2555,11 @@ bring_back_effects all # Restore all effects.
 
 =over 8
 
-C<new_effect_profile> <string:bunch_name> [ <string:effect_profile_name> ]
+new_effect_profile <string:bunch_name> [ <string:effect_profile_name> ]
 
-C<add_bunch Drums snare toms kick # Create a buch called Drums.
+add_bunch Drums snare toms kick # Create a buch called Drums.
 nep Drums my_drum_effects # Create an effect profile, call my_drum_effects
->
+
 
 =back
 
@@ -2565,7 +2567,7 @@ nep Drums my_drum_effects # Create an effect profile, call my_drum_effects
 
 =over 8
 
-C<apply_effect_profile> <string:effect_profile_name>
+apply_effect_profile <string:effect_profile_name>
 
 =back
 
@@ -2573,7 +2575,7 @@ C<apply_effect_profile> <string:effect_profile_name>
 
 =over 8
 
-C<destroy_effect_profile> <string:effect_profile_name>
+destroy_effect_profile <string:effect_profile_name>
 
 =back
 
@@ -2581,7 +2583,7 @@ C<destroy_effect_profile> <string:effect_profile_name>
 
 =over 8
 
-C<list_effect_profiles> 
+list_effect_profiles 
 
 =back
 
@@ -2589,7 +2591,7 @@ C<list_effect_profiles>
 
 =over 8
 
-C<show_effect_profiles> 
+show_effect_profiles 
 
 =back
 
@@ -2597,7 +2599,7 @@ C<show_effect_profiles>
 
 =over 8
 
-C<full_effect_profiles> 
+full_effect_profiles 
 
 =back
 
@@ -2619,10 +2621,10 @@ reversible by uncache)
 
 =over 8
 
-C<cache_track> [ <float:additional_processing_time> ]
+cache_track [ <float:additional_processing_time> ]
 
-C<cache 10 # Cache the curent track and append 10 seconds extra time,
->
+cache 10 # Cache the curent track and append 10 seconds extra time,
+
 
 =back
 
@@ -2632,7 +2634,7 @@ C<cache 10 # Cache the curent track and append 10 seconds extra time,
 
 =over 8
 
-C<uncache_track> 
+uncache_track 
 
 =back
 
@@ -2642,10 +2644,10 @@ C<uncache_track>
 
 =over 8
 
-C<do_script> <string:filename>
+do_script <string:filename>
 
-C<do prepare_my_drums # Execute the script prepare_my_drums.
->
+do prepare_my_drums # Execute the script prepare_my_drums.
+
 
 =back
 
@@ -2653,7 +2655,7 @@ C<do prepare_my_drums # Execute the script prepare_my_drums.
 
 =over 8
 
-C<scan> 
+scan 
 
 =back
 
@@ -2663,13 +2665,14 @@ C<scan>
 
 =over 8
 
-C<add_fade> ( in | out ) marks/times (see examples)
+add_fade ( in | out ) marks/times (see examples)
 
-C<fade in mark1 # Fade in,starting at mark1 and using the default fade time
-fade out mark2 2 # Fade out over 2 seconds, starting at mark2 .
-fade out 2 mark2 # Fade out over 2 seconds, ending at mark2 .
+fade in mark1       # Fade in,starting at mark1 and using the 
+                     # default fade time of 0.5 seconds.
+fade out mark2 2    # Fade out over 2 seconds, starting at mark2 .
+fade out 2 mark2    # Fade out over 2 seconds, ending at mark2 .
 fade in mark1 mark2 # Fade in starting at mark1, ending at mark2 .
->
+
 
 =back
 
@@ -2677,11 +2680,11 @@ fade in mark1 mark2 # Fade in starting at mark1, ending at mark2 .
 
 =over 8
 
-C<remove_fade> <integer:fade_index_1> [ <integer:fade_index_2> ] ...
+remove_fade <integer:fade_index_1> [ <integer:fade_index_2> ] ...
 
-C<list_fade # Print a list of all fades and their tracks.
-rfd 2 # Remove the fade with the index (n) 2.
->
+list_fade # Print a list of all fades and their tracks.
+rfd 2     # Remove the fade with the index (n) 2.
+
 
 =back
 
@@ -2689,7 +2692,7 @@ rfd 2 # Remove the fade with the index (n) 2.
 
 =over 8
 
-C<list_fade> 
+list_fade 
 
 =back
 
@@ -2699,9 +2702,9 @@ C<list_fade>
 
 =over 8
 
-C<add_comment> <string:comment>
+add_comment <string:comment>
 
-C<ac "Guitar, treble on 50%">
+ac "Guitar, treble on 50%"
 
 =back
 
@@ -2709,7 +2712,7 @@ C<ac "Guitar, treble on 50%">
 
 =over 8
 
-C<remove_comment> 
+remove_comment 
 
 =back
 
@@ -2717,7 +2720,7 @@ C<remove_comment>
 
 =over 8
 
-C<show_comment> 
+show_comment 
 
 =back
 
@@ -2725,7 +2728,7 @@ C<show_comment>
 
 =over 8
 
-C<show_comments> 
+show_comments 
 
 =back
 
@@ -2733,9 +2736,9 @@ C<show_comments>
 
 =over 8
 
-C<add_version_comment> <string:comment>
+add_version_comment <string:comment>
 
-C<avc "The good take with the clear 6/8">
+avc "The good take with the clear 6/8"
 
 =back
 
@@ -2743,7 +2746,7 @@ C<avc "The good take with the clear 6/8">
 
 =over 8
 
-C<remove_version_comment> 
+remove_version_comment 
 
 =back
 
@@ -2751,7 +2754,7 @@ C<remove_version_comment>
 
 =over 8
 
-C<show_version_comment> 
+show_version_comment 
 
 =back
 
@@ -2759,7 +2762,7 @@ C<show_version_comment>
 
 =over 8
 
-C<show_version_comments_all> 
+show_version_comments_all 
 
 =back
 
@@ -2767,19 +2770,19 @@ C<show_version_comments_all>
 
 =over 8
 
-C<set_system_version_comment> <string:comment>
+set_system_version_comment <string:comment>
 
 =back
 
 =head2 Midi commands
 
-=head4 B<midish_command> (m) - Send the command text to  the midish MIDI sequencer. Midish must be installed and enabled in namarc. See the midish manpage and fullonline documentation for more.
+=head4 B<midish_command> (m) - Send the command text to the midish MIDI sequencer. Midish must be installed and enabled in namarc. See the midish manpage and fullonline documentation for more.
 
 =over 8
 
-C<midish_command> <string:command_text>
+midish_command <string:command_text>
 
-C<m tracknew my_midi_track>
+m tracknew my_midi_track
 
 =back
 
@@ -2787,7 +2790,7 @@ C<m tracknew my_midi_track>
 
 =over 8
 
-C<midish_mode_on> 
+midish_mode_on 
 
 =back
 
@@ -2795,7 +2798,7 @@ C<midish_mode_on>
 
 =over 8
 
-C<midish_mode_off> 
+midish_mode_off 
 
 =back
 
@@ -2803,7 +2806,7 @@ C<midish_mode_off>
 
 =over 8
 
-C<midish_mode_off_ready_to_play> 
+midish_mode_off_ready_to_play 
 
 =back
 
@@ -2811,7 +2814,7 @@ C<midish_mode_off_ready_to_play>
 
 =over 8
 
-C<midish_mode_off_ready_to_record> 
+midish_mode_off_ready_to_record 
 
 =back
 
@@ -2821,7 +2824,7 @@ C<midish_mode_off_ready_to_record>
 
 =over 8
 
-C<new_edit> 
+new_edit 
 
 =back
 
@@ -2829,7 +2832,7 @@ C<new_edit>
 
 =over 8
 
-C<set_edit_points> 
+set_edit_points 
 
 =back
 
@@ -2837,7 +2840,7 @@ C<set_edit_points>
 
 =over 8
 
-C<list_edits> 
+list_edits 
 
 =back
 
@@ -2845,7 +2848,7 @@ C<list_edits>
 
 =over 8
 
-C<select_edit> <integer:edit_index>
+select_edit <integer:edit_index>
 
 =back
 
@@ -2853,7 +2856,7 @@ C<select_edit> <integer:edit_index>
 
 =over 8
 
-C<end_edit_mode> 
+end_edit_mode 
 
 =back
 
@@ -2861,7 +2864,7 @@ C<end_edit_mode>
 
 =over 8
 
-C<destroy_edit> [ <integer:edit_index> ]
+destroy_edit [ <integer:edit_index> ]
 
 =back
 
@@ -2869,7 +2872,7 @@ C<destroy_edit> [ <integer:edit_index> ]
 
 =over 8
 
-C<preview_edit_in> 
+preview_edit_in 
 
 =back
 
@@ -2877,7 +2880,7 @@ C<preview_edit_in>
 
 =over 8
 
-C<preview_edit_out> 
+preview_edit_out 
 
 =back
 
@@ -2885,7 +2888,7 @@ C<preview_edit_out>
 
 =over 8
 
-C<play_edit> 
+play_edit 
 
 =back
 
@@ -2893,7 +2896,7 @@ C<play_edit>
 
 =over 8
 
-C<record_edit> 
+record_edit 
 
 =back
 
@@ -2901,7 +2904,7 @@ C<record_edit>
 
 =over 8
 
-C<edit_track> 
+edit_track 
 
 =back
 
@@ -2909,7 +2912,7 @@ C<edit_track>
 
 =over 8
 
-C<host_track_alias> 
+host_track_alias 
 
 =back
 
@@ -2917,7 +2920,7 @@ C<host_track_alias>
 
 =over 8
 
-C<host_track> 
+host_track 
 
 =back
 
@@ -2925,7 +2928,7 @@ C<host_track>
 
 =over 8
 
-C<version_mix_track> 
+version_mix_track 
 
 =back
 
@@ -2933,7 +2936,7 @@ C<version_mix_track>
 
 =over 8
 
-C<play_start_mark> 
+play_start_mark 
 
 =back
 
@@ -2941,7 +2944,7 @@ C<play_start_mark>
 
 =over 8
 
-C<rec_start_mark> 
+rec_start_mark 
 
 =back
 
@@ -2949,7 +2952,7 @@ C<rec_start_mark>
 
 =over 8
 
-C<rec_end_mark> 
+rec_end_mark 
 
 =back
 
@@ -2957,7 +2960,7 @@ C<rec_end_mark>
 
 =over 8
 
-C<set_play_start_mark> 
+set_play_start_mark 
 
 =back
 
@@ -2965,7 +2968,7 @@ C<set_play_start_mark>
 
 =over 8
 
-C<set_rec_start_mark> 
+set_rec_start_mark 
 
 =back
 
@@ -2973,7 +2976,7 @@ C<set_rec_start_mark>
 
 =over 8
 
-C<set_rec_end_mark> 
+set_rec_end_mark 
 
 =back
 
@@ -2981,7 +2984,7 @@ C<set_rec_end_mark>
 
 =over 8
 
-C<disable_edits> 
+disable_edits 
 
 =back
 
@@ -2989,7 +2992,7 @@ C<disable_edits>
 
 =over 8
 
-C<merge_edits> 
+merge_edits 
 
 =back
 
@@ -2999,7 +3002,7 @@ C<merge_edits>
 
 =over 8
 
-C<explode_track> 
+explode_track 
 
 =back
 
@@ -3007,12 +3010,12 @@ C<explode_track>
 
 =over 8
 
-C<move_to_bus> <string:bus_name>
+move_to_bus <string:bus_name>
 
-C<asub Drums # Create a new sub bus, called Drums.
+asub Drums # Create a new sub bus, called Drums.
 snare # Make snare the current track.
 mtb Drums # Move the snare track into the sub bus Drums.
->
+
 
 =back
 
@@ -3020,7 +3023,7 @@ mtb Drums # Move the snare track into the sub bus Drums.
 
 =over 8
 
-C<promote_version_to_track> <integer:version_number>
+promote_version_to_track <integer:version_number>
 
 =back
 
@@ -3030,7 +3033,7 @@ C<promote_version_to_track> <integer:version_number>
 
 =over 8
 
-C<read_user_customizations> 
+read_user_customizations 
 
 =back
 
@@ -3040,7 +3043,7 @@ C<read_user_customizations>
 
 =over 8
 
-C<limit_run_time> [ <float:additional_seconds> ]
+limit_run_time [ <float:additional_seconds> ]
 
 =back
 
@@ -3048,7 +3051,7 @@ C<limit_run_time> [ <float:additional_seconds> ]
 
 =over 8
 
-C<limit_run_time_off> 
+limit_run_time_off 
 
 =back
 
@@ -3056,7 +3059,7 @@ C<limit_run_time_off>
 
 =over 8
 
-C<offset_run> <string:mark_name>
+offset_run <string:mark_name>
 
 =back
 
@@ -3064,7 +3067,7 @@ C<offset_run> <string:mark_name>
 
 =over 8
 
-C<offset_run_off> 
+offset_run_off 
 
 =back
 
@@ -3074,7 +3077,7 @@ C<offset_run_off>
 
 =over 8
 
-C<view_waveform> 
+view_waveform 
 
 =back
 
@@ -3082,7 +3085,7 @@ C<view_waveform>
 
 =over 8
 
-C<edit_waveform> 
+edit_waveform 
 
 =back
 
@@ -3092,13 +3095,13 @@ C<edit_waveform>
 
 =over 8
 
-C<rerecord> 
+rerecord 
 
-C<for piano guitar;rec # Set piano and guitar track to record.
+for piano guitar;rec # Set piano and guitar track to record.
 # do your recording and ilstening.
 # You want to record another version of both piano and guitar:
 rerec # Sets piano and guitar to record again.
->
+
 
 =back
 
@@ -3108,7 +3111,7 @@ rerec # Sets piano and guitar to record again.
 
 =over 8
 
-C<analyze_level> 
+analyze_level 
 
 =back
 
@@ -3118,11 +3121,11 @@ C<analyze_level>
 
 =over 8
 
-C<for> <string:track_name_1> [ <string:track_name_2>} ... ; <string:commands>
+for <string:track_name_1> [ <string:track_name_2>} ... ; <string:commands>
 
-C<for piano guitar;vol / 2;pan 75 # For both piano and guitar adjust the
-for snare kick toms cymbals;mtb Drums # for each of these tracks do mtb Drums.
->
+for piano guitar; vol - 3; pan 75      # reduce volume and pan right
+for snare kick toms cymbals; mtb Drums # move tracks to bus Drums
+
 
 =back
 
@@ -3132,7 +3135,7 @@ for snare kick toms cymbals;mtb Drums # for each of these tracks do mtb Drums.
 
 =over 8
 
-C<git> <string:command_name> [argument,...]
+git <string:command_name> [arguments]
 
 =back
 
@@ -3142,7 +3145,7 @@ C<git> <string:command_name> [argument,...]
 
 =over 8
 
-C<edit_rec_setup_hook> 
+edit_rec_setup_hook 
 
 =back
 
@@ -3150,7 +3153,7 @@ C<edit_rec_setup_hook>
 
 =over 8
 
-C<edit_rec_cleanup_hook> 
+edit_rec_cleanup_hook 
 
 =back
 
@@ -3158,7 +3161,7 @@ C<edit_rec_cleanup_hook>
 
 =over 8
 
-C<remove_fader_effect> vol | pan | fader
+remove_fader_effect vol | pan | fader
 
 =back
 
@@ -3166,7 +3169,7 @@ C<remove_fader_effect> vol | pan | fader
 
 =over 8
 
-C<rename_track> <string:old_track> <string:new_track>
+rename_track <string:old_track> <string:new_track>
 
 =back
 
@@ -3176,7 +3179,7 @@ C<rename_track> <string:old_track> <string:new_track>
 
 =over 8
 
-C<new_sequence> <string:name> <track1, track2,...>
+new_sequence <string:name> <track1, track2,...>
 
 =back
 
@@ -3184,7 +3187,7 @@ C<new_sequence> <string:name> <track1, track2,...>
 
 =over 8
 
-C<select_sequence> 
+select_sequence 
 
 =back
 
@@ -3192,7 +3195,7 @@ C<select_sequence>
 
 =over 8
 
-C<list_sequences> 
+list_sequences 
 
 =back
 
@@ -3200,7 +3203,7 @@ C<list_sequences>
 
 =over 8
 
-C<show_sequence> 
+show_sequence 
 
 =back
 
@@ -3208,11 +3211,11 @@ C<show_sequence>
 
 =over 8
 
-C<append_to_sequence> [<string:name1>,...]
+append_to_sequence [<string:name1>,...]
 
-C<asq chorus # append chorus track to current sequence
-asq # append current track to current sequence
->
+asq chorus # append chorus track to current sequence
+asq        # append current track to current sequence
+
 
 =back
 
@@ -3220,7 +3223,7 @@ asq # append current track to current sequence
 
 =over 8
 
-C<insert_in_sequence> <string:name1> [<string:name2>,...] <integer:index>
+insert_in_sequence <string:name1> [<string:name2>,...] <integer:index>
 
 =back
 
@@ -3228,7 +3231,7 @@ C<insert_in_sequence> <string:name1> [<string:name2>,...] <integer:index>
 
 =over 8
 
-C<remove_from_sequence> <integer:index1> [<integer:index2>,...]
+remove_from_sequence <integer:index1> [<integer:index2>,...]
 
 =back
 
@@ -3236,7 +3239,7 @@ C<remove_from_sequence> <integer:index1> [<integer:index2>,...]
 
 =over 8
 
-C<delete_sequence> <string:sequence>
+delete_sequence <string:sequence>
 
 =back
 
@@ -3244,7 +3247,7 @@ C<delete_sequence> <string:sequence>
 
 =over 8
 
-C<add_spacer> <float:duration> [<integer:position>]
+add_spacer <float:duration> [<integer:position>]
 
 =back
 
@@ -3252,7 +3255,7 @@ C<add_spacer> <float:duration> [<integer:position>]
 
 =over 8
 
-C<convert_to_sequence> 
+convert_to_sequence 
 
 =back
 
@@ -3260,7 +3263,7 @@ C<convert_to_sequence>
 
 =over 8
 
-C<merge_sequence> 
+merge_sequence 
 
 =back
 
@@ -3271,12 +3274,12 @@ the current track is already a sequence.
 
 =over 8
 
-C<snip> <mark_pair1> [<mark_pair2>...]
+snip <mark_pair1> [<mark_pair2>...]
 
-C<snip cut1-start cut1-end cut2-start cut2-end
+snip cut1-start cut1-end cut2-start cut2-end
 This removes cut1 and cut2 regions from the current track
 by creating a sequence. 
->
+
 
 =back
 
@@ -3287,13 +3290,13 @@ append the regions to that sequence (compose_into_sequence).
 
 =over 8
 
-C<compose> <string:sequence_name> <string:trackname> <mark_pair1> [<mark_pair2>...]
+compose <string:sequence_name> <string:trackname> <mark_pair1> [<mark_pair2>...]
 
-C<compose speeches conference-audio speaker1-start speaker1-end 
+compose speeches conference-audio speaker1-start speaker1-end 
 speaker2-start speaker2-end
 This creates a "speeches" sequence with two clips
 for speaker1 and speaker2.
->
+
 
 =back
 
@@ -3305,7 +3308,7 @@ Note: redo is not supported yet
 
 =over 8
 
-C<undo> 
+undo 
 
 =back
 
@@ -3313,7 +3316,7 @@ C<undo>
 
 =over 8
 
-C<redo> 
+redo 
 
 =back
 
@@ -3325,7 +3328,7 @@ In that case each commit contains only a single command
 
 =over 8
 
-C<show_head_commit> 
+show_head_commit 
 
 =back
 
@@ -3335,7 +3338,7 @@ C<show_head_commit>
 
 =over 8
 
-C<eager> on | off
+eager on | off
 
 =back
 
@@ -3345,7 +3348,7 @@ C<eager> on | off
 
 =over 8
 
-C<new_engine> <string:engine_name> <integer:port>
+new_engine <string:engine_name> <integer:port>
 
 =back
 
@@ -3353,7 +3356,7 @@ C<new_engine> <string:engine_name> <integer:port>
 
 =over 8
 
-C<select_engine> <string:engine_name>
+select_engine <string:engine_name>
 
 =back
 
@@ -3363,7 +3366,7 @@ C<select_engine> <string:engine_name>
 
 =over 8
 
-C<set_track_engine_group> <string:engine_name>
+set_track_engine_group <string:engine_name>
 
 =back
 
@@ -3373,7 +3376,7 @@ C<set_track_engine_group> <string:engine_name>
 
 =over 8
 
-C<set_bus_engine_group> <string:engine_name>
+set_bus_engine_group <string:engine_name>
 
 =back
 
@@ -3381,7 +3384,7 @@ C<set_bus_engine_group> <string:engine_name>
 
 =over 8
 
-C<select_submix> <string:submix_name>
+select_submix <string:submix_name>
 
 =back
 
@@ -3389,12 +3392,12 @@ C<select_submix> <string:submix_name>
 
 =over 8
 
-C<trim_submix> 
+trim_submix 
 
-C<# reduce vol of current track in in_ear_monitor by 3dB
+# reduce vol of current track in in_ear_monitor by 3dB
 select_submix in_ear_monitor
 trim vol - 3 
->
+
 
 =back
 
@@ -3404,21 +3407,22 @@ trim vol - 3
 
 =over 8
 
-C<nickname_effect> <lower_case_string:nickname>
+nickname_effect <lower_case_string:nickname>
 
-C<add_track guitar
+add_track guitar
 afx Plate
 nick reverb        # current effect gets name "reverb1"
 mfx reverb1 1 0.05 # modify first reverb effect on current track 
 mfx reverb 1 2     # works, because current track has one effect named "reverb"
 afx reverb         # add another Plate effect, gets name "reverb2"
-rfx reverb         # Error, multiple reverb effects are present on this track.  Please use a numerical suffix.
+rfx reverb         # Error, multiple reverb effects are present on this 
+                   # track. Please use a numerical suffix.
 mfx reverb2 1 3    # modify second reverb effect
 rfx reverb1        # removes reverb1
 ifx reverb2 reverb # insert another reverb effect (reverb3) before reverb2
 rfx reverb3        # remove reverb3
 rfx reverb         # removes reverb2, as it is the sole remain reverb effect
->
+
 
 =back
 
@@ -3426,13 +3430,13 @@ rfx reverb         # removes reverb2, as it is the sole remain reverb effect
 
 =over 8
 
-C<delete_nickname_definition> 
+delete_nickname_definition 
 
-C<afx Plate  # add Plate effect
-nick reverb# name it "reverb", and create a nickname for Plate
-dnd reverb # removes nickname definition
-afx reverb # error
->
+afx Plate   # add Plate effect
+nick reverb # name it "reverb", and create a nickname for Plate
+dnd reverb  # removes nickname definition
+afx reverb  # error
+
 
 =back
 
@@ -3440,14 +3444,14 @@ afx reverb # error
 
 =over 8
 
-C<remove_nickname> 
+remove_nickname 
 
-C<afx Plate
+afx Plate
 nick reverb
 mfx reverb 1 3
 rnick
 mfx reverb 1 3 # Error: effect named "reverb" not found on current track
->
+
 
 =back
 
@@ -3455,7 +3459,7 @@ mfx reverb 1 3 # Error: effect named "reverb" not found on current track
 
 =over 8
 
-C<list_nickname_definitions> 
+list_nickname_definitions 
 
 =back
 
@@ -3463,7 +3467,7 @@ C<list_nickname_definitions>
 
 =over 8
 
-C<set_effect_name> <string:name>
+set_effect_name <string:name>
 
 =back
 
@@ -3471,7 +3475,7 @@ C<set_effect_name> <string:name>
 
 =over 8
 
-C<set_effect_surname> <string:surname>
+set_effect_surname <string:surname>
 
 =back
 
@@ -3479,7 +3483,7 @@ C<set_effect_surname> <string:surname>
 
 =over 8
 
-C<remove_effect_name> 
+remove_effect_name 
 
 =back
 
@@ -3487,7 +3491,7 @@ C<remove_effect_name>
 
 =over 8
 
-C<remove_effect_surname> 
+remove_effect_surname 
 
 =back
 
